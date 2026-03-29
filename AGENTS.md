@@ -8,6 +8,12 @@
   - `receiver` accepts frames, persists the partial archive, and maintains resume state
 - Connection establishment is a separate concern from role naming.
 
+## Comment Policy
+- Leave explanatory comments in code in Russian.
+- Prefer comments that explain purpose, data flow, and non-obvious Rust details.
+- Keep comments close to the code they explain.
+- Avoid comments that merely restate syntax without adding meaning.
+
 ## CLI Contract
 - Use one binary with two subcommands:
   - `fast-dump sender`
