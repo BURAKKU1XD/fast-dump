@@ -382,7 +382,7 @@ impl Write for ChunkCollector {
     }
 }
 
-// Этот helper остаётся compatibility path для тестов и диагностики:
+// Этот helper остаётся буферизованным путём для тестов и диагностики:
 // он собирает готовые zstd-frame-ы в память, но теперь использует ту же
 // streaming discovery-модель, что и production sender path.
 pub fn prepare_dump(
@@ -715,9 +715,10 @@ pub(crate) fn stream_direct_file<W>(
 where
     W: Write,
 {
-    let mut buffer = vec![0_u8; DEFAULT_READ_BUFFER_BYTES];
+    let mut buffer = vec![0_u8; direct.read_buffer_bytes.max(1)];
     let mut remaining = direct.size_at_open;
     let mut exposed_bytes = 0_u64;
+    let mut read_buffers = 0_u64;
 
     while remaining > 0 {
         if let Some(limit) = direct.forced_short_read_limit
@@ -770,6 +771,18 @@ where
 
         remaining -= read as u64;
         exposed_bytes += read as u64;
+        read_buffers += 1;
+    }
+
+    if let Some(profile) = profile {
+        profile.record_file_read(
+            direct.file.index,
+            &direct.file.rel_path,
+            direct.size_at_open,
+            read_buffers,
+            direct.read_started,
+            Instant::now(),
+        );
     }
 
     Ok(())
@@ -778,11 +791,13 @@ where
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::fs::File;
     use std::path::{Path, PathBuf};
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-    use super::{prepare_dump, tar_entry_bytes};
+    use super::{prepare_dump, stream_direct_file, tar_entry_bytes};
     use crate::network::protocol::ResumeState;
+    use crate::sender::{DirectFileStream, FileDisposition, InputFile, PipelineProfileCollector};
 
     struct TestDir {
         path: PathBuf,
@@ -1026,5 +1041,40 @@ mod tests {
             "payload.bin"
         );
         assert_eq!(above_target.frames[1].outbound.first_file_path, "tail.txt");
+    }
+
+    #[test]
+    fn stream_direct_file_records_read_profile_and_uses_configured_buffer() {
+        let source_dir = TestDir::new();
+        let payload_path = source_dir.path().join("direct.bin");
+        write_random_file(&payload_path, 4096, 17);
+        let profile = PipelineProfileCollector::default();
+        let mut writer = Vec::new();
+        let mut direct = DirectFileStream {
+            file: InputFile {
+                index: 7,
+                abs_path: payload_path.clone(),
+                rel_path: "direct.bin".to_owned(),
+            },
+            input: File::open(&payload_path).unwrap(),
+            size_at_open: 4096,
+            forced_short_read_limit: None,
+            disposition: FileDisposition::Clean,
+            retries: 0,
+            read_started: Instant::now(),
+            read_buffer_bytes: 1024,
+        };
+
+        stream_direct_file(&mut writer, &mut direct, Some(&profile)).unwrap();
+
+        let profile = profile.finish();
+        assert_eq!(writer.len(), 4096);
+        assert_eq!(profile.files_read, 1);
+        assert_eq!(profile.read.bytes, 4096);
+        assert_eq!(profile.read_buffers, 4);
+        assert_eq!(profile.file_reads.len(), 1);
+        assert_eq!(profile.file_reads[0].file_index, 7);
+        assert_eq!(profile.file_reads[0].bytes, 4096);
+        assert_eq!(profile.file_reads[0].read_buffers, 4);
     }
 }

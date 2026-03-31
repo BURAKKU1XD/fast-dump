@@ -200,3 +200,51 @@ fn receiver_binary_roundtrips_source_into_valid_archive_in_pull_mode() {
         sample_archive_entries()
     );
 }
+
+#[cfg(windows)]
+#[test]
+fn sender_and_receiver_binaries_persist_issue_journal_for_terminal_skip() {
+    use std::fs::OpenOptions;
+    use std::os::windows::fs::OpenOptionsExt;
+
+    let source_dir = TestDir::new();
+    let dump_id = "dump-binary-issue-journal";
+    let mut expected = BTreeMap::new();
+    insert_expected_file(&mut expected, source_dir.path(), "alpha.txt", b"alpha");
+    insert_expected_file(&mut expected, source_dir.path(), "nested/beta.txt", b"beta");
+
+    let locked_path = source_dir.path().join("locked.bin");
+    fs::write(&locked_path, b"locked").unwrap();
+    let lock_handle = OpenOptions::new()
+        .read(true)
+        .share_mode(0)
+        .open(&locked_path)
+        .unwrap();
+
+    let result = run_push_roundtrip_via_binaries(source_dir.path(), dump_id, 64, false);
+    drop(lock_handle);
+
+    assert!(
+        result.sender_output.status.success(),
+        "status={:?}, stderr={}",
+        result.sender_output.status.code(),
+        String::from_utf8_lossy(&result.sender_output.stderr)
+    );
+
+    let sender_stdout = String::from_utf8_lossy(&result.sender_output.stdout);
+    assert!(sender_stdout.contains("status=completed_with_warnings"));
+    assert!(sender_stdout.contains("files_skipped_open_failed=1"));
+
+    assert_archive_hashes(&result.archive_path, &expected);
+
+    let issue_journal_path = result
+        .archive_path
+        .parent()
+        .unwrap()
+        .join(format!("{dump_id}.tar.zst.issues.tsv"));
+    let issue_journal = fs::read_to_string(&issue_journal_path).unwrap();
+
+    assert!(issue_journal_path.exists());
+    assert!(issue_journal.contains("file_index\tattempts\treason\tfile_path\tlast_error"));
+    assert!(issue_journal.contains("open_failed\tlocked.bin"));
+}

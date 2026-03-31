@@ -11,7 +11,7 @@ use crate::role::Role;
 // Фиксированные значения заголовка каждого пакета.
 // По ним приёмник понимает, что читает именно наш протокол.
 pub const MAGIC: u32 = 0x504D4446;
-pub const VERSION: u16 = 1;
+pub const VERSION: u16 = 2;
 pub const MAX_FRAME_CHUNK_BYTES: usize = 1024 * 1024;
 
 const MAX_CONTROL_BODY_BYTES: usize = 64 * 1024;
@@ -947,7 +947,7 @@ mod tests {
     }
 
     #[test]
-    fn message_roundtrip_covers_all_v1_message_variants() {
+    fn message_roundtrip_covers_all_protocol_message_variants() {
         let messages = vec![
             Message::Hello(Hello {
                 role: Role::Sender,
@@ -1046,6 +1046,23 @@ mod tests {
             error
                 .to_string()
                 .contains(&format!("unsupported protocol version: {}", VERSION + 1))
+        );
+    }
+
+    #[test]
+    fn read_message_rejects_older_protocol_version() {
+        let mut bytes = encode_message_to_bytes(&Message::HelloAck(HelloAck {
+            role: Role::Receiver,
+        }));
+        let older_version = VERSION.saturating_sub(1);
+        bytes[4..6].copy_from_slice(&older_version.to_le_bytes());
+
+        let error = read_message(&mut Cursor::new(bytes)).unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains(&format!("unsupported protocol version: {older_version}"))
         );
     }
 
@@ -1402,6 +1419,21 @@ mod tests {
         let request = encode_message_to_bytes(&Message::Hello(Hello {
             role: Role::Sender,
             protocol_version: VERSION + 1,
+            dump_id: String::new(),
+            token: String::new(),
+        }));
+        let mut stream = Cursor::new(request);
+
+        let error = respond_handshake(&mut stream, Role::Receiver, None).unwrap_err();
+
+        assert!(error.to_string().contains("invalid hello protocol version"));
+    }
+
+    #[test]
+    fn respond_handshake_rejects_older_body_protocol_version_mismatch() {
+        let request = encode_message_to_bytes(&Message::Hello(Hello {
+            role: Role::Sender,
+            protocol_version: VERSION.saturating_sub(1),
             dump_id: String::new(),
             token: String::new(),
         }));

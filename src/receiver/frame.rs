@@ -815,7 +815,7 @@ mod tests {
     #[test]
     fn validate_frame_start_rejects_first_file_index_gap() {
         let journal = ReceiverJournal {
-            protocol_version: 1,
+            protocol_version: protocol::VERSION,
             dump_id: "dump-01".to_owned(),
             last_committed_frame: 7,
             last_committed_file_index: 3,
@@ -853,7 +853,7 @@ mod tests {
     #[test]
     fn validate_frame_start_rejects_frame_number_overflow() {
         let journal = ReceiverJournal {
-            protocol_version: 1,
+            protocol_version: protocol::VERSION,
             dump_id: "dump-01".to_owned(),
             last_committed_frame: u64::MAX,
             last_committed_file_index: 0,
@@ -873,7 +873,7 @@ mod tests {
     #[test]
     fn validate_frame_start_rejects_file_index_overflow() {
         let journal = ReceiverJournal {
-            protocol_version: 1,
+            protocol_version: protocol::VERSION,
             dump_id: "dump-01".to_owned(),
             last_committed_frame: 0,
             last_committed_file_index: u64::MAX,

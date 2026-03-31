@@ -61,7 +61,7 @@ wishlist.
 - Each subcommand supports exactly one transport selector:
   - `--listen <ADDR>`
   - `--connect <ADDR>`
-- Valid transport pairings for v1:
+- Valid transport pairings for v2:
   - `push`: `sender --connect <ADDR>` with `receiver --listen <ADDR>`
   - `pull`: `sender --listen <ADDR>` with `receiver --connect <ADDR>`
 - Local CLI parsing enforces "exactly one of `--listen` or `--connect`".
@@ -161,7 +161,7 @@ wishlist.
   - no backoff between attempts
 - If all attempts fail, skip the file and continue the dump.
 - Exclusive-share failures count as `open` failures.
-- Same-size in-place rewrites during read remain an accepted v1 risk.
+- Same-size in-place rewrites during read remain an accepted v2 risk.
 
 ## Compression Rules
 
@@ -265,7 +265,7 @@ wishlist.
 ## Wire Protocol
 
 - Transport is a long-lived TCP stream between sender and receiver.
-- Do not use HTTP, JSON, gRPC, or WebSocket for v1.
+- Do not use HTTP, JSON, gRPC, or WebSocket for v2.
 - Use one custom binary protocol over one ordered stream.
 - Support two transport modes:
   - `push`: sender connects to receiver
@@ -275,7 +275,7 @@ wishlist.
 - All messages are length-prefixed binary packets.
 - Packet header layout:
   - `magic: u32` = `0x504D4446` (`FDMP`)
-  - `version: u16` = `1`
+  - `version: u16` = `2`
   - `kind: u16`
   - `body_len: u32`
 - Integer encoding is little-endian.

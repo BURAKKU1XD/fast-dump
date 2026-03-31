@@ -11,18 +11,19 @@
     </cargoProject>
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="838aea6f-508f-4b9f-9916-c609e71e874d" name="Changes" comment="init connect logic">
-      <change beforePath="$PROJECT_DIR$/.idea/fast-dump.iml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/fast-dump.iml" afterDir="false" />
+    <list default="true" id="838aea6f-508f-4b9f-9916-c609e71e874d" name="Changes" comment="stable x30 perf">
+      <change afterPath="$PROJECT_DIR$/PERFOMANCE_UPDATE.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/TASKS.json" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.gitignore" beforeDir="false" afterPath="$PROJECT_DIR$/.gitignore" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/AGENTS.md" beforeDir="false" afterPath="$PROJECT_DIR$/AGENTS.md" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Cargo.lock" beforeDir="false" afterPath="$PROJECT_DIR$/Cargo.lock" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/Cargo.toml" beforeDir="false" afterPath="$PROJECT_DIR$/Cargo.toml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/cli/mod.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/cli/mod.rs" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/lib.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/lib.rs" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/main.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/main.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/network/protocol.md" beforeDir="false" afterPath="$PROJECT_DIR$/src/network/protocol.md" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/network/protocol.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/network/protocol.rs" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/network/transport.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/network/transport.rs" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/tests/connectivity.rs" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/receiver/frame.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/receiver/frame.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/receiver/journal.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/receiver/journal.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/sender/frame.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/sender/frame.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/sender/readers.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/sender/readers.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/tests/connectivity/roundtrip_fast.rs" beforeDir="false" afterPath="$PROJECT_DIR$/tests/connectivity/roundtrip_fast.rs" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -30,7 +31,7 @@
     <option name="LAST_RESOLUTION" value="IGNORE" />
   </component>
   <component name="EmbeddingIndexingInfo">
-    <option name="cachedIndexableFilesCount" value="74" />
+    <option name="cachedIndexableFilesCount" value="77" />
   </component>
   <component name="ExecutionTargetManager" SELECTED_TARGET="RsBuildProfile:dev" />
   <component name="Git.Settings">
@@ -51,30 +52,30 @@
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
-  <component name="PropertiesComponent"><![CDATA[{
-  "keyToString": {
-    "Cargo.Run fast-dump.executor": "Run",
-    "ModuleVcsDetector.initialDetectionPerformed": "true",
-    "RunOnceActivity.MCP Project settings loaded": "true",
-    "RunOnceActivity.ShowReadmeOnStart": "true",
-    "RunOnceActivity.git.unshallow": "true",
-    "RunOnceActivity.rust.reset.selective.auto.import": "true",
-    "RunOnceActivity.typescript.service.memoryLimit.init": "true",
-    "git-widget-placeholder": "master",
-    "ignore.virus.scanning.warn.message": "true",
-    "last_opened_file_path": "D:/rep/cool_project/fast-dump",
-    "node.js.detected.package.eslint": "true",
-    "node.js.detected.package.tslint": "true",
-    "node.js.selected.package.eslint": "(autodetect)",
-    "node.js.selected.package.tslint": "(autodetect)",
-    "nodejs_package_manager_path": "npm",
-    "org.rust.cargo.project.model.PROJECT_DISCOVERY": "true",
-    "org.rust.cargo.project.model.impl.CargoExternalSystemProjectAware.subscribe.first.balloon": "",
-    "org.rust.first.attach.projects": "true",
-    "settings.editor.selected.configurable": "ml.llm.LLMThirdPartyAiProvidersConfigurable",
-    "vue.rearranger.settings.migration": "true"
+  <component name="PropertiesComponent">{
+  &quot;keyToString&quot;: {
+    &quot;Cargo.Run fast-dump.executor&quot;: &quot;Run&quot;,
+    &quot;ModuleVcsDetector.initialDetectionPerformed&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.MCP Project settings loaded&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.rust.reset.selective.auto.import&quot;: &quot;true&quot;,
+    &quot;RunOnceActivity.typescript.service.memoryLimit.init&quot;: &quot;true&quot;,
+    &quot;git-widget-placeholder&quot;: &quot;master&quot;,
+    &quot;ignore.virus.scanning.warn.message&quot;: &quot;true&quot;,
+    &quot;last_opened_file_path&quot;: &quot;D:/rep/cool_project/fast-dump&quot;,
+    &quot;node.js.detected.package.eslint&quot;: &quot;true&quot;,
+    &quot;node.js.detected.package.tslint&quot;: &quot;true&quot;,
+    &quot;node.js.selected.package.eslint&quot;: &quot;(autodetect)&quot;,
+    &quot;node.js.selected.package.tslint&quot;: &quot;(autodetect)&quot;,
+    &quot;nodejs_package_manager_path&quot;: &quot;npm&quot;,
+    &quot;org.rust.cargo.project.model.PROJECT_DISCOVERY&quot;: &quot;true&quot;,
+    &quot;org.rust.cargo.project.model.impl.CargoExternalSystemProjectAware.subscribe.first.balloon&quot;: &quot;&quot;,
+    &quot;org.rust.first.attach.projects&quot;: &quot;true&quot;,
+    &quot;settings.editor.selected.configurable&quot;: &quot;ml.llm.LLMConfigurable&quot;,
+    &quot;vue.rearranger.settings.migration&quot;: &quot;true&quot;
   }
-}]]></component>
+}</component>
   <component name="RunManager" selected="Cargo.Run fast-dump">
     <configuration name="Run fast-dump" type="CargoCommandRunConfiguration" factoryName="Cargo Command" temporary="true">
       <option name="command" value="run --package fast-dump --bin fast-dump" />
@@ -128,7 +129,8 @@
       <updated>1774725666747</updated>
       <workItem from="1774725668138" duration="65061000" />
       <workItem from="1774906383017" duration="26000" />
-      <workItem from="1774936079181" duration="16810000" />
+      <workItem from="1774936079181" duration="32917000" />
+      <workItem from="1774997622837" duration="1462000" />
     </task>
     <task id="LOCAL-00001" summary="init">
       <option name="closed" value="true" />
@@ -146,7 +148,23 @@
       <option name="project" value="LOCAL" />
       <updated>1774792874752</updated>
     </task>
-    <option name="localTasksCounter" value="3" />
+    <task id="LOCAL-00003" summary="stable low perf">
+      <option name="closed" value="true" />
+      <created>1774970717119</created>
+      <option name="number" value="00003" />
+      <option name="presentableId" value="LOCAL-00003" />
+      <option name="project" value="LOCAL" />
+      <updated>1774970717119</updated>
+    </task>
+    <task id="LOCAL-00004" summary="stable x30 perf">
+      <option name="closed" value="true" />
+      <created>1774987766455</created>
+      <option name="number" value="00004" />
+      <option name="presentableId" value="LOCAL-00004" />
+      <option name="project" value="LOCAL" />
+      <updated>1774987766455</updated>
+    </task>
+    <option name="localTasksCounter" value="5" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -155,7 +173,9 @@
   <component name="VcsManagerConfiguration">
     <MESSAGE value="init" />
     <MESSAGE value="init connect logic" />
-    <option name="LAST_COMMIT_MESSAGE" value="init connect logic" />
+    <MESSAGE value="stable low perf" />
+    <MESSAGE value="stable x30 perf" />
+    <option name="LAST_COMMIT_MESSAGE" value="stable x30 perf" />
   </component>
   <component name="XSLT-Support.FileAssociations.UIState">
     <expand />

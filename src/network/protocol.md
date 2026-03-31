@@ -6,7 +6,7 @@
 ## Назначение
 
 Протокол работает поверх уже установленного двустороннего байтового потока.
-В v1 `transport` поднимает TCP-сессию и делает bootstrap-handshake, а `protocol`
+В v2 `transport` поднимает TCP-сессию и делает bootstrap-handshake, а `protocol`
 кодирует и декодирует бинарные сообщения для полного dump/resume session loop.
 
 Имена `sender` и `receiver` описывают направление данных, а не того, кто открыл
@@ -49,7 +49,7 @@ wire session после установки TCP.
 | Поле | Тип | Размер | Значение |
 |---|---:|---:|---|
 | `magic` | `u32` | 4 | `0x504D4446` (`FDMP`) |
-| `version` | `u16` | 2 | `1` |
+| `version` | `u16` | 2 | `2` |
 | `kind` | `u16` | 2 | тип сообщения |
 | `body_len` | `u32` | 4 | длина body в байтах |
 
@@ -206,7 +206,7 @@ Receiver перед `FinishAck`:
 
 ## Contract Versus Implementation Notes
 
-Стабильной частью v1 contract считаются:
+Стабильной частью v2 contract считаются:
 
 - packet header layout
 - integer endianness

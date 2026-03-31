@@ -242,6 +242,8 @@ pub(crate) struct DirectFileStream {
     pub(crate) forced_short_read_limit: Option<u64>,
     pub(crate) disposition: FileDisposition,
     pub(crate) retries: u32,
+    pub(crate) read_started: Instant,
+    pub(crate) read_buffer_bytes: usize,
 }
 
 #[derive(Debug)]
@@ -728,6 +730,8 @@ fn capture_snapshot_attempt(
                 FileDisposition::BestEffort
             },
             retries: attempt.saturating_sub(1),
+            read_started,
+            read_buffer_bytes,
         }));
     }
 

@@ -710,6 +710,26 @@ mod tests {
     }
 
     #[test]
+    fn load_rejects_older_protocol_version() {
+        let temp = TestDir::new();
+        let paths = ReceiverPaths::new(temp.path().to_path_buf(), "dump-01").unwrap();
+        let journal = ReceiverJournal::initial("dump-01").unwrap();
+
+        journal.persist(paths.journal_path()).unwrap();
+        let mut bytes = fs::read(paths.journal_path()).unwrap();
+        bytes[4..6].copy_from_slice(&protocol::VERSION.saturating_sub(1).to_le_bytes());
+        fs::write(paths.journal_path(), bytes).unwrap();
+
+        let error = ReceiverJournal::load(paths.journal_path()).unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("unsupported receiver journal protocol version")
+        );
+    }
+
+    #[test]
     fn load_rejects_invalid_utf8_in_last_committed_file_path() {
         let temp = TestDir::new();
         let journal = sample_committed_journal();
