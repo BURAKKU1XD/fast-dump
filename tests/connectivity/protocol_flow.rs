@@ -2,9 +2,14 @@ use std::fs;
 use std::thread;
 
 use crate::support::TestDir;
-use fast_dump::network::protocol::{Ack, ResumeState, request_resume_state};
+use fast_dump::network::protocol::{
+    AbortAck, Ack, FrameAbort, FrameChunk, FrameStart, IssueJournalChunk, IssueJournalEntry,
+    IssueJournalReason, Message, ResumeState, read_message, request_resume_state, write_message,
+};
 use fast_dump::network::transport::{BoundListener, connect_once};
-use fast_dump::receiver::{receive_finish, receive_frame, respond_resume_query};
+use fast_dump::receiver::{
+    receive_dump, receive_finish, receive_frame, receive_frame_abort, respond_resume_query,
+};
 use fast_dump::role::Role;
 use fast_dump::sender::{OutboundFrame, prepare_dump, send_finish, send_frame};
 
@@ -208,4 +213,145 @@ fn sender_pipeline_roundtrips_into_valid_tar_zst_archive() {
             ("nested/beta.txt".to_owned(), b"beta".to_vec()),
         ]
     );
+}
+
+#[test]
+fn frame_protocol_aborts_uncommitted_frame_and_keeps_committed_archive_len() {
+    let listener = BoundListener::bind("127.0.0.1:0".parse().unwrap()).unwrap();
+    let addr = listener.local_addr();
+    let data_dir = TestDir::new();
+    let receiver_dir = data_dir.path().to_path_buf();
+    let frame1 = OutboundFrame {
+        frame_no: 1,
+        first_file_index: 1,
+        first_file_path: "root/a.bin".to_owned(),
+        last_file_index: 1,
+        last_file_path: "root/a.bin".to_owned(),
+        level: 3,
+        threads: 2,
+    };
+    let frame2 = OutboundFrame {
+        frame_no: 2,
+        first_file_index: 2,
+        first_file_path: "root/b.bin".to_owned(),
+        last_file_index: 2,
+        last_file_path: "root/b.bin".to_owned(),
+        level: 3,
+        threads: 2,
+    };
+
+    let receiver = thread::spawn(move || {
+        let mut session = listener.accept(Role::Receiver, None, None).unwrap();
+        let mut state = respond_resume_query(&mut session.stream, receiver_dir).unwrap();
+        let ack1 = receive_frame(&mut session.stream, &mut state).unwrap();
+        let abort_ack = receive_frame_abort(&mut session.stream, &mut state).unwrap();
+        let ack2 = receive_frame(&mut session.stream, &mut state).unwrap();
+        let finish = receive_finish(&mut session.stream, &state).unwrap();
+        (ack1, abort_ack, ack2, finish, state.journal.archive_len)
+    });
+
+    let mut sender_session = connect_once(Role::Sender, addr, Some("dump-08"), None).unwrap();
+    let resume_state = request_resume_state(&mut sender_session.stream, "dump-08").unwrap();
+    assert_eq!(resume_state.archive_len, 0);
+
+    let ack1 = send_frame(&mut sender_session.stream, &frame1, [b"aaa".as_slice()]).unwrap();
+
+    write_message(
+        &mut sender_session.stream,
+        &Message::FrameStart(FrameStart {
+            frame_no: frame2.frame_no,
+            first_file_index: frame2.first_file_index,
+            first_file_path: frame2.first_file_path.clone(),
+            level: frame2.level,
+            threads: frame2.threads,
+        }),
+    )
+    .unwrap();
+    write_message(
+        &mut sender_session.stream,
+        &Message::FrameChunk(FrameChunk {
+            bytes: b"partial".to_vec(),
+        }),
+    )
+    .unwrap();
+    write_message(
+        &mut sender_session.stream,
+        &Message::FrameAbort(FrameAbort {
+            frame_no: frame2.frame_no,
+        }),
+    )
+    .unwrap();
+
+    let abort_ack = match read_message(&mut sender_session.stream).unwrap() {
+        Message::AbortAck(ack) => ack,
+        unexpected => panic!("expected AbortAck, got {:?}", unexpected.kind()),
+    };
+
+    let ack2 = send_frame(&mut sender_session.stream, &frame2, [b"bbbb".as_slice()]).unwrap();
+    let finish = send_finish(
+        &mut sender_session.stream,
+        frame2.frame_no,
+        frame2.last_file_index,
+        &frame2.last_file_path,
+    )
+    .unwrap();
+
+    let (receiver_ack1, receiver_abort_ack, receiver_ack2, receiver_finish, archive_len) =
+        receiver.join().unwrap();
+
+    assert_eq!(ack1.archive_len, 3);
+    assert_eq!(
+        abort_ack,
+        AbortAck {
+            frame_no: 2,
+            archive_len: 3,
+        }
+    );
+    assert_eq!(ack2.archive_len, 7);
+    assert_eq!(receiver_ack1, ack1);
+    assert_eq!(receiver_abort_ack, abort_ack);
+    assert_eq!(receiver_ack2, ack2);
+    assert_eq!(receiver_finish, finish);
+    assert_eq!(archive_len, 7);
+}
+
+#[test]
+fn protocol_tail_persists_issue_journal_before_finish() {
+    let listener = BoundListener::bind("127.0.0.1:0".parse().unwrap()).unwrap();
+    let addr = listener.local_addr();
+    let data_dir = TestDir::new();
+    let receiver_dir = data_dir.path().to_path_buf();
+
+    let receiver = thread::spawn(move || {
+        let mut session = listener.accept(Role::Receiver, None, None).unwrap();
+        let report = receive_dump(&mut session.stream, receiver_dir.clone()).unwrap();
+        let issue_journal_path = receiver_dir.join("dump-09.tar.zst.issues.tsv");
+        let issue_journal = fs::read_to_string(&issue_journal_path).unwrap();
+        (report, issue_journal, issue_journal_path)
+    });
+
+    let mut sender_session = connect_once(Role::Sender, addr, Some("dump-09"), None).unwrap();
+    let resume_state = request_resume_state(&mut sender_session.stream, "dump-09").unwrap();
+    assert_eq!(resume_state.archive_len, 0);
+
+    write_message(
+        &mut sender_session.stream,
+        &Message::IssueJournalChunk(IssueJournalChunk {
+            entries: vec![IssueJournalEntry {
+                file_index: 4,
+                file_path: "broken/file.bin".to_owned(),
+                attempts: 3,
+                reason: IssueJournalReason::UnstableAfterRetries,
+                last_error: "short read".to_owned(),
+            }],
+        }),
+    )
+    .unwrap();
+    let finish = send_finish(&mut sender_session.stream, 0, 0, "").unwrap();
+
+    let (report, issue_journal, issue_journal_path) = receiver.join().unwrap();
+    assert_eq!(report.finish, finish);
+    assert!(report.final_archive_path.exists());
+    assert!(issue_journal_path.exists());
+    assert!(issue_journal.contains("4\t3\tunstable_after_retries\tbroken/file.bin\tshort read"));
 }

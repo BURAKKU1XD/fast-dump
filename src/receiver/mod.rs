@@ -10,7 +10,7 @@ mod shared;
 mod test_support;
 
 pub use finish::receive_finish;
-pub use frame::receive_frame;
+pub use frame::{receive_frame, receive_frame_abort};
 pub use journal::{ReceiverJournal, ReceiverPaths, ReceiverState};
 pub use listener::serve_listener;
 pub use resume::{respond_resume_query, respond_resume_query_checked};

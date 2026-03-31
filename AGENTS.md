@@ -131,10 +131,11 @@ wishlist.
   counted as skip.
 - Large files must never be loaded fully into RAM.
 - Current implementation detail:
-  - accepted snapshots are staged into temporary files on disk before
-    compression
-  - the production send path then streams tar bytes from staged snapshots into
-    zstd and into `FrameChunk` packets
+  - accepted small-file snapshots are kept in memory before compression
+  - accepted large files are reopened from an authoritative handle and streamed
+    directly into tar, zstd, and `FrameChunk` packets
+  - the production send path no longer requires temp-file snapshots in the
+    common case
 
 ## Source Metadata Policy
 
@@ -167,8 +168,8 @@ wishlist.
 - Compression runs on the sender.
 - zstd level is CLI-configurable through `-l, --level`.
 - zstd worker threads are CLI-configurable through `-t, --threads`.
-- Sender flushes the zstd encoder at file boundaries so frame boundaries stay on
-  completed files.
+- Sender keeps frame boundaries on completed files, but does not rely on a
+  mandatory zstd flush after every file.
 - Receiver appends bytes to `<dump_id>.tar.zst.part` and renames on successful
   completion.
 - Receiver writes tar end blocks locally as a final zstd frame during
@@ -180,8 +181,11 @@ wishlist.
 - The output `.tar.zst` is a concatenation of multiple zstd frames.
 - Each sender-side zstd frame ends only on a completed file boundary.
 - A frame may contain many files.
-- If the frame target is exceeded in the middle of processing a file, that file
+- `frame_target` is a soft target, not a hard compressed-byte cutoff.
+- If the soft target is exceeded in the middle of processing a file, that file
   stays in the current frame and the frame closes after the file completes.
+- Large direct-stream files and previously retried files may be isolated into
+  dedicated frames to reduce rollback scope.
 - Receiver commits only whole frames.
 - On disconnect, at most the current uncommitted frame is lost.
 - Resume progresses by deterministic `file_index`, not by scan-time size
@@ -206,7 +210,9 @@ wishlist.
     production streaming path
 - Reader behavior:
   - retry and skip decisions happen at whole-file granularity
-  - staging is file-based, not whole-dump-based
+  - snapshot buffering is file-based, not whole-dump-based
+  - small files use bounded in-memory snapshots, while large files use
+    direct-stream handles
   - adaptive scaling uses bounded crossbeam queues
 - Keep `src/sender/mod.rs` as a thin facade with re-exports only.
 - Prefer `pub(crate)` over `pub` where possible.
@@ -226,6 +232,10 @@ wishlist.
   - `bytes_sent_best_effort_raw`
   - `frames_sent`
   - `final_archive_bytes`
+- `SendReport` keeps a local issue journal for terminal skips.
+- On successful finish, sender also uploads that issue journal to the receiver
+  as a compact protocol tail.
+- Stable CLI output remains aggregate-only unless intentionally changed.
 - Classification:
   - `clean`: file sent without retry-driven degradation
   - `best_effort`: file sent after one or more failed attempts but before the
@@ -249,6 +259,8 @@ wishlist.
 - If trailing bytes cannot be reconciled with the journal, fail loudly.
 - Finalization writes tar end blocks, closes the last local zstd frame, fsyncs,
   renames the file, and removes the journal.
+- If sender uploaded terminal skip details, receiver also persists
+  `<dump_id>.tar.zst.issues.tsv` next to the final archive.
 
 ## Wire Protocol
 
@@ -285,6 +297,8 @@ Current runtime message sequence:
   - zero or more `FrameChunk { bytes }`
   - `FrameEnd { frame_no, last_file_index, last_file_path, compressed_len, compressed_xxh3_64 }`
   - `Ack { frame_no, last_file_index, last_file_path, archive_len }`
+- optional tail before finish:
+  - zero or more `IssueJournalChunk { entry_count, entries... }`
 - `Finish { final_frame_no, final_file_index, final_file_path }`
 - `FinishAck`
 
@@ -299,6 +313,9 @@ Protocol rules:
   writing `FrameChunk`s.
 - On `FrameEnd`, receiver verifies length and checksum, fsyncs, persists the
   journal, and only then sends `Ack`.
+- `IssueJournalChunk` is allowed only after the frame loop and before `Finish`.
+- Uploaded issue journal data must not affect resume state; it is persisted only
+  after successful finalization.
 - If verification fails, receiver sends `Error` and truncates back to the
   previous committed `archive_len`.
 - If the connection drops before `Ack`, receiver discards the partial frame by

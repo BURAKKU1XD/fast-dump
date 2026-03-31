@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 
-const RAW_HEADER: &str = "dataset,threads,frame_target_mb,read_buffer_kb,repeat_index,files_count,sent_frames,raw_read_bytes,tar_input_bytes,compressed_payload_bytes,wire_bytes,wire_overhead_bytes,read_duration_ms,compress_duration_ms,send_duration_ms,total_duration_ms,read_mib_s,compress_mib_s,send_mib_s,total_mib_s,avg_cpu_pct,max_cpu_pct,avg_rss_mib,max_rss_mib,avg_private_mib,max_private_mib,compression_ratio_pct,wire_pct_of_read,wire_overhead_pct";
-const SUMMARY_HEADER: &str = "dataset,threads,frame_target_mb,read_buffer_kb,completed_repeats,files_count,sent_frames,raw_read_bytes,tar_input_bytes,compressed_payload_bytes,wire_bytes,wire_overhead_bytes,read_duration_ms,compress_duration_ms,send_duration_ms,total_duration_ms,read_mib_s,compress_mib_s,send_mib_s,total_mib_s,avg_cpu_pct,max_cpu_pct,avg_rss_mib,max_rss_mib,avg_private_mib,max_private_mib,compression_ratio_pct,wire_pct_of_read,wire_overhead_pct";
+const RAW_HEADER: &str = "dataset,threads,frame_target_mb,read_buffer_kb,repeat_index,files_count,skipped_files,sent_frames,frame_aborts,frame_rebuilds,avg_files_per_frame,raw_read_bytes,tar_input_bytes,compressed_payload_bytes,wire_bytes,wire_overhead_bytes,read_duration_ms,compress_duration_ms,send_duration_ms,total_duration_ms,traversal_wait_ms,ack_wait_ms,flush_count,max_inflight_dirs,read_mib_s,compress_mib_s,send_mib_s,total_mib_s,avg_cpu_pct,max_cpu_pct,avg_rss_mib,max_rss_mib,avg_private_mib,max_private_mib,compression_ratio_pct,wire_pct_of_read,wire_overhead_pct";
+const SUMMARY_HEADER: &str = "dataset,threads,frame_target_mb,read_buffer_kb,completed_repeats,files_count,skipped_files,sent_frames,frame_aborts,frame_rebuilds,avg_files_per_frame,raw_read_bytes,tar_input_bytes,compressed_payload_bytes,wire_bytes,wire_overhead_bytes,read_duration_ms,compress_duration_ms,send_duration_ms,total_duration_ms,traversal_wait_ms,ack_wait_ms,flush_count,max_inflight_dirs,read_mib_s,compress_mib_s,send_mib_s,total_mib_s,avg_cpu_pct,max_cpu_pct,avg_rss_mib,max_rss_mib,avg_private_mib,max_private_mib,compression_ratio_pct,wire_pct_of_read,wire_overhead_pct";
 const MARKDOWN_TOP_ROWS: usize = 10;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -22,7 +22,11 @@ pub(crate) struct RawResultRow {
     pub(crate) scenario: ScenarioKey,
     pub(crate) repeat_index: u32,
     pub(crate) files_count: u64,
+    pub(crate) skipped_files: u64,
     pub(crate) sent_frames: u64,
+    pub(crate) frame_aborts: u64,
+    pub(crate) frame_rebuilds: u64,
+    pub(crate) avg_files_per_frame: f64,
     pub(crate) raw_read_bytes: u64,
     pub(crate) tar_input_bytes: u64,
     pub(crate) compressed_payload_bytes: u64,
@@ -32,6 +36,10 @@ pub(crate) struct RawResultRow {
     pub(crate) compress_duration_ms: f64,
     pub(crate) send_duration_ms: f64,
     pub(crate) total_duration_ms: f64,
+    pub(crate) traversal_wait_ms: f64,
+    pub(crate) ack_wait_ms: f64,
+    pub(crate) flush_count: u64,
+    pub(crate) max_inflight_dirs: u64,
     pub(crate) read_mib_s: f64,
     pub(crate) compress_mib_s: f64,
     pub(crate) send_mib_s: f64,
@@ -52,7 +60,11 @@ pub(crate) struct SummaryRow {
     pub(crate) scenario: ScenarioKey,
     pub(crate) completed_repeats: u32,
     pub(crate) files_count: u64,
+    pub(crate) skipped_files: u64,
     pub(crate) sent_frames: u64,
+    pub(crate) frame_aborts: u64,
+    pub(crate) frame_rebuilds: u64,
+    pub(crate) avg_files_per_frame: f64,
     pub(crate) raw_read_bytes: u64,
     pub(crate) tar_input_bytes: u64,
     pub(crate) compressed_payload_bytes: u64,
@@ -62,6 +74,10 @@ pub(crate) struct SummaryRow {
     pub(crate) compress_duration_ms: f64,
     pub(crate) send_duration_ms: f64,
     pub(crate) total_duration_ms: f64,
+    pub(crate) traversal_wait_ms: f64,
+    pub(crate) ack_wait_ms: f64,
+    pub(crate) flush_count: u64,
+    pub(crate) max_inflight_dirs: u64,
     pub(crate) read_mib_s: f64,
     pub(crate) compress_mib_s: f64,
     pub(crate) send_mib_s: f64,
@@ -84,14 +100,18 @@ impl RawResultRow {
 
     fn to_csv_line(&self) -> String {
         format!(
-            "{},{},{},{},{},{},{},{},{},{},{},{},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6}",
+            "{},{},{},{},{},{},{},{},{},{},{:.6},{},{},{},{},{},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{},{},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6}",
             self.scenario.dataset,
             self.scenario.threads,
             self.scenario.frame_target_mb,
             self.scenario.read_buffer_kb,
             self.repeat_index,
             self.files_count,
+            self.skipped_files,
             self.sent_frames,
+            self.frame_aborts,
+            self.frame_rebuilds,
+            self.avg_files_per_frame,
             self.raw_read_bytes,
             self.tar_input_bytes,
             self.compressed_payload_bytes,
@@ -101,6 +121,10 @@ impl RawResultRow {
             self.compress_duration_ms,
             self.send_duration_ms,
             self.total_duration_ms,
+            self.traversal_wait_ms,
+            self.ack_wait_ms,
+            self.flush_count,
+            self.max_inflight_dirs,
             self.read_mib_s,
             self.compress_mib_s,
             self.send_mib_s,
@@ -119,9 +143,9 @@ impl RawResultRow {
 
     fn parse(line: &str) -> Result<Self> {
         let columns = line.split(',').collect::<Vec<_>>();
-        if columns.len() != 29 {
+        if columns.len() != 37 {
             bail!(
-                "unexpected raw results column count: expected 29, got {}",
+                "unexpected raw results column count: expected 37, got {}",
                 columns.len()
             );
         }
@@ -135,29 +159,37 @@ impl RawResultRow {
             },
             repeat_index: parse_u32(columns[4], "repeat_index")?,
             files_count: parse_u64(columns[5], "files_count")?,
-            sent_frames: parse_u64(columns[6], "sent_frames")?,
-            raw_read_bytes: parse_u64(columns[7], "raw_read_bytes")?,
-            tar_input_bytes: parse_u64(columns[8], "tar_input_bytes")?,
-            compressed_payload_bytes: parse_u64(columns[9], "compressed_payload_bytes")?,
-            wire_bytes: parse_u64(columns[10], "wire_bytes")?,
-            wire_overhead_bytes: parse_u64(columns[11], "wire_overhead_bytes")?,
-            read_duration_ms: parse_f64(columns[12], "read_duration_ms")?,
-            compress_duration_ms: parse_f64(columns[13], "compress_duration_ms")?,
-            send_duration_ms: parse_f64(columns[14], "send_duration_ms")?,
-            total_duration_ms: parse_f64(columns[15], "total_duration_ms")?,
-            read_mib_s: parse_f64(columns[16], "read_mib_s")?,
-            compress_mib_s: parse_f64(columns[17], "compress_mib_s")?,
-            send_mib_s: parse_f64(columns[18], "send_mib_s")?,
-            total_mib_s: parse_f64(columns[19], "total_mib_s")?,
-            avg_cpu_pct: parse_f64(columns[20], "avg_cpu_pct")?,
-            max_cpu_pct: parse_f64(columns[21], "max_cpu_pct")?,
-            avg_rss_mib: parse_f64(columns[22], "avg_rss_mib")?,
-            max_rss_mib: parse_f64(columns[23], "max_rss_mib")?,
-            avg_private_mib: parse_f64(columns[24], "avg_private_mib")?,
-            max_private_mib: parse_f64(columns[25], "max_private_mib")?,
-            compression_ratio_pct: parse_f64(columns[26], "compression_ratio_pct")?,
-            wire_pct_of_read: parse_f64(columns[27], "wire_pct_of_read")?,
-            wire_overhead_pct: parse_f64(columns[28], "wire_overhead_pct")?,
+            skipped_files: parse_u64(columns[6], "skipped_files")?,
+            sent_frames: parse_u64(columns[7], "sent_frames")?,
+            frame_aborts: parse_u64(columns[8], "frame_aborts")?,
+            frame_rebuilds: parse_u64(columns[9], "frame_rebuilds")?,
+            avg_files_per_frame: parse_f64(columns[10], "avg_files_per_frame")?,
+            raw_read_bytes: parse_u64(columns[11], "raw_read_bytes")?,
+            tar_input_bytes: parse_u64(columns[12], "tar_input_bytes")?,
+            compressed_payload_bytes: parse_u64(columns[13], "compressed_payload_bytes")?,
+            wire_bytes: parse_u64(columns[14], "wire_bytes")?,
+            wire_overhead_bytes: parse_u64(columns[15], "wire_overhead_bytes")?,
+            read_duration_ms: parse_f64(columns[16], "read_duration_ms")?,
+            compress_duration_ms: parse_f64(columns[17], "compress_duration_ms")?,
+            send_duration_ms: parse_f64(columns[18], "send_duration_ms")?,
+            total_duration_ms: parse_f64(columns[19], "total_duration_ms")?,
+            traversal_wait_ms: parse_f64(columns[20], "traversal_wait_ms")?,
+            ack_wait_ms: parse_f64(columns[21], "ack_wait_ms")?,
+            flush_count: parse_u64(columns[22], "flush_count")?,
+            max_inflight_dirs: parse_u64(columns[23], "max_inflight_dirs")?,
+            read_mib_s: parse_f64(columns[24], "read_mib_s")?,
+            compress_mib_s: parse_f64(columns[25], "compress_mib_s")?,
+            send_mib_s: parse_f64(columns[26], "send_mib_s")?,
+            total_mib_s: parse_f64(columns[27], "total_mib_s")?,
+            avg_cpu_pct: parse_f64(columns[28], "avg_cpu_pct")?,
+            max_cpu_pct: parse_f64(columns[29], "max_cpu_pct")?,
+            avg_rss_mib: parse_f64(columns[30], "avg_rss_mib")?,
+            max_rss_mib: parse_f64(columns[31], "max_rss_mib")?,
+            avg_private_mib: parse_f64(columns[32], "avg_private_mib")?,
+            max_private_mib: parse_f64(columns[33], "max_private_mib")?,
+            compression_ratio_pct: parse_f64(columns[34], "compression_ratio_pct")?,
+            wire_pct_of_read: parse_f64(columns[35], "wire_pct_of_read")?,
+            wire_overhead_pct: parse_f64(columns[36], "wire_overhead_pct")?,
         })
     }
 }
@@ -165,14 +197,18 @@ impl RawResultRow {
 impl SummaryRow {
     fn to_csv_line(&self) -> String {
         format!(
-            "{},{},{},{},{},{},{},{},{},{},{},{},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6}",
+            "{},{},{},{},{},{},{},{},{},{},{:.6},{},{},{},{},{},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{},{},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6}",
             self.scenario.dataset,
             self.scenario.threads,
             self.scenario.frame_target_mb,
             self.scenario.read_buffer_kb,
             self.completed_repeats,
             self.files_count,
+            self.skipped_files,
             self.sent_frames,
+            self.frame_aborts,
+            self.frame_rebuilds,
+            self.avg_files_per_frame,
             self.raw_read_bytes,
             self.tar_input_bytes,
             self.compressed_payload_bytes,
@@ -182,6 +218,10 @@ impl SummaryRow {
             self.compress_duration_ms,
             self.send_duration_ms,
             self.total_duration_ms,
+            self.traversal_wait_ms,
+            self.ack_wait_ms,
+            self.flush_count,
+            self.max_inflight_dirs,
             self.read_mib_s,
             self.compress_mib_s,
             self.send_mib_s,
@@ -308,7 +348,11 @@ pub(crate) fn aggregate_summary_rows(rows: &[RawResultRow]) -> Vec<SummaryRow> {
                 scenario,
                 completed_repeats: repeats,
                 files_count: sum_u64(|row| row.files_count),
+                skipped_files: sum_u64(|row| row.skipped_files),
                 sent_frames: sum_u64(|row| row.sent_frames),
+                frame_aborts: sum_u64(|row| row.frame_aborts),
+                frame_rebuilds: sum_u64(|row| row.frame_rebuilds),
+                avg_files_per_frame: avg_f64(|row| row.avg_files_per_frame),
                 raw_read_bytes: sum_u64(|row| row.raw_read_bytes),
                 tar_input_bytes: sum_u64(|row| row.tar_input_bytes),
                 compressed_payload_bytes: sum_u64(|row| row.compressed_payload_bytes),
@@ -318,6 +362,10 @@ pub(crate) fn aggregate_summary_rows(rows: &[RawResultRow]) -> Vec<SummaryRow> {
                 compress_duration_ms: avg_f64(|row| row.compress_duration_ms),
                 send_duration_ms: avg_f64(|row| row.send_duration_ms),
                 total_duration_ms: avg_f64(|row| row.total_duration_ms),
+                traversal_wait_ms: avg_f64(|row| row.traversal_wait_ms),
+                ack_wait_ms: avg_f64(|row| row.ack_wait_ms),
+                flush_count: sum_u64(|row| row.flush_count),
+                max_inflight_dirs: sum_u64(|row| row.max_inflight_dirs),
                 read_mib_s: avg_f64(|row| row.read_mib_s),
                 compress_mib_s: avg_f64(|row| row.compress_mib_s),
                 send_mib_s: avg_f64(|row| row.send_mib_s),
@@ -450,13 +498,15 @@ fn print_markdown_table(title: &str, rows: &[&SummaryRow]) {
     }
 
     println!(
-        "| threads | frame MiB | buffer KiB | repeats | total ms | total MiB/s | frames | ratio % | max RSS MiB | avg CPU % | wire overhead % |"
+        "| threads | frame MiB | buffer KiB | repeats | total ms | total MiB/s | frames | files/frame | aborts | walk wait ms | ack wait ms | max RSS MiB |"
     );
-    println!("| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |");
+    println!(
+        "| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"
+    );
 
     for row in rows.iter().take(MARKDOWN_TOP_ROWS) {
         println!(
-            "| {} | {} | {} | {} | {:.2} | {:.2} | {} | {:.2} | {:.2} | {:.2} | {:.2} |",
+            "| {} | {} | {} | {} | {:.2} | {:.2} | {} | {:.2} | {} | {:.2} | {:.2} | {:.2} |",
             row.scenario.threads,
             row.scenario.frame_target_mb,
             row.scenario.read_buffer_kb,
@@ -464,10 +514,11 @@ fn print_markdown_table(title: &str, rows: &[&SummaryRow]) {
             row.total_duration_ms,
             row.total_mib_s,
             row.sent_frames,
-            row.compression_ratio_pct,
-            row.max_rss_mib,
-            row.avg_cpu_pct,
-            row.wire_overhead_pct
+            row.avg_files_per_frame,
+            row.frame_aborts,
+            row.traversal_wait_ms,
+            row.ack_wait_ms,
+            row.max_rss_mib
         );
     }
     println!();

@@ -20,6 +20,7 @@ pub struct ReceiverPaths {
     partial_archive_path: PathBuf,
     final_archive_path: PathBuf,
     journal_path: PathBuf,
+    issue_journal_path: PathBuf,
 }
 
 impl ReceiverPaths {
@@ -32,6 +33,7 @@ impl ReceiverPaths {
             partial_archive_path: data_dir.join(format!("{dump_id}.tar.zst.part")),
             final_archive_path: data_dir.join(format!("{dump_id}.tar.zst")),
             journal_path: data_dir.join(format!("{dump_id}.tar.zst.part.journal")),
+            issue_journal_path: data_dir.join(format!("{dump_id}.tar.zst.issues.tsv")),
             data_dir,
             dump_id,
         })
@@ -55,6 +57,10 @@ impl ReceiverPaths {
 
     pub fn journal_path(&self) -> &Path {
         &self.journal_path
+    }
+
+    pub fn issue_journal_path(&self) -> &Path {
+        &self.issue_journal_path
     }
 }
 
@@ -635,7 +641,7 @@ mod tests {
     fn load_rejects_truncated_journal_magic_field() {
         let temp = TestDir::new();
         let paths = ReceiverPaths::new(temp.path().to_path_buf(), "dump-01").unwrap();
-        fs::write(paths.journal_path(), &[0x46, 0x44, 0x4D]).unwrap();
+        fs::write(paths.journal_path(), [0x46, 0x44, 0x4D]).unwrap();
 
         let error = ReceiverJournal::load(paths.journal_path()).unwrap_err();
 

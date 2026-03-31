@@ -1,11 +1,17 @@
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+use std::thread;
 use std::time::Instant;
 
 use anyhow::{Context, Result, bail};
+use crossbeam_channel::{Receiver, Sender, TrySendError, bounded, unbounded};
 use log::debug;
 
 use crate::network::protocol::ResumeState;
+
+use super::PipelineProfileCollector;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct InputFile {
@@ -22,22 +28,203 @@ pub struct SourceScanReport {
     pub final_file_path: String,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct DirectoryFrame {
     entries: Vec<DiscoveredEntry>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct DiscoveredEntry {
     rel_path: String,
     abs_path: PathBuf,
     file_type: fs::FileType,
 }
 
-#[derive(Debug)]
-pub(crate) struct PendingFileWalker {
+enum DirectoryListingCommand {
+    List(PathBuf),
+    Stop,
+}
+
+struct DirectoryListingResult {
+    key: String,
+    entries: std::result::Result<Vec<DiscoveredEntry>, String>,
+}
+
+enum DirectoryListingState {
+    Pending,
+    Ready(std::result::Result<Vec<DiscoveredEntry>, String>),
+}
+
+#[derive(Clone)]
+struct DirectoryListingPool {
+    inner: Arc<DirectoryListingPoolInner>,
+}
+
+struct DirectoryListingPoolInner {
     source: PathBuf,
+    task_tx: Sender<DirectoryListingCommand>,
+    result_rx: Receiver<DirectoryListingResult>,
+    pending: Mutex<BTreeMap<String, DirectoryListingState>>,
+    profile: Option<PipelineProfileCollector>,
+    worker_count: usize,
+    inflight_limit: usize,
+    workers: Mutex<Vec<thread::JoinHandle<()>>>,
+}
+
+impl std::fmt::Debug for DirectoryListingPool {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DirectoryListingPool")
+            .field("worker_count", &self.inner.worker_count)
+            .field("inflight_limit", &self.inner.inflight_limit)
+            .finish()
+    }
+}
+
+impl DirectoryListingPool {
+    fn new(source: &Path, profile: Option<&PipelineProfileCollector>) -> Self {
+        let worker_count = thread::available_parallelism()
+            .map(|parallelism| parallelism.get().clamp(1, 4))
+            .unwrap_or(2);
+        let inflight_limit = worker_count.saturating_mul(4).max(1);
+        let (task_tx, task_rx) = bounded::<DirectoryListingCommand>(inflight_limit);
+        let (result_tx, result_rx) = unbounded::<DirectoryListingResult>();
+        let mut workers = Vec::with_capacity(worker_count);
+
+        for _ in 0..worker_count {
+            let task_rx = task_rx.clone();
+            let result_tx = result_tx.clone();
+            let source = source.to_path_buf();
+            workers.push(thread::spawn(move || {
+                while let Ok(command) = task_rx.recv() {
+                    match command {
+                        DirectoryListingCommand::List(abs_path) => {
+                            let key = directory_listing_key(&abs_path);
+                            let entries = read_sorted_entries(&source, &abs_path)
+                                .map_err(|error| error.to_string());
+                            if result_tx
+                                .send(DirectoryListingResult { key, entries })
+                                .is_err()
+                            {
+                                break;
+                            }
+                        }
+                        DirectoryListingCommand::Stop => break,
+                    }
+                }
+            }));
+        }
+
+        Self {
+            inner: Arc::new(DirectoryListingPoolInner {
+                source: source.to_path_buf(),
+                task_tx,
+                result_rx,
+                pending: Mutex::new(BTreeMap::new()),
+                profile: profile.cloned(),
+                worker_count,
+                inflight_limit,
+                workers: Mutex::new(workers),
+            }),
+        }
+    }
+
+    fn prefetch_directories(&self, entries: &[DiscoveredEntry]) {
+        for entry in entries {
+            if entry.file_type.is_dir() {
+                self.submit_if_room(&entry.abs_path);
+            }
+        }
+    }
+
+    fn take_or_read(&self, dir: &Path) -> Result<Vec<DiscoveredEntry>> {
+        let key = directory_listing_key(dir);
+        loop {
+            let ready = {
+                let mut pending = self.inner.pending.lock().unwrap();
+                match pending.remove(&key) {
+                    Some(DirectoryListingState::Ready(result)) => Some(result),
+                    Some(DirectoryListingState::Pending) => {
+                        pending.insert(key.clone(), DirectoryListingState::Pending);
+                        None
+                    }
+                    None => return read_sorted_entries(&self.inner.source, dir),
+                }
+            };
+            if let Some(result) = ready {
+                return result.map_err(anyhow::Error::msg);
+            }
+
+            let waited_at = Instant::now();
+            let result = self
+                .inner
+                .result_rx
+                .recv()
+                .context("sender directory listing pool disconnected unexpectedly")?;
+            if let Some(profile) = &self.inner.profile {
+                profile.record_traversal_wait(waited_at.elapsed());
+            }
+            self.inner
+                .pending
+                .lock()
+                .unwrap()
+                .insert(result.key, DirectoryListingState::Ready(result.entries));
+        }
+    }
+
+    fn submit_if_room(&self, dir: &Path) {
+        let key = directory_listing_key(dir);
+        let should_submit = {
+            let mut pending = self.inner.pending.lock().unwrap();
+            if pending.contains_key(&key) || pending.len() >= self.inner.inflight_limit {
+                false
+            } else {
+                pending.insert(key.clone(), DirectoryListingState::Pending);
+                if let Some(profile) = &self.inner.profile {
+                    let inflight = pending
+                        .values()
+                        .filter(|state| matches!(state, DirectoryListingState::Pending))
+                        .count();
+                    profile.record_directory_inflight(inflight);
+                }
+                true
+            }
+        };
+        if !should_submit {
+            return;
+        }
+
+        match self
+            .inner
+            .task_tx
+            .try_send(DirectoryListingCommand::List(dir.to_path_buf()))
+        {
+            Ok(()) => {}
+            Err(TrySendError::Full(_)) | Err(TrySendError::Disconnected(_)) => {
+                self.inner.pending.lock().unwrap().remove(&key);
+            }
+        }
+    }
+}
+
+impl Drop for DirectoryListingPoolInner {
+    fn drop(&mut self) {
+        for _ in 0..self.worker_count {
+            let _ = self.task_tx.send(DirectoryListingCommand::Stop);
+        }
+        for worker in self.workers.get_mut().unwrap().drain(..) {
+            let _ = worker.join();
+        }
+    }
+}
+
+fn directory_listing_key(path: &Path) -> String {
+    path.to_string_lossy().into_owned()
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct PendingFileWalker {
     resume_state: ResumeState,
+    listing_pool: DirectoryListingPool,
     stack: Vec<DirectoryFrame>,
     next_index: u64,
     last_discovered_file: Option<InputFile>,
@@ -184,13 +371,24 @@ pub(crate) fn collect_pending_files(
 }
 
 impl PendingFileWalker {
+    #[cfg(test)]
     pub(crate) fn new(source: impl Into<PathBuf>, resume_state: &ResumeState) -> Result<Self> {
+        Self::new_with_profile(source, resume_state, None)
+    }
+
+    pub(crate) fn new_with_profile(
+        source: impl Into<PathBuf>,
+        resume_state: &ResumeState,
+        profile: Option<&PipelineProfileCollector>,
+    ) -> Result<Self> {
         let source = source.into();
         validate_source_directory(&source)?;
+        let listing_pool = DirectoryListingPool::new(&source, profile);
         let root_entries = read_sorted_entries(&source, &source)?;
+        listing_pool.prefetch_directories(&root_entries);
         Ok(Self {
-            source,
             resume_state: resume_state.clone(),
+            listing_pool,
             stack: vec![DirectoryFrame {
                 entries: root_entries,
             }],
@@ -215,7 +413,8 @@ impl PendingFileWalker {
             };
 
             if entry.file_type.is_dir() {
-                let entries = read_sorted_entries(&self.source, &entry.abs_path)?;
+                let entries = self.listing_pool.take_or_read(&entry.abs_path)?;
+                self.listing_pool.prefetch_directories(&entries);
                 self.stack.push(DirectoryFrame { entries });
                 continue;
             }
@@ -884,5 +1083,32 @@ mod tests {
                 .to_string()
                 .contains("failed to read sender directory")
         );
+    }
+
+    #[test]
+    fn pending_file_walker_matches_discover_files_order_on_branched_tree() {
+        let temp = TestDir::new();
+        fs::create_dir_all(temp.path().join("a").join("deep")).unwrap();
+        fs::create_dir_all(temp.path().join("b").join("nested")).unwrap();
+        fs::create_dir_all(temp.path().join("c")).unwrap();
+        fs::write(temp.path().join("root.txt"), b"root").unwrap();
+        fs::write(temp.path().join("a").join("alpha.txt"), b"alpha").unwrap();
+        fs::write(temp.path().join("a").join("deep").join("beta.txt"), b"beta").unwrap();
+        fs::write(
+            temp.path().join("b").join("nested").join("gamma.txt"),
+            b"gamma",
+        )
+        .unwrap();
+        fs::write(temp.path().join("c").join("delta.txt"), b"delta").unwrap();
+
+        let expected = discover_files(temp.path()).unwrap();
+        let mut walker =
+            PendingFileWalker::new(temp.path().to_path_buf(), &empty_resume_state()).unwrap();
+        let mut actual = Vec::new();
+        while let Some(file) = walker.next_pending_file().unwrap() {
+            actual.push(file);
+        }
+
+        assert_eq!(actual, expected);
     }
 }

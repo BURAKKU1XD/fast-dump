@@ -62,7 +62,11 @@ struct ProcessResourceSample {
 #[derive(Debug, Clone)]
 pub(crate) struct LoopbackRunMetrics {
     pub(crate) files_count: u64,
+    pub(crate) skipped_files: u64,
     pub(crate) sent_frames: u64,
+    pub(crate) frame_aborts: u64,
+    pub(crate) frame_rebuilds: u64,
+    pub(crate) avg_files_per_frame: f64,
     pub(crate) raw_read_bytes: u64,
     pub(crate) tar_input_bytes: u64,
     pub(crate) compressed_payload_bytes: u64,
@@ -72,6 +76,10 @@ pub(crate) struct LoopbackRunMetrics {
     pub(crate) compress_duration_ms: f64,
     pub(crate) send_duration_ms: f64,
     pub(crate) total_duration_ms: f64,
+    pub(crate) traversal_wait_ms: f64,
+    pub(crate) ack_wait_ms: f64,
+    pub(crate) flush_count: u64,
+    pub(crate) max_inflight_dirs: u64,
     pub(crate) read_mib_s: f64,
     pub(crate) compress_mib_s: f64,
     pub(crate) send_mib_s: f64,
@@ -412,10 +420,24 @@ pub(crate) fn run_loopback_scenario(
     let compressed_payload_bytes = profile.send.bytes;
     let wire_bytes = sender_stream.total_wire_bytes();
     let wire_overhead_bytes = wire_bytes.saturating_sub(compressed_payload_bytes);
+    let skipped_files = report
+        .files_skipped_open_failed
+        .saturating_add(report.files_skipped_unstable_after_retries);
+    let sent_payload_files = report
+        .files_sent_clean
+        .saturating_add(report.files_sent_best_effort);
 
     LoopbackRunMetrics {
         files_count: profile.files_read,
+        skipped_files,
         sent_frames: report.sent_frames as u64,
+        frame_aborts: report.frame_aborts,
+        frame_rebuilds: report.frame_rebuilds,
+        avg_files_per_frame: if report.sent_frames == 0 {
+            0.0
+        } else {
+            sent_payload_files as f64 / report.sent_frames as f64
+        },
         raw_read_bytes,
         tar_input_bytes: profile.compress.bytes,
         compressed_payload_bytes,
@@ -425,6 +447,10 @@ pub(crate) fn run_loopback_scenario(
         compress_duration_ms: duration_ms(profile.compress.duration),
         send_duration_ms: duration_ms(profile.send.duration),
         total_duration_ms: duration_ms(profile.total.duration),
+        traversal_wait_ms: duration_ms(profile.traversal_wait.duration),
+        ack_wait_ms: duration_ms(profile.ack_wait.duration),
+        flush_count: profile.flush_count,
+        max_inflight_dirs: profile.max_inflight_directory_tasks,
         read_mib_s: stage_speed_or_zero(&profile.read),
         compress_mib_s: stage_speed_or_zero(&profile.compress),
         send_mib_s: stage_speed_or_zero(&profile.send),

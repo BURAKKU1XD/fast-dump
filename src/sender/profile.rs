@@ -22,8 +22,12 @@ pub struct PipelineProfile {
     pub compress: StageProfile,
     pub send: StageProfile,
     pub total: StageProfile,
+    pub traversal_wait: StageProfile,
+    pub ack_wait: StageProfile,
     pub files_read: u64,
     pub read_buffers: u64,
+    pub max_inflight_directory_tasks: u64,
+    pub flush_count: u64,
     pub file_reads: Vec<FileReadProfile>,
 }
 
@@ -100,6 +104,31 @@ impl PipelineProfileCollector {
         let mut state = self.inner.lock().unwrap();
         state.profile.total.bytes = bytes;
         state.profile.total.duration = duration;
+    }
+
+    pub(crate) fn record_traversal_wait(&self, duration: Duration) {
+        let mut state = self.inner.lock().unwrap();
+        state.profile.traversal_wait.bytes = state.profile.traversal_wait.bytes.saturating_add(1);
+        state.profile.traversal_wait.duration += duration;
+    }
+
+    pub(crate) fn record_directory_inflight(&self, inflight_tasks: usize) {
+        let mut state = self.inner.lock().unwrap();
+        state.profile.max_inflight_directory_tasks = state
+            .profile
+            .max_inflight_directory_tasks
+            .max(inflight_tasks as u64);
+    }
+
+    pub(crate) fn record_ack_wait(&self, duration: Duration) {
+        let mut state = self.inner.lock().unwrap();
+        state.profile.ack_wait.bytes = state.profile.ack_wait.bytes.saturating_add(1);
+        state.profile.ack_wait.duration += duration;
+    }
+
+    pub(crate) fn record_flush(&self) {
+        let mut state = self.inner.lock().unwrap();
+        state.profile.flush_count = state.profile.flush_count.saturating_add(1);
     }
 
     pub(crate) fn finish(&self) -> PipelineProfile {
@@ -212,5 +241,28 @@ mod tests {
         assert_eq!(profile.send.duration, Duration::from_millis(8));
         assert_eq!(profile.total.bytes, 123);
         assert_eq!(profile.total.duration, Duration::from_millis(50));
+    }
+
+    #[test]
+    fn collector_tracks_traversal_ack_and_flush_metrics() {
+        let collector = PipelineProfileCollector::default();
+
+        collector.record_traversal_wait(Duration::from_millis(7));
+        collector.record_traversal_wait(Duration::from_millis(5));
+        collector.record_directory_inflight(2);
+        collector.record_directory_inflight(5);
+        collector.record_ack_wait(Duration::from_millis(11));
+        collector.record_ack_wait(Duration::from_millis(13));
+        collector.record_flush();
+        collector.record_flush();
+
+        let profile = collector.finish();
+
+        assert_eq!(profile.traversal_wait.duration, Duration::from_millis(12));
+        assert_eq!(profile.traversal_wait.bytes, 2);
+        assert_eq!(profile.max_inflight_directory_tasks, 5);
+        assert_eq!(profile.ack_wait.duration, Duration::from_millis(24));
+        assert_eq!(profile.ack_wait.bytes, 2);
+        assert_eq!(profile.flush_count, 2);
     }
 }

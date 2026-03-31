@@ -6,11 +6,16 @@ use anyhow::{Context, Result, bail};
 use log::debug;
 use xxhash_rust::xxh3::Xxh3Default;
 
-use crate::network::protocol::{self, Ack, FrameEnd, FrameStart, Message};
+use crate::network::protocol::{self, AbortAck, Ack, FrameEnd, FrameStart, Message};
 
 use super::ReceiverState;
 use super::journal::{ReceiverJournal, recover_partial_archive};
 use super::shared::{bytes_per_sec, send_protocol_error};
+
+pub(crate) enum FrameReceiveResult {
+    Committed(Ack),
+    Aborted(AbortAck),
+}
 
 // Здесь receiver принимает один готовый zstd-frame и коммитит его целиком.
 // Пока Ack не отправлен, journal не двигается, а `.part` можно безопасно
@@ -36,11 +41,50 @@ where
     receive_frame_from_start(stream, state, frame_start)
 }
 
+pub fn receive_frame_abort<T>(stream: &mut T, state: &mut ReceiverState) -> Result<AbortAck>
+where
+    T: Read + Write,
+{
+    let frame_start = match protocol::read_message(stream)? {
+        Message::FrameStart(frame_start) => frame_start,
+        Message::Error(error) => {
+            bail!("peer aborted before frame transfer: {}", error.message);
+        }
+        unexpected => {
+            send_protocol_error(stream, "expected frame start")?;
+            bail!(
+                "unexpected message before frame start: {:?}",
+                unexpected.kind()
+            );
+        }
+    };
+
+    receive_frame_abort_from_start(stream, state, frame_start)
+}
+
 pub(crate) fn receive_frame_from_start<T>(
     stream: &mut T,
     state: &mut ReceiverState,
     frame_start: FrameStart,
 ) -> Result<Ack>
+where
+    T: Read + Write,
+{
+    match receive_frame_event_from_start(stream, state, frame_start)? {
+        FrameReceiveResult::Committed(ack) => Ok(ack),
+        FrameReceiveResult::Aborted(abort_ack) => bail!(
+            "unexpected explicit frame abort while waiting for frame commit: frame_no={} archive_len={}",
+            abort_ack.frame_no,
+            abort_ack.archive_len
+        ),
+    }
+}
+
+pub(crate) fn receive_frame_event_from_start<T>(
+    stream: &mut T,
+    state: &mut ReceiverState,
+    frame_start: FrameStart,
+) -> Result<FrameReceiveResult>
 where
     T: Read + Write,
 {
@@ -96,6 +140,31 @@ where
                     .context("frame compressed length overflow")?;
             }
             Ok(Message::FrameEnd(frame_end)) => break frame_end,
+            Ok(Message::FrameAbort(frame_abort)) => {
+                if frame_abort.frame_no != frame_start.frame_no {
+                    let message = format!(
+                        "unexpected frame abort number: expected {} got {}",
+                        frame_start.frame_no, frame_abort.frame_no
+                    );
+                    drop(file);
+                    rollback_partial_frame(&partial_archive_path, committed_journal.archive_len)?;
+                    state.journal = committed_journal;
+                    send_protocol_error(stream, &message)?;
+                    bail!("{message}");
+                }
+
+                drop(file);
+                rollback_partial_frame(&partial_archive_path, committed_journal.archive_len)?;
+                state.journal = committed_journal.clone();
+
+                let abort_ack = AbortAck {
+                    frame_no: frame_start.frame_no,
+                    archive_len: committed_journal.archive_len,
+                };
+                protocol::write_message(stream, &Message::AbortAck(abort_ack.clone()))
+                    .and_then(|_| stream.flush().context("failed to flush abort ack to peer"))?;
+                return Ok(FrameReceiveResult::Aborted(abort_ack));
+            }
             Ok(Message::Error(error)) => {
                 drop(file);
                 rollback_partial_frame(&partial_archive_path, committed_journal.archive_len)?;
@@ -187,7 +256,25 @@ where
         bytes_per_sec(compressed_len, elapsed)
     );
 
-    Ok(ack)
+    Ok(FrameReceiveResult::Committed(ack))
+}
+
+fn receive_frame_abort_from_start<T>(
+    stream: &mut T,
+    state: &mut ReceiverState,
+    frame_start: FrameStart,
+) -> Result<AbortAck>
+where
+    T: Read + Write,
+{
+    match receive_frame_event_from_start(stream, state, frame_start)? {
+        FrameReceiveResult::Committed(ack) => bail!(
+            "unexpected committed frame while waiting for explicit abort: frame_no={} archive_len={}",
+            ack.frame_no,
+            ack.archive_len
+        ),
+        FrameReceiveResult::Aborted(abort_ack) => Ok(abort_ack),
+    }
 }
 
 fn validate_frame_start(journal: &ReceiverJournal, frame_start: &FrameStart) -> Result<()> {

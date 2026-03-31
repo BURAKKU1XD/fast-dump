@@ -46,7 +46,11 @@ fn sample_row(repeat_index: u32, total_duration_ms: f64, sent_frames: u64) -> Ra
         },
         repeat_index,
         files_count: 1024,
+        skipped_files: 3,
         sent_frames,
+        frame_aborts: 2,
+        frame_rebuilds: 2,
+        avg_files_per_frame: 85.0 + repeat_index as f64,
         raw_read_bytes: 10_000_000,
         tar_input_bytes: 10_500_000,
         compressed_payload_bytes: 7_000_000,
@@ -56,6 +60,10 @@ fn sample_row(repeat_index: u32, total_duration_ms: f64, sent_frames: u64) -> Ra
         compress_duration_ms: 200.0 + repeat_index as f64,
         send_duration_ms: 300.0 + repeat_index as f64,
         total_duration_ms,
+        traversal_wait_ms: 20.0 + repeat_index as f64,
+        ack_wait_ms: 30.0 + repeat_index as f64,
+        flush_count: 0,
+        max_inflight_dirs: 6,
         read_mib_s: 12.5,
         compress_mib_s: 23.5,
         send_mib_s: 34.5,
@@ -102,12 +110,20 @@ fn raw_results_roundtrip_preserves_duration_and_wire_metrics() {
     assert_eq!(loaded.len(), 1);
 
     let parsed = &loaded[0];
+    assert_eq!(parsed.skipped_files, 3);
     assert_eq!(parsed.sent_frames, 9);
+    assert_eq!(parsed.frame_aborts, 2);
+    assert_eq!(parsed.frame_rebuilds, 2);
+    assert_eq!(parsed.avg_files_per_frame, 86.0);
     assert_eq!(parsed.wire_overhead_bytes, 50_000);
     assert_eq!(parsed.read_duration_ms, 101.0);
     assert_eq!(parsed.compress_duration_ms, 201.0);
     assert_eq!(parsed.send_duration_ms, 301.0);
     assert_eq!(parsed.total_duration_ms, 456.0);
+    assert_eq!(parsed.traversal_wait_ms, 21.0);
+    assert_eq!(parsed.ack_wait_ms, 31.0);
+    assert_eq!(parsed.flush_count, 0);
+    assert_eq!(parsed.max_inflight_dirs, 6);
     assert_eq!(parsed.wire_overhead_pct, 0.5);
 }
 
@@ -119,11 +135,19 @@ fn aggregate_summary_rows_averages_new_schema_fields() {
     assert_eq!(summaries.len(), 1);
 
     let summary = &summaries[0];
+    assert_eq!(summary.skipped_files, 3);
     assert_eq!(summary.sent_frames, 12);
+    assert_eq!(summary.frame_aborts, 2);
+    assert_eq!(summary.frame_rebuilds, 2);
+    assert_eq!(summary.avg_files_per_frame, 86.5);
     assert_eq!(summary.wire_overhead_bytes, 50_000);
     assert_eq!(summary.read_duration_ms, 101.5);
     assert_eq!(summary.compress_duration_ms, 201.5);
     assert_eq!(summary.send_duration_ms, 301.5);
     assert_eq!(summary.total_duration_ms, 500.0);
+    assert_eq!(summary.traversal_wait_ms, 21.5);
+    assert_eq!(summary.ack_wait_ms, 31.5);
+    assert_eq!(summary.flush_count, 0);
+    assert_eq!(summary.max_inflight_dirs, 6);
     assert_eq!(summary.wire_overhead_pct, 0.5);
 }

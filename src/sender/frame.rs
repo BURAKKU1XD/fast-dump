@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use std::fs;
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
 use std::time::Instant;
@@ -9,13 +10,33 @@ use tar::{EntryType, Header};
 
 use crate::network::protocol::{self, ResumeState};
 
+use super::readers::IN_MEMORY_SNAPSHOT_THRESHOLD_BYTES;
 use super::{
-    FileDisposition, FileReadOutcome, FileSkipReason, InputFile, PendingFileWalker,
-    PipelineProfile, PipelineProfileCollector, ReadEvent, ReaderPool,
+    DirectFileStream, FileDisposition, FileReadOutcome, FileSkipReason, InputFile,
+    PendingFileWalker, PipelineProfile, PipelineProfileCollector, ReadEvent, ReaderPool,
+    SnapshotStorage,
 };
 
 const DEFAULT_READ_BUFFER_BYTES: usize = 1024 * 1024;
 const TAR_HEADER_BYTES: u64 = 512;
+const DEFAULT_MAX_FILES_PER_FRAME: usize = 4096;
+
+#[derive(Debug, Clone)]
+pub(crate) struct RetryableStreamFailure {
+    pub(crate) file: InputFile,
+}
+
+impl std::fmt::Display for RetryableStreamFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "retryable sender stream failure for {}",
+            self.file.abs_path.display()
+        )
+    }
+}
+
+impl std::error::Error for RetryableStreamFailure {}
 
 // Этот тип описывает уже собранный zstd-frame на стороне sender.
 // Позже сюда будет привязан tar/zstd pipeline, а пока helper получает
@@ -107,10 +128,149 @@ pub(crate) struct FrameBuildConfig<'a> {
     pub(crate) profile: Option<&'a PipelineProfileCollector>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct FramePolicy {
+    pub(crate) soft_target_bytes: u64,
+    pub(crate) max_files_per_frame: usize,
+    pub(crate) large_file_single_frame_threshold: u64,
+    pub(crate) isolate_retried_files: bool,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct FrameProgress {
+    pub(crate) tar_bytes: u64,
+    pub(crate) files_with_payload: usize,
+}
+
+impl FrameProgress {
+    pub(crate) fn note_payload_file(&mut self, size_at_open: u64) {
+        self.tar_bytes = self.tar_bytes.saturating_add(tar_entry_bytes(size_at_open));
+        self.files_with_payload = self.files_with_payload.saturating_add(1);
+    }
+}
+
+impl FramePolicy {
+    pub(crate) fn from_frame_target_bytes(frame_target_bytes: u64) -> Self {
+        Self {
+            soft_target_bytes: frame_target_bytes.max(1),
+            max_files_per_frame: DEFAULT_MAX_FILES_PER_FRAME,
+            large_file_single_frame_threshold: IN_MEMORY_SNAPSHOT_THRESHOLD_BYTES.saturating_add(1),
+            isolate_retried_files: true,
+        }
+    }
+
+    pub(crate) fn should_close_before_next(
+        &self,
+        progress: FrameProgress,
+        next_file: &InputFile,
+        next_file_retries: u32,
+    ) -> bool {
+        if progress.files_with_payload == 0 {
+            return false;
+        }
+
+        if self.isolate_retried_files && next_file_retries > 0 {
+            return true;
+        }
+
+        self.is_probably_large(next_file)
+    }
+
+    pub(crate) fn should_close_after_current(
+        &self,
+        progress: FrameProgress,
+        current_size_at_open: u64,
+        current_retries: u32,
+        has_more_files: bool,
+    ) -> bool {
+        if !has_more_files {
+            return true;
+        }
+
+        if progress.files_with_payload >= self.max_files_per_frame {
+            return true;
+        }
+
+        if progress.tar_bytes >= self.soft_target_bytes {
+            return true;
+        }
+
+        // Держим рискованный файл в отдельном frame, если он уже оказался первым
+        // payload в кадре. Так мы сокращаем объём повторной отправки после abort.
+        if progress.files_with_payload == 1
+            && current_size_at_open >= self.large_file_single_frame_threshold
+        {
+            return true;
+        }
+
+        self.isolate_retried_files && progress.files_with_payload == 1 && current_retries > 0
+    }
+
+    fn is_probably_large(&self, file: &InputFile) -> bool {
+        // Это эвристика только для выбора границы frame. Корректность tar header
+        // и retry-семантика по-прежнему опираются на metadata открытого handle.
+        fs::metadata(&file.abs_path)
+            .map(|metadata| {
+                metadata.is_file() && metadata.len() >= self.large_file_single_frame_threshold
+            })
+            .unwrap_or(false)
+    }
+}
+
+#[derive(Clone)]
 pub(crate) struct PendingFrameFiles {
     walker: PendingFileWalker,
     queued: VecDeque<InputFile>,
     exhausted: bool,
+}
+
+#[cfg(test)]
+pub(crate) mod test_hooks {
+    use std::collections::{BTreeMap, VecDeque};
+    use std::path::Path;
+    use std::sync::{Mutex, OnceLock};
+
+    static STREAM_FAILURES: OnceLock<Mutex<BTreeMap<String, VecDeque<u64>>>> = OnceLock::new();
+
+    fn stream_failures() -> &'static Mutex<BTreeMap<String, VecDeque<u64>>> {
+        STREAM_FAILURES.get_or_init(|| Mutex::new(BTreeMap::new()))
+    }
+
+    fn path_key(path: &Path) -> String {
+        path.to_string_lossy().into_owned()
+    }
+
+    pub(crate) fn fail_stream_after_next_write(path: &Path, after_bytes: u64) {
+        stream_failures()
+            .lock()
+            .unwrap()
+            .entry(path_key(path))
+            .or_default()
+            .push_back(after_bytes.max(1));
+    }
+
+    pub(crate) fn note_streamed_bytes(path: &Path, bytes: u64) -> bool {
+        let mut failures = stream_failures().lock().unwrap();
+        let Some(queue) = failures.get_mut(&path_key(path)) else {
+            return false;
+        };
+        let Some(remaining) = queue.front_mut() else {
+            return false;
+        };
+        if bytes >= *remaining {
+            queue.pop_front();
+            if queue.is_empty() {
+                failures.remove(&path_key(path));
+            }
+            return true;
+        }
+        *remaining -= bytes;
+        false
+    }
+
+    pub(crate) fn clear() {
+        stream_failures().lock().unwrap().clear();
+    }
 }
 
 impl PendingFrameFiles {
@@ -125,11 +285,22 @@ impl PendingFrameFiles {
     // Очередь pending-файлов держит только уже запланированное окно.
     // Остальные пути остаются на стороне walker и открываются по мере надобности.
     pub(crate) fn prefetch(&mut self, readers: &mut ReaderPool) -> Result<(usize, bool)> {
+        self.prefetch_with(readers, |pool, file| pool.schedule(file))
+    }
+
+    pub(crate) fn prefetch_with<F>(
+        &mut self,
+        readers: &mut ReaderPool,
+        mut schedule: F,
+    ) -> Result<(usize, bool)>
+    where
+        F: FnMut(&mut ReaderPool, InputFile) -> Result<()>,
+    {
         let target = readers.prefetch_target();
         while self.queued.len() < target && !self.exhausted {
             match self.walker.next_pending_file()? {
                 Some(file) => {
-                    readers.schedule(file.clone())?;
+                    schedule(readers, file.clone())?;
                     self.queued.push_back(file);
                 }
                 None => {
@@ -179,10 +350,6 @@ impl ChunkCollector {
             chunks: Vec::new(),
             total_written: 0,
         }
-    }
-
-    fn total_written(&self) -> u64 {
-        self.total_written
     }
 
     fn finish(mut self) -> Vec<Vec<u8>> {
@@ -267,7 +434,7 @@ fn prepare_dump_impl(
     let prepare_started = Instant::now();
     let source = source.into();
     let mut sent_raw_bytes = 0_u64;
-    let walker = PendingFileWalker::new(source.clone(), resume_state)?;
+    let walker = PendingFileWalker::new_with_profile(source.clone(), resume_state, profile)?;
     let mut pending = PendingFrameFiles::new(walker);
     debug!(
         "sender prepare_dump started: source={} level={} threads={} frame_target_bytes={}",
@@ -345,7 +512,10 @@ fn prepare_buffered_frame(
     };
 
     let build_started = Instant::now();
+    let policy = FramePolicy::from_frame_target_bytes(config.frame_target_bytes);
     let mut stats = FrameBuildStats::default();
+    let mut progress = FrameProgress::default();
+    let mut last_completed: Option<InputFile> = None;
     let mut encoder = zstd::stream::write::Encoder::new(
         ChunkCollector::new(protocol::MAX_FRAME_CHUNK_BYTES),
         config.level,
@@ -357,6 +527,12 @@ fn prepare_buffered_frame(
 
     let last = loop {
         let file = next_buffered_file(pending)?;
+        if let Some(last) = &last_completed
+            && policy.should_close_before_next(progress, &file, 0)
+        {
+            break last.clone();
+        }
+        let mut completed_payload = None;
         match readers.next_for_with_scheduler(file.index, |pool| pending.prefetch(pool))? {
             ReadEvent::Ready(FileReadOutcome::Snapshot(snapshot)) => {
                 let header_started = Instant::now();
@@ -371,18 +547,28 @@ fn prepare_buffered_frame(
                 if let Some(profile) = config.profile {
                     profile.record_compress(padding_bytes, padding_started.elapsed());
                 }
-                let flush_started = Instant::now();
-                encoder
-                    .flush()
-                    .context("failed to flush zstd encoder at sender file boundary")?;
-                if let Some(profile) = config.profile {
-                    profile.record_compress(0, flush_started.elapsed());
-                }
                 stats.note_snapshot(
                     snapshot.disposition,
                     snapshot.size_at_open,
                     snapshot.retries,
                 );
+                completed_payload = Some((snapshot.size_at_open, snapshot.retries));
+            }
+            ReadEvent::Ready(FileReadOutcome::Direct(mut direct)) => {
+                let header_started = Instant::now();
+                append_tar_header(&mut encoder, &direct.file.rel_path, direct.size_at_open)?;
+                if let Some(profile) = config.profile {
+                    profile.record_compress(TAR_HEADER_BYTES, header_started.elapsed());
+                }
+                stream_direct_file(&mut encoder, &mut direct, config.profile)?;
+                let padding_bytes = tar_padding_bytes(direct.size_at_open) as u64;
+                let padding_started = Instant::now();
+                append_tar_padding(&mut encoder, &direct.file.rel_path, direct.size_at_open)?;
+                if let Some(profile) = config.profile {
+                    profile.record_compress(padding_bytes, padding_started.elapsed());
+                }
+                stats.note_snapshot(direct.disposition, direct.size_at_open, direct.retries);
+                completed_payload = Some((direct.size_at_open, direct.retries));
             }
             ReadEvent::Ready(FileReadOutcome::Skip(skipped)) => {
                 stats.note_skip(skipped.reason, skipped.retries);
@@ -390,11 +576,19 @@ fn prepare_buffered_frame(
             ReadEvent::Fatal { message, .. } => anyhow::bail!("{message}"),
         }
         let last = consume_buffered_file(pending)?;
+        last_completed = Some(last.clone());
         let _ = pending.prefetch(readers)?;
-
-        if pending.next_expected().is_none()
-            || encoder.get_ref().total_written() >= config.frame_target_bytes
-        {
+        if let Some((size_at_open, retries)) = completed_payload {
+            progress.note_payload_file(size_at_open);
+            if policy.should_close_after_current(
+                progress,
+                size_at_open,
+                retries,
+                pending.next_expected().is_some(),
+            ) {
+                break last;
+            }
+        } else if pending.next_expected().is_none() {
             break last;
         }
     };
@@ -404,6 +598,7 @@ fn prepare_buffered_frame(
         .finish()
         .context("failed to finish sender zstd frame")?;
     if let Some(profile) = config.profile {
+        profile.record_flush();
         profile.record_compress(0, finish_started.elapsed());
     }
     let chunks = collector.finish();
@@ -487,35 +682,94 @@ pub(crate) fn stream_staged_snapshot<W>(
 where
     W: Write,
 {
-    let mut staged = std::fs::File::open(&snapshot.staged_path).with_context(|| {
-        format!(
-            "failed to reopen staged sender snapshot {} for {}",
-            snapshot.staged_path.display(),
-            snapshot.file.rel_path
-        )
-    })?;
-    let mut buffer = vec![0_u8; DEFAULT_READ_BUFFER_BYTES];
-    loop {
-        let read = staged.read(&mut buffer).with_context(|| {
-            format!(
-                "failed to read staged sender snapshot {} for {}",
-                snapshot.staged_path.display(),
-                snapshot.file.rel_path
-            )
-        })?;
-        if read == 0 {
-            break;
+    match &snapshot.storage {
+        SnapshotStorage::Memory(bytes) => {
+            let write_started = Instant::now();
+            writer.write_all(bytes).with_context(|| {
+                format!(
+                    "failed to stream sender file {}",
+                    snapshot.file.abs_path.display()
+                )
+            })?;
+            #[cfg(test)]
+            if test_hooks::note_streamed_bytes(&snapshot.file.abs_path, bytes.len() as u64) {
+                return Err(RetryableStreamFailure {
+                    file: snapshot.file.clone(),
+                }
+                .into());
+            }
+            if let Some(profile) = profile {
+                profile.record_compress(bytes.len() as u64, write_started.elapsed());
+            }
         }
+    }
+
+    Ok(())
+}
+
+pub(crate) fn stream_direct_file<W>(
+    writer: &mut W,
+    direct: &mut DirectFileStream,
+    profile: Option<&PipelineProfileCollector>,
+) -> Result<()>
+where
+    W: Write,
+{
+    let mut buffer = vec![0_u8; DEFAULT_READ_BUFFER_BYTES];
+    let mut remaining = direct.size_at_open;
+    let mut exposed_bytes = 0_u64;
+
+    while remaining > 0 {
+        if let Some(limit) = direct.forced_short_read_limit
+            && exposed_bytes >= limit
+        {
+            return Err(RetryableStreamFailure {
+                file: direct.file.clone(),
+            }
+            .into());
+        }
+
+        let mut read_limit = buffer.len().min(remaining as usize);
+        if let Some(limit) = direct.forced_short_read_limit {
+            read_limit = read_limit.min(limit.saturating_sub(exposed_bytes) as usize);
+        }
+
+        let read = direct
+            .input
+            .read(&mut buffer[..read_limit])
+            .with_context(|| {
+                format!(
+                    "failed to read sender file {}",
+                    direct.file.abs_path.display()
+                )
+            })?;
+        if read == 0 {
+            return Err(RetryableStreamFailure {
+                file: direct.file.clone(),
+            }
+            .into());
+        }
+
         let write_started = Instant::now();
         writer.write_all(&buffer[..read]).with_context(|| {
             format!(
                 "failed to stream sender file {}",
-                snapshot.file.abs_path.display()
+                direct.file.abs_path.display()
             )
         })?;
+        #[cfg(test)]
+        if test_hooks::note_streamed_bytes(&direct.file.abs_path, read as u64) {
+            return Err(RetryableStreamFailure {
+                file: direct.file.clone(),
+            }
+            .into());
+        }
         if let Some(profile) = profile {
             profile.record_compress(read as u64, write_started.elapsed());
         }
+
+        remaining -= read as u64;
+        exposed_bytes += read as u64;
     }
 
     Ok(())
@@ -524,13 +778,11 @@ where
 #[cfg(test)]
 mod tests {
     use std::fs;
-    use std::io::Write;
     use std::path::{Path, PathBuf};
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::{prepare_dump, tar_entry_bytes};
-    use crate::network::protocol::{self, ResumeState};
-    use crate::sender::InputFile;
+    use crate::network::protocol::ResumeState;
 
     struct TestDir {
         path: PathBuf,
@@ -700,29 +952,12 @@ mod tests {
     }
 
     #[test]
-    fn prepare_dump_splits_only_after_large_file_when_target_is_crossed_mid_file() {
+    fn prepare_dump_keeps_large_file_isolated_with_soft_frame_policy() {
         let source_dir = TestDir::new();
         let payload_path = source_dir.path().join("payload.bin");
         write_random_file(&payload_path, 256 * 1024, 11);
         fs::write(source_dir.path().join("tail.txt"), b"tail").unwrap();
-        let payload = InputFile {
-            index: 1,
-            abs_path: payload_path,
-            rel_path: "payload.bin".to_owned(),
-        };
-        let mut encoder = zstd::stream::write::Encoder::new(
-            super::ChunkCollector::new(protocol::MAX_FRAME_CHUNK_BYTES),
-            3,
-        )
-        .unwrap();
-        encoder.multithread(1).unwrap();
-        super::append_tar_header(&mut encoder, &payload.rel_path, 256 * 1024).unwrap();
-        encoder
-            .write_all(&fs::read(&payload.abs_path).unwrap())
-            .unwrap();
-        super::append_tar_padding(&mut encoder, &payload.rel_path, 256 * 1024).unwrap();
-        encoder.flush().unwrap();
-        let payload_boundary_bytes = encoder.get_ref().total_written();
+        let payload_tar_bytes = tar_entry_bytes(256 * 1024);
 
         let below_target = prepare_dump(
             source_dir.path().to_path_buf(),
@@ -734,7 +969,7 @@ mod tests {
             },
             3,
             1,
-            payload_boundary_bytes - 1,
+            payload_tar_bytes.saturating_sub(1),
         )
         .unwrap();
         assert_eq!(below_target.frames.len(), 2);
@@ -758,7 +993,7 @@ mod tests {
             },
             3,
             1,
-            payload_boundary_bytes,
+            payload_tar_bytes,
         )
         .unwrap();
         assert_eq!(exact_target.frames.len(), 2);
@@ -778,14 +1013,18 @@ mod tests {
             },
             3,
             1,
-            payload_boundary_bytes + 1,
+            payload_tar_bytes + 1,
         )
         .unwrap();
-        assert_eq!(above_target.frames.len(), 1);
+        assert_eq!(above_target.frames.len(), 2);
         assert_eq!(
             above_target.frames[0].outbound.first_file_path,
             "payload.bin"
         );
-        assert_eq!(above_target.frames[0].outbound.last_file_path, "tail.txt");
+        assert_eq!(
+            above_target.frames[0].outbound.last_file_path,
+            "payload.bin"
+        );
+        assert_eq!(above_target.frames[1].outbound.first_file_path, "tail.txt");
     }
 }

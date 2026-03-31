@@ -1,11 +1,11 @@
-use std::fs::OpenOptions;
+use std::fs::{self, OpenOptions};
 use std::io::{Read, Write};
 use std::time::Instant;
 
 use anyhow::{Context, Result, bail};
 use log::debug;
 
-use crate::network::protocol::{self, Finish, Message};
+use crate::network::protocol::{self, Finish, IssueJournalEntry, IssueJournalReason, Message};
 
 use super::ReceiverState;
 use super::journal::recover_partial_archive;
@@ -29,13 +29,14 @@ where
         }
     };
 
-    receive_finish_message(stream, state, finish)
+    receive_finish_message(stream, state, finish, &[])
 }
 
 pub(crate) fn receive_finish_message<T>(
     stream: &mut T,
     state: &ReceiverState,
     finish: Finish,
+    issue_journal: &[IssueJournalEntry],
 ) -> Result<Finish>
 where
     T: Read + Write,
@@ -52,21 +53,99 @@ where
         let _ = send_protocol_error(stream, &message);
         return Err(error.context("failed to finalize receiver archive"));
     }
+    if let Err(error) = persist_issue_journal(state, issue_journal) {
+        let message = error.to_string();
+        let _ = send_protocol_error(stream, &message);
+        return Err(error.context("failed to persist receiver issue journal"));
+    }
 
     protocol::write_message(stream, &Message::FinishAck)?;
     stream
         .flush()
         .context("failed to flush finish ack to peer")?;
     debug!(
-        "receiver finish acknowledged: dump_id={} final_frame_no={} final_file_index={} final_file_path={} elapsed_ms={}",
+        "receiver finish acknowledged: dump_id={} final_frame_no={} final_file_index={} final_file_path={} issue_count={} elapsed_ms={}",
         state.paths.dump_id(),
         finish.final_frame_no,
         finish.final_file_index,
         finish.final_file_path,
+        issue_journal.len(),
         finish_started.elapsed().as_millis()
     );
 
     Ok(finish)
+}
+
+fn persist_issue_journal(state: &ReceiverState, issue_journal: &[IssueJournalEntry]) -> Result<()> {
+    let issue_journal_path = state.paths.issue_journal_path();
+    if issue_journal.is_empty() {
+        if issue_journal_path.exists() {
+            fs::remove_file(issue_journal_path).with_context(|| {
+                format!(
+                    "failed to remove stale receiver issue journal {}",
+                    issue_journal_path.display()
+                )
+            })?;
+        }
+        return Ok(());
+    }
+
+    let mut file = OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(issue_journal_path)
+        .with_context(|| {
+            format!(
+                "failed to create receiver issue journal {}",
+                issue_journal_path.display()
+            )
+        })?;
+    file.write_all(b"file_index\tattempts\treason\tfile_path\tlast_error\n")
+        .with_context(|| {
+            format!(
+                "failed to write receiver issue journal header {}",
+                issue_journal_path.display()
+            )
+        })?;
+    for entry in issue_journal {
+        writeln!(
+            file,
+            "{}\t{}\t{}\t{}\t{}",
+            entry.file_index,
+            entry.attempts,
+            issue_journal_reason(entry.reason),
+            escape_issue_field(&entry.file_path),
+            escape_issue_field(&entry.last_error)
+        )
+        .with_context(|| {
+            format!(
+                "failed to append receiver issue journal entry {}",
+                issue_journal_path.display()
+            )
+        })?;
+    }
+    file.sync_all().with_context(|| {
+        format!(
+            "failed to fsync receiver issue journal {}",
+            issue_journal_path.display()
+        )
+    })
+}
+
+fn issue_journal_reason(reason: IssueJournalReason) -> &'static str {
+    match reason {
+        IssueJournalReason::OpenFailed => "open_failed",
+        IssueJournalReason::UnstableAfterRetries => "unstable_after_retries",
+    }
+}
+
+fn escape_issue_field(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('\t', "\\t")
+        .replace('\r', "\\r")
+        .replace('\n', "\\n")
 }
 
 fn validate_finish(journal: &super::ReceiverJournal, finish: &Finish) -> Result<()> {

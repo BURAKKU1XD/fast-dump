@@ -7,10 +7,11 @@
 - Terminal markdown tables already exist.
 - Fixed-point `Criterion` benchmarks for `prepare_dump`, `scan_source`, and
   `receive_frame_commit` remain useful and stay separate from the matrix runner.
-- Only `manySmallFiles` is implemented in the matrix runner today.
-- This document captures the agreed target state and the implementation order
-  for the ongoing benchmark work. Runtime documentation in `README.md` should
-  continue to describe only what is already implemented.
+- The matrix runner now supports `manySmallFiles`, `bigFiles`, and `mixed`.
+- Raw and summary rows already include absolute stage durations, frame counts,
+  wire overhead, and sender-side retry/rebuild diagnostics.
+- Runtime documentation in `README.md` should continue to describe only what is
+  already implemented.
 
 ## Goal
 
@@ -43,6 +44,41 @@ Example:
   `[1, 2, 4, 8, 16, 31]`.
 - The coarse matrix size becomes `6 * 3 * 4 = 72` scenarios per dataset.
 - With 3 datasets, the full coarse pass becomes `216` scenario runs.
+
+## 2026-03-31 Coarse Sweep Results
+
+Measured on the current redesign with the full `216`-scenario coarse matrix:
+
+- `bigFiles`: best total time at `threads=4`, `frame_target_mb=64`,
+  `read_buffer_kb=4096`
+  - `1543.16 MiB/s`
+  - `829.47 ms`
+  - `3` frames, `1.00` files per frame
+- `manySmallFiles`: best total time at `threads=1`, `frame_target_mb=16`,
+  `read_buffer_kb=64`
+  - `38.18 MiB/s`
+  - `2301.80 ms`
+  - `10` frames, `4000` files per frame
+- `mixed`: best total time at `threads=2`, `frame_target_mb=16`,
+  `read_buffer_kb=64`
+  - `400.09 MiB/s`
+  - `2184.43 ms`
+  - `137` frames, `73.97` files per frame
+
+Observed conclusions:
+
+- `manySmallFiles` no longer behaves like a pure pathological bottleneck; the
+  redesign moved it from sub-`1 MiB/s` territory into the high-`30 MiB/s`
+  range on the same host class.
+- `bigFiles` benefits from moderate parallel compression and large buffers, but
+  does not need extreme thread counts.
+- `mixed` now prefers a moderate thread count and medium frame size instead of
+  maxing out cores.
+- `frame_aborts` stayed at `0` across the coarse sweep, so the new rollback
+  machinery is present but not active in steady-state healthy runs.
+- `ack_wait_ms` is now directly measurable and remains a meaningful part of
+  total time for `manySmallFiles` and `mixed`, which is useful for later
+  receiver-side analysis.
 
 ## Workflow
 
@@ -101,7 +137,11 @@ Each raw scenario row and each aggregated summary row should include:
 - `frame_target_mb`
 - `read_buffer_kb`
 - `files_count`
+- `skipped_files`
 - `sent_frames`
+- `frame_aborts`
+- `frame_rebuilds`
+- `avg_files_per_frame`
 - `raw_read_bytes`
 - `tar_input_bytes`
 - `compressed_payload_bytes`
@@ -111,6 +151,10 @@ Each raw scenario row and each aggregated summary row should include:
 - `compress_duration_ms`
 - `send_duration_ms`
 - `total_duration_ms`
+- `traversal_wait_ms`
+- `ack_wait_ms`
+- `flush_count`
+- `max_inflight_dirs`
 - `read_mib_s`
 - `compress_mib_s`
 - `send_mib_s`
@@ -171,10 +215,11 @@ Operator-facing markdown should show a compact subset of metrics:
 - `total_duration_ms`
 - `total_mib_s`
 - `sent_frames`
-- `compression_ratio_pct`
+- `avg_files_per_frame`
+- `frame_aborts`
+- `traversal_wait_ms`
+- `ack_wait_ms`
 - `max_rss_mib`
-- `avg_cpu_pct`
-- `wire_overhead_pct`
 
 ## Execution Model
 

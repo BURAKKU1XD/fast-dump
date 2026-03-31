@@ -231,7 +231,7 @@ fn write_mixed_entropy_file(path: &Path, size: u64, seed: u64) {
         let chunk_len = remaining.min(buffer.len() as u64) as usize;
         let chunk = &mut buffer[..chunk_len];
         match seed.wrapping_add(chunk_index.wrapping_mul(17)) % 8 {
-            0 | 1 | 2 => random_generator.fill(chunk),
+            0..=2 => random_generator.fill(chunk),
             3 | 4 => fill_mutated_pattern(
                 chunk,
                 &template_a,

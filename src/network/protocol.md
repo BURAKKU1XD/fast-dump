@@ -25,12 +25,17 @@ wire session после установки TCP.
 5. для каждого отправляемого zstd-frame:
    - sender отправляет `FrameStart`
    - sender отправляет ноль или больше `FrameChunk`
-   - sender отправляет `FrameEnd`
-   - receiver проверяет длину и checksum, `fsync`-ает `.part`, persist-ит journal
+   - sender либо отправляет `FrameEnd`, либо явно отменяет текущий незакоммиченный frame через
+     `FrameAbort`
+   - при `FrameEnd` receiver проверяет длину и checksum, `fsync`-ает `.part`, persist-ит journal
      и только потом отвечает `Ack`
-6. sender отправляет `Finish`
-7. receiver локально дописывает tar end blocks как отдельный финальный zstd-frame,
+   - при `FrameAbort` receiver откатывает `.part` обратно к последнему committed `archive_len`
+     и отвечает `AbortAck`
+6. если в сессии были terminal skip, sender отправляет `IssueJournalChunk` zero or more times
+7. sender отправляет `Finish`
+8. receiver локально дописывает tar end blocks как отдельный финальный zstd-frame,
    `fsync`-ает архив, переименовывает `.part` в финальный `.tar.zst`,
+   при наличии terminal skip пишет рядом `<dump_id>.tar.zst.issues.tsv`,
    удаляет journal и отвечает `FinishAck`
 
 Если frame не дошёл до `Ack`, receiver не продвигает committed state. При ошибке
@@ -101,6 +106,9 @@ wire session после установки TCP.
 | `Finish` | 9 | `final_frame_no: u64`, `final_file_index: u64`, `final_file_path: path` |
 | `FinishAck` | 10 | пустое body |
 | `Error` | 11 | `message: string` |
+| `FrameAbort` | 12 | `frame_no: u64` |
+| `AbortAck` | 13 | `frame_no: u64`, `archive_len: u64` |
+| `IssueJournalChunk` | 14 | `entry_count: u32`, затем повторяющиеся `file_index: u64`, `file_path: path`, `attempts: u32`, `reason: u8`, `last_error: string` |
 
 ## Handshake Semantics
 
@@ -153,8 +161,8 @@ Receiver:
 
 1. `FrameStart`
 2. `FrameChunk`*
-3. `FrameEnd`
-4. `Ack`
+3. либо `FrameEnd`, либо `FrameAbort`
+4. либо `Ack`, либо `AbortAck`
 
 Правила:
 
@@ -166,6 +174,8 @@ Receiver:
   `compressed_len` и `compressed_xxh3_64` инкрементально
 - `Ack` отправляется только после успешной проверки `FrameEnd`, `fsync` partial
   archive и persist journal
+- `FrameAbort` разрешён только для текущего незакоммиченного frame и не меняет committed journal
+- `AbortAck.archive_len` всегда равен последнему committed `archive_len` после rollback
 - при checksum/length mismatch receiver отправляет `Error` и откатывает
   partial archive обратно к предыдущему committed `archive_len`
 - при разрыве соединения до `Ack` sender считает frame незакоммиченным,
@@ -176,10 +186,18 @@ Receiver:
 `Finish` закрывает dump по последней уже committed boundary, а не по "частично
 отправленному" состоянию.
 
+Перед `Finish` sender может передать zero or more `IssueJournalChunk`:
+
+- chunk-ы идут только после всех committed frame-ов этой сессии
+- каждый chunk содержит часть sender-side issue journal для terminal skip
+- receiver держит эти записи в памяти до `Finish` и не влияет ими на resume state
+
 Receiver перед `FinishAck`:
 
 - валидирует `final_frame_no`, `final_file_index` и `final_file_path`
   против journal
+- при наличии `IssueJournalChunk` пишет их рядом с финальным архивом в
+  `<dump_id>.tar.zst.issues.tsv`
 - дописывает два tar end blocks (`1024` нулевых байта) как отдельный локальный
   zstd-frame
 - `fsync`-ает архив
@@ -194,7 +212,7 @@ Receiver перед `FinishAck`:
 - integer endianness
 - message kinds and body layout
 - role model
-- порядок `Hello -> HelloAck -> ResumeQuery -> ResumeState -> Frame* -> Ack -> Finish -> FinishAck`
+- порядок `Hello -> HelloAck -> ResumeQuery -> ResumeState -> Frame* -> (Ack | AbortAck) -> IssueJournalChunk* -> Finish -> FinishAck`
 - frame commit semantics через `Ack`
 - лимиты размера `FrameChunk` и control messages
 

@@ -9,7 +9,7 @@ use crate::network::protocol::{self, Message};
 
 use super::ReceiverState;
 use super::finish::receive_finish_message;
-use super::frame::receive_frame_from_start;
+use super::frame::{FrameReceiveResult, receive_frame_event_from_start};
 use super::resume::respond_resume_query_checked;
 use super::shared::send_protocol_error;
 
@@ -41,6 +41,7 @@ where
     let session_started = Instant::now();
     let mut state = respond_resume_query_checked(stream, data_dir, expected_dump_id)?;
     let resume_state = state.resume_state();
+    let mut issue_journal = Vec::new();
     debug!(
         "receiver dump session ready: dump_id={} resume_frame={} resume_file_index={} archive_len={}",
         state.paths.dump_id(),
@@ -52,16 +53,22 @@ where
     loop {
         match protocol::read_message(stream)? {
             Message::FrameStart(frame_start) => {
-                receive_frame_from_start(stream, &mut state, frame_start)?;
+                match receive_frame_event_from_start(stream, &mut state, frame_start)? {
+                    FrameReceiveResult::Committed(_) | FrameReceiveResult::Aborted(_) => {}
+                }
+            }
+            Message::IssueJournalChunk(chunk) => {
+                issue_journal.extend(chunk.entries);
             }
             Message::Finish(finish) => {
-                let finish = receive_finish_message(stream, &state, finish)?;
+                let finish = receive_finish_message(stream, &state, finish, &issue_journal)?;
                 let final_archive_path = state.paths.final_archive_path().to_path_buf();
                 debug!(
-                    "receiver dump session completed: dump_id={} final_frame_no={} final_file_index={} total_elapsed_ms={}",
+                    "receiver dump session completed: dump_id={} final_frame_no={} final_file_index={} issue_count={} total_elapsed_ms={}",
                     state.paths.dump_id(),
                     finish.final_frame_no,
                     finish.final_file_index,
+                    issue_journal.len(),
                     session_started.elapsed().as_millis()
                 );
                 return Ok(ReceiveReport {
@@ -75,7 +82,10 @@ where
                 bail!("peer aborted during dump session: {}", error.message);
             }
             unexpected => {
-                send_protocol_error(stream, "expected frame start or finish")?;
+                send_protocol_error(
+                    stream,
+                    "expected frame start, issue journal chunk, or finish",
+                )?;
                 bail!(
                     "unexpected message during dump session: {:?}",
                     unexpected.kind()
@@ -91,7 +101,8 @@ mod tests {
 
     use super::*;
     use crate::network::protocol::{
-        Ack, ErrorMessage, FrameChunk, FrameStart, Message, ResumeQuery, ResumeState,
+        AbortAck, Ack, ErrorMessage, FrameChunk, FrameStart, IssueJournalChunk, IssueJournalEntry,
+        IssueJournalReason, Message, ResumeQuery, ResumeState,
     };
     use crate::receiver::test_support::*;
     use crate::sender::prepare_dump;
@@ -215,7 +226,7 @@ mod tests {
         assert_eq!(
             replies[1],
             Message::Error(ErrorMessage {
-                message: "expected frame start or finish".to_owned(),
+                message: "expected frame start, issue journal chunk, or finish".to_owned(),
             })
         );
     }
@@ -306,6 +317,147 @@ mod tests {
             vec![
                 ("alpha.txt".to_owned(), b"alpha".to_vec()),
                 ("nested/beta.txt".to_owned(), b"beta".to_vec()),
+            ]
+        );
+    }
+
+    #[test]
+    fn receive_dump_persists_uploaded_issue_journal_before_finish() {
+        let receiver_dir = TestDir::new();
+        let mut request = encode_message(&Message::ResumeQuery(ResumeQuery {
+            dump_id: "dump-issues".to_owned(),
+        }));
+        request.extend_from_slice(&encode_message(&Message::IssueJournalChunk(
+            IssueJournalChunk {
+                entries: vec![
+                    IssueJournalEntry {
+                        file_index: 2,
+                        file_path: "beta.txt".to_owned(),
+                        attempts: 3,
+                        reason: IssueJournalReason::UnstableAfterRetries,
+                        last_error: "short read".to_owned(),
+                    },
+                    IssueJournalEntry {
+                        file_index: 3,
+                        file_path: "nested/gamma.txt".to_owned(),
+                        attempts: 1,
+                        reason: IssueJournalReason::OpenFailed,
+                        last_error: "access denied".to_owned(),
+                    },
+                ],
+            },
+        )));
+        request.extend_from_slice(&encode_message(&Message::Finish(protocol::Finish {
+            final_frame_no: 0,
+            final_file_index: 0,
+            final_file_path: String::new(),
+        })));
+
+        let mut stream = ScriptedStream::new(request);
+
+        let report = receive_dump(&mut stream, receiver_dir.path().to_path_buf()).unwrap();
+        let replies = decode_messages(&stream.written);
+        let issue_journal_path = receiver_dir.path().join("dump-issues.tar.zst.issues.tsv");
+        let issue_journal = fs::read_to_string(&issue_journal_path).unwrap();
+
+        assert_eq!(
+            replies,
+            vec![
+                Message::ResumeState(report.resume_state.clone()),
+                Message::FinishAck
+            ]
+        );
+        assert!(report.final_archive_path.exists());
+        assert!(issue_journal_path.exists());
+        assert!(issue_journal.contains("file_index\tattempts\treason\tfile_path\tlast_error"));
+        assert!(issue_journal.contains("2\t3\tunstable_after_retries\tbeta.txt\tshort read"));
+        assert!(issue_journal.contains("3\t1\topen_failed\tnested/gamma.txt\taccess denied"));
+    }
+
+    #[test]
+    fn receive_dump_rolls_back_explicitly_aborted_frame_and_continues() {
+        let receiver_dir = TestDir::new();
+
+        let frame1 = FrameStart {
+            frame_no: 1,
+            first_file_index: 1,
+            first_file_path: "root/a.bin".to_owned(),
+            level: 3,
+            threads: 2,
+        };
+        let frame2 = FrameStart {
+            frame_no: 2,
+            first_file_index: 2,
+            first_file_path: "root/b.bin".to_owned(),
+            level: 3,
+            threads: 2,
+        };
+
+        let mut request = encode_message(&Message::ResumeQuery(ResumeQuery {
+            dump_id: "dump-02".to_owned(),
+        }));
+        request.extend_from_slice(&encode_message(&Message::FrameStart(frame1.clone())));
+        request.extend_from_slice(&encode_message(&Message::FrameChunk(FrameChunk {
+            bytes: b"aaa".to_vec(),
+        })));
+        request.extend_from_slice(&encode_message(&Message::FrameEnd(frame_end(
+            frame1.frame_no,
+            1,
+            "root/a.bin",
+            &[b"aaa".as_slice()],
+        ))));
+        request.extend_from_slice(&encode_message(&Message::FrameStart(frame2.clone())));
+        request.extend_from_slice(&encode_message(&Message::FrameChunk(FrameChunk {
+            bytes: b"partial".to_vec(),
+        })));
+        request.extend_from_slice(&encode_message(&Message::FrameAbort(
+            protocol::FrameAbort {
+                frame_no: frame2.frame_no,
+            },
+        )));
+        request.extend_from_slice(&encode_message(&Message::FrameStart(frame2.clone())));
+        request.extend_from_slice(&encode_message(&Message::FrameChunk(FrameChunk {
+            bytes: b"bbbb".to_vec(),
+        })));
+        request.extend_from_slice(&encode_message(&Message::FrameEnd(frame_end(
+            frame2.frame_no,
+            2,
+            "root/b.bin",
+            &[b"bbbb".as_slice()],
+        ))));
+        request.extend_from_slice(&encode_message(&Message::Finish(protocol::Finish {
+            final_frame_no: 2,
+            final_file_index: 2,
+            final_file_path: "root/b.bin".to_owned(),
+        })));
+
+        let mut stream = ScriptedStream::new(request);
+
+        let report = receive_dump(&mut stream, receiver_dir.path().to_path_buf()).unwrap();
+        let replies = decode_messages(&stream.written);
+
+        assert_eq!(report.state.journal.archive_len, 7);
+        assert_eq!(
+            replies,
+            vec![
+                Message::ResumeState(report.resume_state.clone()),
+                Message::Ack(Ack {
+                    frame_no: 1,
+                    last_file_index: 1,
+                    last_file_path: "root/a.bin".to_owned(),
+                    archive_len: 3,
+                }),
+                Message::AbortAck(AbortAck {
+                    frame_no: 2,
+                    archive_len: 3,
+                }),
+                Message::Ack(Ack {
+                    frame_no: 2,
+                    last_file_index: 2,
+                    last_file_path: "root/b.bin".to_owned(),
+                    archive_len: 7,
+                }),
+                Message::FinishAck,
             ]
         );
     }

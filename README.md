@@ -140,10 +140,13 @@ Actual runtime message flow:
    - sender sends `FrameEnd`
    - receiver verifies checksum and length, fsyncs, persists journal, then sends
      `Ack`
-7. Sender sends `Finish`.
-8. Receiver appends tar end blocks as a local final zstd frame, fsyncs, renames
+7. If terminal skips happened, sender uploads zero or more `IssueJournalChunk`
+   control messages.
+8. Sender sends `Finish`.
+9. Receiver appends tar end blocks as a local final zstd frame, fsyncs, renames
    `.part` into the final `.tar.zst`, removes the journal, and replies with
-   `FinishAck`.
+   `FinishAck`. When terminal skips were uploaded, receiver also persists
+   `<dump_id>.tar.zst.issues.tsv` next to the final archive.
 
 At most one unacknowledged frame is lost on disconnect.
 
@@ -164,15 +167,35 @@ At most one unacknowledged frame is lost on disconnect.
   - at most `3` immediate attempts are made
   - exhausted files are skipped and counted in aggregate stats
 - Non-regular entries are skipped with a warning.
+- Frame boundaries stay on completed files, but `frame_target` is treated as a
+  soft target rather than a mandatory per-file flush boundary.
+- Large direct-stream files and previously retried files may be isolated into
+  dedicated frames to reduce rollback cost after a retryable failure.
+- Terminal skips still stay aggregate-only in sender CLI output, but the sender
+  now uploads a compact issue journal tail and the receiver persists it as
+  `<dump_id>.tar.zst.issues.tsv` on successful finish.
 
 Implementation detail:
 
-- The current sender stages each accepted snapshot into a temporary file on disk
-  before compression. This keeps large files out of RAM while allowing the
-  compressor and network writer to stream from a stable snapshot.
+- The current sender keeps accepted small-file snapshots in memory and streams
+  accepted large files directly from an authoritative source handle into tar,
+  zstd, and the transport. This keeps large files out of RAM while removing
+  temp-file overhead from the common send path.
 - The production send path streams compressed bytes directly to the transport via
   `FrameChunk` messages.
 - The buffered `prepare_dump` path still exists for tests and benchmarks.
+
+## Current Benchmark Notes
+
+The coarse loopback matrix on `2026-03-31` currently points to these
+dataset-specific winners:
+
+- `manySmallFiles`: `threads=1`, `frame_target_mb=16`, `read_buffer_kb=64`
+- `bigFiles`: `threads=4`, `frame_target_mb=64`, `read_buffer_kb=4096`
+- `mixed`: `threads=2`, `frame_target_mb=16`, `read_buffer_kb=64`
+
+These are measured matrix winners, not automatic runtime defaults. See
+`BENCH.md` for the full coarse-sweep context and the current result schema.
 
 ## Repository Layout
 
@@ -182,8 +205,8 @@ Implementation detail:
 - `src/network/protocol.rs`: wire codec and message helpers.
 - `src/network/protocol.md`: protocol reference for the current wire format.
 - `src/sender/source.rs`: deterministic source discovery and resume validation.
-- `src/sender/readers.rs`: snapshot attempts, retries, staging, and adaptive
-  reader scaling.
+- `src/sender/readers.rs`: snapshot attempts, retries, small-file buffering,
+  large-file direct handles, and adaptive reader scaling.
 - `src/sender/frame.rs`: tar and zstd frame assembly helpers.
 - `src/sender/session.rs`: streaming send loop and aggregate reporting.
 - `src/receiver/journal.rs`: persisted receiver state and recovery.

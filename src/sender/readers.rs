@@ -1,8 +1,6 @@
 use std::collections::{BTreeMap, VecDeque};
-use std::fs::{self, File, OpenOptions};
-use std::io::{Read, Write};
-use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::fs::File;
+use std::io::Read;
 use std::thread;
 use std::time::Instant;
 
@@ -183,6 +181,7 @@ pub(crate) mod test_hooks {
 struct ReaderTask {
     file: InputFile,
     read_buffer_bytes: usize,
+    max_attempts: u32,
     profile: Option<PipelineProfileCollector>,
 }
 
@@ -192,8 +191,7 @@ enum ReaderCommand {
     Stop,
 }
 
-const MAX_SNAPSHOT_ATTEMPTS: u32 = 3;
-static STAGED_FILE_COUNTER: AtomicU64 = AtomicU64::new(1);
+pub(crate) const MAX_SNAPSHOT_ATTEMPTS: u32 = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum FileDisposition {
@@ -207,19 +205,43 @@ pub(crate) enum FileSkipReason {
     UnstableAfterRetries,
 }
 
+pub(crate) const IN_MEMORY_SNAPSHOT_THRESHOLD_BYTES: u64 = 64 * 1024;
+
+#[derive(Debug)]
+pub(crate) enum SnapshotStorage {
+    Memory(Vec<u8>),
+}
+
 #[derive(Debug)]
 pub(crate) struct FileSnapshot {
     pub(crate) file: InputFile,
     pub(crate) size_at_open: u64,
-    pub(crate) staged_path: PathBuf,
+    pub(crate) storage: SnapshotStorage,
     pub(crate) disposition: FileDisposition,
     pub(crate) retries: u32,
 }
 
-impl Drop for FileSnapshot {
-    fn drop(&mut self) {
-        let _ = fs::remove_file(&self.staged_path);
+#[cfg(test)]
+impl FileSnapshot {
+    fn is_in_memory(&self) -> bool {
+        matches!(self.storage, SnapshotStorage::Memory(_))
     }
+
+    fn bytes_for_test(&self) -> Vec<u8> {
+        match &self.storage {
+            SnapshotStorage::Memory(bytes) => bytes.clone(),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct DirectFileStream {
+    pub(crate) file: InputFile,
+    pub(crate) input: File,
+    pub(crate) size_at_open: u64,
+    pub(crate) forced_short_read_limit: Option<u64>,
+    pub(crate) disposition: FileDisposition,
+    pub(crate) retries: u32,
 }
 
 #[derive(Debug)]
@@ -227,11 +249,13 @@ pub(crate) struct SkippedFile {
     pub(crate) file: InputFile,
     pub(crate) reason: FileSkipReason,
     pub(crate) retries: u32,
+    pub(crate) last_error: String,
 }
 
 #[derive(Debug)]
 pub(crate) enum FileReadOutcome {
     Snapshot(FileSnapshot),
+    Direct(DirectFileStream),
     Skip(SkippedFile),
 }
 
@@ -245,6 +269,7 @@ impl ReadEvent {
     fn file_index(&self) -> u64 {
         match self {
             Self::Ready(FileReadOutcome::Snapshot(snapshot)) => snapshot.file.index,
+            Self::Ready(FileReadOutcome::Direct(direct)) => direct.file.index,
             Self::Ready(FileReadOutcome::Skip(skipped)) => skipped.file.index,
             Self::Fatal { file_index, .. } => *file_index,
         }
@@ -410,11 +435,20 @@ impl ReaderPool {
     }
 
     pub(crate) fn schedule(&mut self, file: InputFile) -> Result<()> {
+        self.schedule_with_attempt_limit(file, MAX_SNAPSHOT_ATTEMPTS)
+    }
+
+    pub(crate) fn schedule_with_attempt_limit(
+        &mut self,
+        file: InputFile,
+        max_attempts: u32,
+    ) -> Result<()> {
         test_hooks::record_scheduled_reader_task(&file.abs_path);
         self.task_tx
             .send(ReaderCommand::Read(ReaderTask {
                 file,
                 read_buffer_bytes: self.read_buffer_bytes,
+                max_attempts: max_attempts.max(1),
                 profile: self.profile.clone(),
             }))
             .context("failed to schedule sender reader task")
@@ -474,9 +508,14 @@ impl ReaderPool {
     }
 
     fn note_event_consumed(&mut self, event: &ReadEvent) {
-        if let ReadEvent::Ready(FileReadOutcome::Snapshot(snapshot)) = event {
-            self.scaling
-                .note_bytes_consumed(snapshot.size_at_open.min(usize::MAX as u64) as usize);
+        match event {
+            ReadEvent::Ready(FileReadOutcome::Snapshot(snapshot)) => self
+                .scaling
+                .note_bytes_consumed(snapshot.size_at_open.min(usize::MAX as u64) as usize),
+            ReadEvent::Ready(FileReadOutcome::Direct(direct)) => self
+                .scaling
+                .note_bytes_consumed(direct.size_at_open.min(usize::MAX as u64) as usize),
+            _ => {}
         }
     }
 
@@ -593,19 +632,20 @@ fn read_file_outcome(task: ReaderTask) -> std::result::Result<FileReadOutcome, S
     let ReaderTask {
         file,
         read_buffer_bytes,
+        max_attempts,
         profile,
     } = task;
     let mut saw_retryable_failure = false;
 
-    for attempt in 1..=MAX_SNAPSHOT_ATTEMPTS {
+    for attempt in 1..=max_attempts.max(1) {
         match capture_snapshot_attempt(&file, read_buffer_bytes, profile.as_ref(), attempt) {
-            Ok(snapshot) => return Ok(FileReadOutcome::Snapshot(snapshot)),
+            Ok(outcome) => return Ok(outcome),
             Err(AttemptFailure::Open(message)) => {
                 debug!(
                     "sender snapshot open attempt failed: file_index={} path={} attempt={} message={}",
                     file.index, file.rel_path, attempt, message
                 );
-                if attempt == MAX_SNAPSHOT_ATTEMPTS {
+                if attempt == max_attempts.max(1) {
                     return Ok(FileReadOutcome::Skip(SkippedFile {
                         file,
                         reason: if saw_retryable_failure {
@@ -614,6 +654,7 @@ fn read_file_outcome(task: ReaderTask) -> std::result::Result<FileReadOutcome, S
                             FileSkipReason::OpenFailed
                         },
                         retries: attempt.saturating_sub(1),
+                        last_error: message,
                     }));
                 }
             }
@@ -623,11 +664,12 @@ fn read_file_outcome(task: ReaderTask) -> std::result::Result<FileReadOutcome, S
                     "sender snapshot attempt will retry: file_index={} path={} attempt={} message={}",
                     file.index, file.rel_path, attempt, message
                 );
-                if attempt == MAX_SNAPSHOT_ATTEMPTS {
+                if attempt == max_attempts.max(1) {
                     return Ok(FileReadOutcome::Skip(SkippedFile {
                         file,
                         reason: FileSkipReason::UnstableAfterRetries,
                         retries: attempt.saturating_sub(1),
+                        last_error: message,
                     }));
                 }
             }
@@ -643,7 +685,7 @@ fn capture_snapshot_attempt(
     read_buffer_bytes: usize,
     profile: Option<&PipelineProfileCollector>,
     attempt: u32,
-) -> std::result::Result<FileSnapshot, AttemptFailure> {
+) -> std::result::Result<FileReadOutcome, AttemptFailure> {
     let read_started = Instant::now();
     test_hooks::before_open(&file.abs_path).map_err(|error| {
         AttemptFailure::Open(format!(
@@ -674,13 +716,22 @@ fn capture_snapshot_attempt(
         ))
     })?;
     let forced_short_read_limit = test_hooks::forced_short_read_after_open(&file.abs_path);
+    if size_at_open > IN_MEMORY_SNAPSHOT_THRESHOLD_BYTES {
+        return Ok(FileReadOutcome::Direct(DirectFileStream {
+            file: file.clone(),
+            input,
+            size_at_open,
+            forced_short_read_limit,
+            disposition: if attempt == 1 {
+                FileDisposition::Clean
+            } else {
+                FileDisposition::BestEffort
+            },
+            retries: attempt.saturating_sub(1),
+        }));
+    }
 
-    let (staged_path, mut staged) = create_staged_file(file.index).map_err(|error| {
-        AttemptFailure::Fatal(format!(
-            "failed to create staged snapshot for sender file {}: {error:#}",
-            file.abs_path.display()
-        ))
-    })?;
+    let mut storage = SnapshotStorage::Memory(Vec::with_capacity(size_at_open as usize));
     let mut buffer = vec![0_u8; read_buffer_bytes];
     let mut remaining = size_at_open;
     let mut read_buffers = 0_u64;
@@ -690,7 +741,6 @@ fn capture_snapshot_attempt(
         if let Some(limit) = forced_short_read_limit
             && exposed_bytes >= limit
         {
-            remove_staged_file(&staged_path);
             return Err(AttemptFailure::Retryable(format!(
                 "sender file {} reached EOF before size_at_open {} bytes",
                 file.abs_path.display(),
@@ -702,39 +752,25 @@ fn capture_snapshot_attempt(
             read_limit = read_limit.min(limit.saturating_sub(exposed_bytes) as usize);
         }
         let read = input.read(&mut buffer[..read_limit]).map_err(|error| {
-            remove_staged_file(&staged_path);
             AttemptFailure::Retryable(format!(
                 "failed to read sender file {}: {error}",
                 file.abs_path.display()
             ))
         })?;
         if read == 0 {
-            remove_staged_file(&staged_path);
             return Err(AttemptFailure::Retryable(format!(
                 "sender file {} reached EOF before size_at_open {} bytes",
                 file.abs_path.display(),
                 size_at_open
             )));
         }
-        staged.write_all(&buffer[..read]).map_err(|error| {
-            remove_staged_file(&staged_path);
-            AttemptFailure::Fatal(format!(
-                "failed to stage sender snapshot {} into {}: {error}",
-                file.abs_path.display(),
-                staged_path.display()
-            ))
-        })?;
+        match &mut storage {
+            SnapshotStorage::Memory(bytes) => bytes.extend_from_slice(&buffer[..read]),
+        }
         remaining -= read as u64;
         exposed_bytes += read as u64;
         read_buffers += 1;
     }
-    staged.flush().map_err(|error| {
-        remove_staged_file(&staged_path);
-        AttemptFailure::Fatal(format!(
-            "failed to flush staged sender snapshot {}: {error}",
-            staged_path.display()
-        ))
-    })?;
 
     let read_finished = Instant::now();
     debug!(
@@ -758,57 +794,17 @@ fn capture_snapshot_attempt(
         );
     }
 
-    Ok(FileSnapshot {
+    Ok(FileReadOutcome::Snapshot(FileSnapshot {
         file: file.clone(),
         size_at_open,
-        staged_path,
+        storage,
         disposition: if attempt == 1 {
             FileDisposition::Clean
         } else {
             FileDisposition::BestEffort
         },
         retries: attempt.saturating_sub(1),
-    })
-}
-
-fn create_staged_file(file_index: u64) -> Result<(PathBuf, File)> {
-    let staging_dir = std::env::temp_dir().join("fast-dump-staging");
-    fs::create_dir_all(&staging_dir).with_context(|| {
-        format!(
-            "failed to create sender staging directory {}",
-            staging_dir.display()
-        )
-    })?;
-
-    loop {
-        let nonce = STAGED_FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let staged_path = staging_dir.join(format!(
-            "snapshot-{}-{}-{}.part",
-            std::process::id(),
-            file_index,
-            nonce
-        ));
-        match OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&staged_path)
-        {
-            Ok(file) => return Ok((staged_path, file)),
-            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(error) => {
-                return Err(error).with_context(|| {
-                    format!(
-                        "failed to open staged sender snapshot {}",
-                        staged_path.display()
-                    )
-                });
-            }
-        }
-    }
-}
-
-fn remove_staged_file(path: &Path) {
-    let _ = fs::remove_file(path);
+    }))
 }
 
 #[cfg(test)]
@@ -822,7 +818,8 @@ mod tests {
 
     use super::{
         AdaptiveReaderScaling, FileDisposition, FileReadOutcome, FileSkipReason, FileSnapshot,
-        ReadEvent, ReaderCommand, ReaderPool, ReaderTask, SkippedFile, read_file_into_events,
+        IN_MEMORY_SNAPSHOT_THRESHOLD_BYTES, MAX_SNAPSHOT_ATTEMPTS, ReadEvent, ReaderCommand,
+        ReaderPool, ReaderTask, SkippedFile, SnapshotStorage, read_file_into_events,
     };
     use crate::sender::InputFile;
 
@@ -1010,6 +1007,7 @@ mod tests {
             },
             reason: FileSkipReason::OpenFailed,
             retries: 2,
+            last_error: "failed to open sender file".to_owned(),
         }))
     }
 
@@ -1017,14 +1015,12 @@ mod tests {
     fn read_event_reports_file_index_for_all_variants() {
         let temp = TestDir::new();
         let file = write_input_file(&temp, "alpha.bin", b"abc", 7);
-        let staged_path = temp.path().join("alpha.snapshot");
-        fs::write(&staged_path, b"abc").unwrap();
 
         assert_eq!(
             ReadEvent::Ready(FileReadOutcome::Snapshot(FileSnapshot {
                 file: file.clone(),
                 size_at_open: 3,
-                staged_path,
+                storage: SnapshotStorage::Memory(b"abc".to_vec()),
                 disposition: FileDisposition::Clean,
                 retries: 0,
             }))
@@ -1054,6 +1050,7 @@ mod tests {
         let task = ReaderTask {
             file,
             read_buffer_bytes: 8,
+            max_attempts: MAX_SNAPSHOT_ATTEMPTS,
             profile: None,
         };
 
@@ -1080,6 +1077,7 @@ mod tests {
             ReaderTask {
                 file,
                 read_buffer_bytes: 8,
+                max_attempts: MAX_SNAPSHOT_ATTEMPTS,
                 profile: None,
             },
             &event_tx,
@@ -1092,7 +1090,8 @@ mod tests {
                 assert_eq!(snapshot.size_at_open, 3);
                 assert_eq!(snapshot.disposition, FileDisposition::Clean);
                 assert_eq!(snapshot.retries, 0);
-                assert_eq!(fs::read(&snapshot.staged_path).unwrap(), b"abc");
+                assert!(snapshot.is_in_memory());
+                assert_eq!(snapshot.bytes_for_test(), b"abc");
             }
             other => panic!("unexpected read event: {other:?}"),
         }
@@ -1110,6 +1109,7 @@ mod tests {
             ReaderTask {
                 file,
                 read_buffer_bytes: 8,
+                max_attempts: MAX_SNAPSHOT_ATTEMPTS,
                 profile: None,
             },
             &event_tx,
@@ -1122,7 +1122,38 @@ mod tests {
                 assert_eq!(snapshot.size_at_open, 6);
                 assert_eq!(snapshot.disposition, FileDisposition::BestEffort);
                 assert_eq!(snapshot.retries, 1);
-                assert_eq!(fs::read(&snapshot.staged_path).unwrap(), b"abcdef");
+                assert!(snapshot.is_in_memory());
+                assert_eq!(snapshot.bytes_for_test(), b"abcdef");
+            }
+            other => panic!("unexpected read event: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn read_file_into_events_returns_direct_stream_for_large_file() {
+        let _guard = ReadHookGuard::new();
+        let temp = TestDir::new();
+        let payload = vec![7_u8; IN_MEMORY_SNAPSHOT_THRESHOLD_BYTES as usize + 1];
+        let file = write_input_file(&temp, "large.bin", &payload, 1);
+        let (event_tx, event_rx) = bounded::<ReadEvent>(1);
+
+        let result = read_file_into_events(
+            ReaderTask {
+                file,
+                read_buffer_bytes: 8 * 1024,
+                max_attempts: MAX_SNAPSHOT_ATTEMPTS,
+                profile: None,
+            },
+            &event_tx,
+        );
+
+        assert!(result.is_ok());
+        match event_rx.recv().unwrap() {
+            ReadEvent::Ready(FileReadOutcome::Direct(direct)) => {
+                assert_eq!(direct.file.index, 1);
+                assert_eq!(direct.size_at_open, payload.len() as u64);
+                assert_eq!(direct.disposition, FileDisposition::Clean);
+                assert_eq!(direct.retries, 0);
             }
             other => panic!("unexpected read event: {other:?}"),
         }
@@ -1142,6 +1173,7 @@ mod tests {
             ReaderTask {
                 file,
                 read_buffer_bytes: 8,
+                max_attempts: MAX_SNAPSHOT_ATTEMPTS,
                 profile: None,
             },
             &event_tx,
@@ -1169,6 +1201,7 @@ mod tests {
             ReaderTask {
                 file,
                 read_buffer_bytes: 8,
+                max_attempts: MAX_SNAPSHOT_ATTEMPTS,
                 profile: None,
             },
             &event_tx,
@@ -1191,6 +1224,7 @@ mod tests {
                     rel_path: "missing.bin".to_owned(),
                 },
                 read_buffer_bytes: 8,
+                max_attempts: MAX_SNAPSHOT_ATTEMPTS,
                 profile: None,
             },
             &event_tx,

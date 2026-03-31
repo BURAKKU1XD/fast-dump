@@ -31,6 +31,9 @@ pub enum MessageKind {
     Finish = 9,
     FinishAck = 10,
     Error = 11,
+    FrameAbort = 12,
+    AbortAck = 13,
+    IssueJournalChunk = 14,
 }
 
 impl MessageKind {
@@ -47,6 +50,9 @@ impl MessageKind {
             9 => Ok(Self::Finish),
             10 => Ok(Self::FinishAck),
             11 => Ok(Self::Error),
+            12 => Ok(Self::FrameAbort),
+            13 => Ok(Self::AbortAck),
+            14 => Ok(Self::IssueJournalChunk),
             _ => bail!("unknown message kind: {value}"),
         }
     }
@@ -127,6 +133,52 @@ pub struct Finish {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FrameAbort {
+    pub frame_no: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AbortAck {
+    pub frame_no: u64,
+    pub archive_len: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+pub enum IssueJournalReason {
+    OpenFailed = 1,
+    UnstableAfterRetries = 2,
+}
+
+impl IssueJournalReason {
+    fn from_u8(value: u8) -> Result<Self> {
+        match value {
+            1 => Ok(Self::OpenFailed),
+            2 => Ok(Self::UnstableAfterRetries),
+            _ => bail!("unknown issue journal reason: {value}"),
+        }
+    }
+
+    const fn as_u8(self) -> u8 {
+        self as u8
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IssueJournalEntry {
+    pub file_index: u64,
+    pub file_path: String,
+    pub attempts: u32,
+    pub reason: IssueJournalReason,
+    pub last_error: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct IssueJournalChunk {
+    pub entries: Vec<IssueJournalEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ErrorMessage {
     pub message: String,
 }
@@ -142,6 +194,9 @@ pub enum Message {
     FrameEnd(FrameEnd),
     Ack(Ack),
     Finish(Finish),
+    FrameAbort(FrameAbort),
+    AbortAck(AbortAck),
+    IssueJournalChunk(IssueJournalChunk),
     FinishAck,
     Error(ErrorMessage),
 }
@@ -158,6 +213,9 @@ impl Message {
             Self::FrameEnd(_) => MessageKind::FrameEnd,
             Self::Ack(_) => MessageKind::Ack,
             Self::Finish(_) => MessageKind::Finish,
+            Self::FrameAbort(_) => MessageKind::FrameAbort,
+            Self::AbortAck(_) => MessageKind::AbortAck,
+            Self::IssueJournalChunk(_) => MessageKind::IssueJournalChunk,
             Self::FinishAck => MessageKind::FinishAck,
             Self::Error(_) => MessageKind::Error,
         }
@@ -407,6 +465,31 @@ fn encode_message<'a>(message: &'a Message) -> Result<(MessageKind, EncodedBody<
             writer.write_path(&finish.final_file_path, "final_file_path")?;
             EncodedBody::Owned(writer.finish())
         }
+        Message::FrameAbort(frame_abort) => {
+            let mut writer = BodyWriter::new();
+            writer.write_u64(frame_abort.frame_no);
+            EncodedBody::Owned(writer.finish())
+        }
+        Message::AbortAck(abort_ack) => {
+            let mut writer = BodyWriter::new();
+            writer.write_u64(abort_ack.frame_no);
+            writer.write_u64(abort_ack.archive_len);
+            EncodedBody::Owned(writer.finish())
+        }
+        Message::IssueJournalChunk(chunk) => {
+            let mut writer = BodyWriter::new();
+            let entry_count =
+                u32::try_from(chunk.entries.len()).context("too many issue journal entries")?;
+            writer.write_u32(entry_count);
+            for entry in &chunk.entries {
+                writer.write_u64(entry.file_index);
+                writer.write_path(&entry.file_path, "file_path")?;
+                writer.write_u32(entry.attempts);
+                writer.write_u8(entry.reason.as_u8());
+                writer.write_string(&entry.last_error)?;
+            }
+            EncodedBody::Owned(writer.finish())
+        }
         Message::FinishAck => EncodedBody::Owned(Vec::new()),
         Message::Error(error) => {
             let mut writer = BodyWriter::new();
@@ -518,6 +601,38 @@ fn decode_message(packet: Packet) -> Result<Message> {
                 final_file_index,
                 final_file_path,
             }))
+        }
+        MessageKind::FrameAbort => {
+            let mut reader = BodyReader::new(&packet.body);
+            let frame_no = reader.read_u64()?;
+            reader.finish()?;
+            Ok(Message::FrameAbort(FrameAbort { frame_no }))
+        }
+        MessageKind::AbortAck => {
+            let mut reader = BodyReader::new(&packet.body);
+            let frame_no = reader.read_u64()?;
+            let archive_len = reader.read_u64()?;
+            reader.finish()?;
+            Ok(Message::AbortAck(AbortAck {
+                frame_no,
+                archive_len,
+            }))
+        }
+        MessageKind::IssueJournalChunk => {
+            let mut reader = BodyReader::new(&packet.body);
+            let entry_count = reader.read_u32()? as usize;
+            let mut entries = Vec::with_capacity(entry_count);
+            for _ in 0..entry_count {
+                entries.push(IssueJournalEntry {
+                    file_index: reader.read_u64()?,
+                    file_path: reader.read_path("file_path")?,
+                    attempts: reader.read_u32()?,
+                    reason: IssueJournalReason::from_u8(reader.read_u8()?)?,
+                    last_error: reader.read_string()?,
+                });
+            }
+            reader.finish()?;
+            Ok(Message::IssueJournalChunk(IssueJournalChunk { entries }))
         }
         MessageKind::FinishAck => {
             let reader = BodyReader::new(&packet.body);
@@ -782,7 +897,8 @@ mod tests {
     use std::io::{self, Cursor, Read, Write};
 
     use super::{
-        Ack, ErrorMessage, Finish, FrameChunk, FrameEnd, FrameStart, Hello, HelloAck, MAGIC,
+        AbortAck, Ack, ErrorMessage, Finish, FrameAbort, FrameChunk, FrameEnd, FrameStart, Hello,
+        HelloAck, IssueJournalChunk, IssueJournalEntry, IssueJournalReason, MAGIC,
         MAX_CONTROL_BODY_BYTES, MAX_FRAME_CHUNK_BYTES, Message, MessageKind, ResumeQuery,
         ResumeState, VERSION, initiate_handshake, read_message, request_resume_state,
         respond_handshake, write_message, write_packet,
@@ -878,6 +994,20 @@ mod tests {
                 final_frame_no: 8,
                 final_file_index: 16,
                 final_file_path: "root/next.bin".to_owned(),
+            }),
+            Message::FrameAbort(FrameAbort { frame_no: 8 }),
+            Message::AbortAck(AbortAck {
+                frame_no: 8,
+                archive_len: 6144,
+            }),
+            Message::IssueJournalChunk(IssueJournalChunk {
+                entries: vec![IssueJournalEntry {
+                    file_index: 17,
+                    file_path: "root/problem.bin".to_owned(),
+                    attempts: 3,
+                    reason: IssueJournalReason::UnstableAfterRetries,
+                    last_error: "short read".to_owned(),
+                }],
             }),
             Message::FinishAck,
             Message::Error(ErrorMessage {
