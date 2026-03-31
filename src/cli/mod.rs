@@ -1,11 +1,56 @@
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use clap::{ArgGroup, Args, Parser, Subcommand, ValueHint};
 
 use crate::network::transport::TransportMode;
 use crate::role::Role;
+
+const DEFAULT_LEVEL: i32 = 3;
+const DEFAULT_MIN_READERS: usize = 2;
+const DEFAULT_MAX_READERS: usize = 8;
+const DEFAULT_READ_BUFFER_KB: usize = 1024;
+const DEFAULT_FRAME_TARGET_MB: u64 = 64;
+const DEFAULT_MAX_SESSIONS: usize = 1;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SenderRuntimeOptions {
+    pub level: i32,
+    pub threads: u32,
+    pub min_readers: usize,
+    pub max_readers: usize,
+    pub read_buffer_bytes: usize,
+    pub frame_target_bytes: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ThreadCountArg {
+    Auto,
+    Fixed(u32),
+}
+
+impl ThreadCountArg {
+    pub fn resolve(&self) -> u32 {
+        match self {
+            Self::Auto => std::thread::available_parallelism()
+                .map(|count| count.get().saturating_sub(1).max(1) as u32)
+                .unwrap_or(1),
+            Self::Fixed(value) => *value,
+        }
+    }
+}
+
+fn parse_thread_count_arg(value: &str) -> std::result::Result<ThreadCountArg, String> {
+    if value.eq_ignore_ascii_case("auto") {
+        return Ok(ThreadCountArg::Auto);
+    }
+
+    value
+        .parse::<u32>()
+        .map(ThreadCountArg::Fixed)
+        .map_err(|_| "threads must be a positive integer or 'auto'".to_owned())
+}
 
 // Корневой CLI-парсер.
 // Clap строит его по derive-макросам и атрибутам ниже.
@@ -13,6 +58,9 @@ use crate::role::Role;
 #[derive(Debug, Parser)]
 #[command(author, version, about)]
 pub struct Cli {
+    #[arg(long, global = true)]
+    pub debug: bool,
+
     #[command(subcommand)]
     pub command: Command,
 }
@@ -35,7 +83,7 @@ impl Command {
         }
     }
 
-    // А здесь CLI-аргументы уже переходят в runtime-представление транспорта.
+    // Здесь CLI-аргументы переходят в runtime-представление транспорта.
     // После этого transport-слою не нужно знать ничего про clap.
     pub fn transport_mode(&self) -> Result<TransportMode> {
         match self {
@@ -46,7 +94,8 @@ impl Command {
 }
 
 // Параметры sender.
-// Пока нужен только source и способ установить соединение.
+// Помимо source и dump_id здесь уже лежат contract-level настройки компрессии
+// и reader bounds, чтобы runtime не тащил захардкоженные defaults.
 #[derive(Debug, Args)]
 pub struct SenderArgs {
     // Оба subcommand используют одну и ту же transport-валидацию,
@@ -56,6 +105,29 @@ pub struct SenderArgs {
     // Это корень, относительно которого позже будет строиться tar-поток.
     #[arg(long, value_hint = ValueHint::DirPath)]
     pub source: PathBuf,
+    // Явный dump_id удобен для предсказуемого resume между разными запусками.
+    // Если его не передали, временно используем имя каталога source.
+    #[arg(long)]
+    pub dump_id: Option<String>,
+    #[arg(long)]
+    pub token: Option<String>,
+    #[arg(short = 'l', long, default_value_t = DEFAULT_LEVEL)]
+    pub level: i32,
+    #[arg(
+        short = 't',
+        long,
+        default_value = "auto",
+        value_parser = parse_thread_count_arg
+    )]
+    pub threads: ThreadCountArg,
+    #[arg(long, default_value_t = DEFAULT_MIN_READERS)]
+    pub min_readers: usize,
+    #[arg(long, default_value_t = DEFAULT_MAX_READERS)]
+    pub max_readers: usize,
+    #[arg(long, default_value_t = DEFAULT_READ_BUFFER_KB)]
+    pub read_buffer_kb: usize,
+    #[arg(long, default_value_t = DEFAULT_FRAME_TARGET_MB)]
+    pub frame_target_mb: u64,
 }
 
 // Параметры receiver.
@@ -67,6 +139,10 @@ pub struct ReceiverArgs {
     // В этом каталоге receiver будет хранить `.part`-архив и журнал возобновления.
     #[arg(long, value_hint = ValueHint::DirPath)]
     pub data_dir: PathBuf,
+    #[arg(long)]
+    pub token: Option<String>,
+    #[arg(long, default_value_t = DEFAULT_MAX_SESSIONS)]
+    pub max_sessions: usize,
 }
 
 // Невалидные комбинации `--listen/--connect` лучше отсекать ещё на этапе
@@ -89,14 +165,88 @@ pub struct TransportArgs {
 impl TransportArgs {
     // Два Option превращаем в один строгий enum.
     // Это удобнее для дальнейшей логики в transport-модуле.
-    // Дополнительная проверка остаётся полезной: она защищает даже если
-    // этот тип когда-нибудь создадут не через clap.
     pub fn mode(&self) -> Result<TransportMode> {
         match (self.listen, self.connect) {
             (Some(addr), None) => Ok(TransportMode::Listen(addr)),
             (None, Some(addr)) => Ok(TransportMode::Connect(addr)),
             _ => bail!("exactly one of --listen or --connect must be provided"),
         }
+    }
+}
+
+impl SenderArgs {
+    // Пока dump_id нужен уже на этапе bootstrap-resume, а отдельного генератора
+    // идентификаторов ещё нет. Поэтому безопасный fallback берём из имени source.
+    pub fn resolve_dump_id(&self) -> Result<String> {
+        if let Some(dump_id) = &self.dump_id {
+            return Ok(dump_id.clone());
+        }
+
+        match self.source.file_name().and_then(|value| value.to_str()) {
+            Some(value) if !value.is_empty() && !matches!(value, "." | "..") => {
+                Ok(value.to_owned())
+            }
+            _ => bail!(
+                "--dump-id is required when --source does not end with a normal path component"
+            ),
+        }
+    }
+
+    // Здесь CLI-значения приводятся к runtime-настройкам sender и сразу валидируются,
+    // чтобы остальной код не таскал по стеку сырой clap-состояние.
+    pub fn runtime_options(&self) -> Result<SenderRuntimeOptions> {
+        let threads = self.threads.resolve();
+        if threads == 0 {
+            bail!("threads must be at least 1");
+        }
+        if self.min_readers == 0 {
+            bail!("min_readers must be at least 1");
+        }
+        if self.max_readers == 0 {
+            bail!("max_readers must be at least 1");
+        }
+        if self.min_readers > self.max_readers {
+            bail!(
+                "min_readers must not be greater than max_readers: {} > {}",
+                self.min_readers,
+                self.max_readers
+            );
+        }
+        if self.read_buffer_kb == 0 {
+            bail!("read_buffer_kb must be at least 1");
+        }
+        if self.frame_target_mb == 0 {
+            bail!("frame_target_mb must be at least 1");
+        }
+
+        let read_buffer_bytes = self
+            .read_buffer_kb
+            .checked_mul(1024)
+            .context("read_buffer_kb is too large")?;
+        let frame_target_bytes = self
+            .frame_target_mb
+            .checked_mul(1024 * 1024)
+            .context("frame_target_mb is too large")?;
+
+        Ok(SenderRuntimeOptions {
+            level: self.level,
+            threads,
+            min_readers: self.min_readers,
+            max_readers: self.max_readers,
+            read_buffer_bytes,
+            frame_target_bytes,
+        })
+    }
+}
+
+impl ReceiverArgs {
+    // Receiver-сервер бессмысленно запускать без хотя бы одного доступного session slot.
+    pub fn validated_max_sessions(&self) -> Result<usize> {
+        if self.max_sessions == 0 {
+            bail!("max_sessions must be at least 1");
+        }
+
+        Ok(self.max_sessions)
     }
 }
 
@@ -132,6 +282,157 @@ mod tests {
             panic!("expected sender command");
         };
         assert_eq!(args.source, PathBuf::from("input"));
+        assert_eq!(args.resolve_dump_id().unwrap(), "input");
+    }
+
+    #[test]
+    fn sender_cli_parses_explicit_dump_id() {
+        let cli = Cli::try_parse_from([
+            "fast-dump",
+            "sender",
+            "--connect",
+            "127.0.0.1:7009",
+            "--source",
+            "input",
+            "--dump-id",
+            "dump-01",
+        ])
+        .unwrap();
+
+        let Command::Sender(args) = cli.command else {
+            panic!("expected sender command");
+        };
+        assert_eq!(args.resolve_dump_id().unwrap(), "dump-01");
+    }
+
+    #[test]
+    fn sender_dump_id_requires_override_for_non_normal_source_path() {
+        let cli = Cli::try_parse_from([
+            "fast-dump",
+            "sender",
+            "--connect",
+            "127.0.0.1:7010",
+            "--source",
+            ".",
+        ])
+        .unwrap();
+
+        let Command::Sender(args) = cli.command else {
+            panic!("expected sender command");
+        };
+
+        let error = args.resolve_dump_id().unwrap_err();
+        assert!(error.to_string().contains(
+            "--dump-id is required when --source does not end with a normal path component"
+        ));
+    }
+
+    #[test]
+    fn sender_cli_resolves_runtime_defaults() {
+        let cli = Cli::try_parse_from([
+            "fast-dump",
+            "sender",
+            "--connect",
+            "127.0.0.1:7011",
+            "--source",
+            "input",
+        ])
+        .unwrap();
+
+        let Command::Sender(args) = cli.command else {
+            panic!("expected sender command");
+        };
+        let runtime = args.runtime_options().unwrap();
+
+        assert_eq!(runtime.level, 3);
+        assert_eq!(
+            runtime.threads,
+            std::thread::available_parallelism()
+                .map(|count| count.get().saturating_sub(1).max(1) as u32)
+                .unwrap_or(1)
+        );
+        assert_eq!(runtime.min_readers, 2);
+        assert_eq!(runtime.max_readers, 8);
+        assert_eq!(runtime.read_buffer_bytes, 1024 * 1024);
+        assert_eq!(runtime.frame_target_bytes, 64 * 1024 * 1024);
+    }
+
+    #[test]
+    fn sender_cli_accepts_explicit_runtime_overrides() {
+        let cli = Cli::try_parse_from([
+            "fast-dump",
+            "sender",
+            "--connect",
+            "127.0.0.1:7012",
+            "--source",
+            "input",
+            "--level",
+            "7",
+            "--threads",
+            "4",
+            "--min-readers",
+            "3",
+            "--max-readers",
+            "9",
+            "--read-buffer-kb",
+            "2048",
+            "--frame-target-mb",
+            "5",
+        ])
+        .unwrap();
+
+        let Command::Sender(args) = cli.command else {
+            panic!("expected sender command");
+        };
+        let runtime = args.runtime_options().unwrap();
+
+        assert_eq!(runtime.level, 7);
+        assert_eq!(runtime.threads, 4);
+        assert_eq!(runtime.min_readers, 3);
+        assert_eq!(runtime.max_readers, 9);
+        assert_eq!(runtime.read_buffer_bytes, 2 * 1024 * 1024);
+        assert_eq!(runtime.frame_target_bytes, 5 * 1024 * 1024);
+    }
+
+    #[test]
+    fn sender_cli_rejects_invalid_runtime_bounds() {
+        let cli = Cli::try_parse_from([
+            "fast-dump",
+            "sender",
+            "--connect",
+            "127.0.0.1:7013",
+            "--source",
+            "input",
+            "--threads",
+            "0",
+        ])
+        .unwrap();
+
+        let Command::Sender(args) = cli.command else {
+            panic!("expected sender command");
+        };
+        let error = args.runtime_options().unwrap_err();
+        assert!(error.to_string().contains("threads"));
+
+        let cli = Cli::try_parse_from([
+            "fast-dump",
+            "sender",
+            "--connect",
+            "127.0.0.1:7014",
+            "--source",
+            "input",
+            "--min-readers",
+            "5",
+            "--max-readers",
+            "4",
+        ])
+        .unwrap();
+
+        let Command::Sender(args) = cli.command else {
+            panic!("expected sender command");
+        };
+        let error = args.runtime_options().unwrap_err();
+        assert!(error.to_string().contains("min_readers"));
     }
 
     #[test]
@@ -156,6 +457,46 @@ mod tests {
             panic!("expected receiver command");
         };
         assert_eq!(args.data_dir, PathBuf::from("state"));
+    }
+
+    #[test]
+    fn receiver_cli_uses_contract_defaults() {
+        let cli = Cli::try_parse_from([
+            "fast-dump",
+            "receiver",
+            "--listen",
+            "127.0.0.1:7015",
+            "--data-dir",
+            "state",
+        ])
+        .unwrap();
+
+        let Command::Receiver(args) = cli.command else {
+            panic!("expected receiver command");
+        };
+        assert_eq!(args.max_sessions, 1);
+        assert_eq!(args.token, None);
+    }
+
+    #[test]
+    fn receiver_cli_rejects_zero_max_sessions_in_runtime_validation() {
+        let cli = Cli::try_parse_from([
+            "fast-dump",
+            "receiver",
+            "--listen",
+            "127.0.0.1:7016",
+            "--data-dir",
+            "state",
+            "--max-sessions",
+            "0",
+        ])
+        .unwrap();
+
+        let Command::Receiver(args) = cli.command else {
+            panic!("expected receiver command");
+        };
+        let error = args.validated_max_sessions().unwrap_err();
+        assert!(error.to_string().contains("max_sessions"));
     }
 
     #[test]
@@ -247,5 +588,22 @@ mod tests {
                 .to_string()
                 .contains("exactly one of --listen or --connect")
         );
+    }
+
+    #[test]
+    fn global_debug_flag_is_accepted_before_subcommand() {
+        let cli = Cli::try_parse_from([
+            "fast-dump",
+            "--debug",
+            "sender",
+            "--connect",
+            "127.0.0.1:7009",
+            "--source",
+            "input",
+        ])
+        .unwrap();
+
+        assert!(cli.debug);
+        assert!(matches!(cli.command, Command::Sender(_)));
     }
 }

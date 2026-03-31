@@ -1,0 +1,288 @@
+use std::collections::BTreeSet;
+use std::fmt::Display;
+use std::path::{Path, PathBuf};
+
+use anyhow::{Context, Result, bail};
+use clap::{CommandFactory, Parser};
+use fast_dump::sender::SendOptions;
+
+use super::results::{
+    RawResultRow, ScenarioKey, aggregate_summary_rows, append_raw_result, completed_runs,
+    dataset_summary_rows, load_raw_results, print_dataset_markdown_tables, reset_results,
+    results_raw_path, results_summary_path, write_summary_csv,
+};
+use super::shared::{
+    BIG_FILES_DATASET, DEFAULT_MEMORY_BUDGET_MIB, MANY_SMALL_FILES_DATASET, MIXED_DATASET,
+    MatrixDataset, default_matrix_send_options, ensure_big_files_dataset,
+    ensure_many_small_files_dataset, ensure_mixed_dataset, matrix_frame_target_values_mb,
+    matrix_read_buffer_values_kb, matrix_thread_counts,
+};
+use super::stats::{LoopbackRunMetrics, run_loopback_scenario};
+
+#[derive(Debug, Parser)]
+#[command(
+    name = "loopback_send_dump",
+    about = "Run sender->receiver loopback matrix benchmarks without Criterion warmup/measurement"
+)]
+struct MatrixArgs {
+    #[arg(long = "dataset", value_delimiter = ',', num_args = 1..)]
+    datasets: Vec<String>,
+    #[arg(long, value_delimiter = ',', num_args = 1..)]
+    threads: Vec<u32>,
+    #[arg(long = "frames", value_delimiter = ',', num_args = 1..)]
+    frames_mb: Vec<u64>,
+    #[arg(long = "buffers", value_delimiter = ',', num_args = 1..)]
+    buffers_kb: Vec<u64>,
+    #[arg(long)]
+    resume: bool,
+    #[arg(long, default_value_t = 1)]
+    repeats: u32,
+    #[arg(long, default_value_t = DEFAULT_MEMORY_BUDGET_MIB)]
+    memory_budget_mib: u64,
+    #[arg(long, hide = true)]
+    bench: bool,
+}
+
+pub(crate) fn main() -> Result<()> {
+    let has_explicit_args = std::env::args_os()
+        .skip(1)
+        .any(|arg| arg.to_string_lossy() != "--bench");
+    if !has_explicit_args {
+        let mut command = MatrixArgs::command();
+        command
+            .print_help()
+            .context("failed to print matrix runner help")?;
+        println!();
+        println!();
+        println!(
+            "Use `cargo bench --bench loopback_send_dump -- --dataset {},{},{}`
+to run the full dataset set, or pass one dataset name to focus a single case.",
+            MANY_SMALL_FILES_DATASET, BIG_FILES_DATASET, MIXED_DATASET
+        );
+        return Ok(());
+    }
+
+    run_matrix(MatrixArgs::parse())
+}
+
+pub(crate) fn resolve_dataset_names(requested: &[String]) -> Result<Vec<&'static str>> {
+    let requested_names = if requested.is_empty() {
+        vec![MANY_SMALL_FILES_DATASET, BIG_FILES_DATASET, MIXED_DATASET]
+    } else {
+        let mut deduped = BTreeSet::new();
+        for name in requested {
+            deduped.insert(name.trim().to_owned());
+        }
+        deduped
+            .into_iter()
+            .map(|name| match name.as_str() {
+                MANY_SMALL_FILES_DATASET => Ok(MANY_SMALL_FILES_DATASET),
+                BIG_FILES_DATASET => Ok(BIG_FILES_DATASET),
+                MIXED_DATASET => Ok(MIXED_DATASET),
+                other => bail!(
+                    "unsupported dataset `{other}`; currently implemented datasets: {}, {}, {}",
+                    MANY_SMALL_FILES_DATASET,
+                    BIG_FILES_DATASET,
+                    MIXED_DATASET
+                ),
+            })
+            .collect::<Result<Vec<_>>>()?
+    };
+
+    Ok(requested_names)
+}
+
+fn run_matrix(args: MatrixArgs) -> Result<()> {
+    if args.repeats == 0 {
+        bail!("--repeats must be at least 1");
+    }
+
+    let output_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("target")
+        .join("bench-matrix");
+    if !args.resume {
+        reset_results(&output_dir)?;
+    }
+
+    let raw_results_path = results_raw_path(&output_dir);
+    let summary_results_path = results_summary_path(&output_dir);
+    let mut raw_rows = load_raw_results(&raw_results_path)?;
+    let mut completed = completed_runs(&raw_rows);
+
+    let datasets = resolve_datasets(&args.datasets, &output_dir.join("datasets"))?;
+    let threads = resolve_values("threads", &matrix_thread_counts(), &args.threads)?;
+    let frames_mb = resolve_values("frames", &matrix_frame_target_values_mb(), &args.frames_mb)?;
+    let buffers_kb = resolve_values("buffers", &matrix_read_buffer_values_kb(), &args.buffers_kb)?;
+
+    for dataset in datasets {
+        eprintln!(
+            "[bench-matrix] dataset={} path={} scenarios={} repeats={} resume={}",
+            dataset.name,
+            dataset.path.display(),
+            threads.len() * frames_mb.len() * buffers_kb.len(),
+            args.repeats,
+            args.resume
+        );
+
+        let mut executed_runs = 0_usize;
+        let mut skipped_runs = 0_usize;
+        for threads in &threads {
+            for frame_target_mb in &frames_mb {
+                for read_buffer_kb in &buffers_kb {
+                    for repeat_index in 1..=args.repeats {
+                        let scenario = ScenarioKey {
+                            dataset: dataset.name.to_owned(),
+                            threads: *threads,
+                            frame_target_mb: *frame_target_mb,
+                            read_buffer_kb: *read_buffer_kb,
+                        };
+
+                        if args.resume && completed.contains_key(&(scenario.clone(), repeat_index))
+                        {
+                            skipped_runs += 1;
+                            continue;
+                        }
+
+                        eprintln!(
+                            "[bench-matrix] run dataset={} threads={} frame={}MiB buffer={}KiB repeat={}/{}",
+                            scenario.dataset,
+                            scenario.threads,
+                            scenario.frame_target_mb,
+                            scenario.read_buffer_kb,
+                            repeat_index,
+                            args.repeats
+                        );
+
+                        let options = scenario_options(
+                            scenario.threads,
+                            scenario.frame_target_mb,
+                            scenario.read_buffer_kb,
+                        );
+                        let metrics = run_loopback_scenario(&dataset.path, &options);
+                        let row = raw_row(scenario.clone(), repeat_index, metrics);
+
+                        append_raw_result(&raw_results_path, &row)?;
+                        raw_rows.push(row.clone());
+                        completed.insert((scenario, repeat_index), row);
+
+                        let summaries = aggregate_summary_rows(&raw_rows);
+                        write_summary_csv(&summary_results_path, &summaries)?;
+                        executed_runs += 1;
+                    }
+                }
+            }
+        }
+
+        let summaries = aggregate_summary_rows(&raw_rows);
+        write_summary_csv(&summary_results_path, &summaries)?;
+        let dataset_rows = dataset_summary_rows(&summaries, dataset.name);
+        print_dataset_markdown_tables(dataset.name, &dataset_rows, args.memory_budget_mib);
+        eprintln!(
+            "[bench-matrix] dataset={} completed: executed_runs={} skipped_runs={} raw_results={} summary={}",
+            dataset.name,
+            executed_runs,
+            skipped_runs,
+            raw_results_path.display(),
+            summary_results_path.display()
+        );
+    }
+
+    Ok(())
+}
+
+fn resolve_datasets(requested: &[String], dataset_root: &Path) -> Result<Vec<MatrixDataset>> {
+    let requested_names = resolve_dataset_names(requested)?;
+    let mut datasets = Vec::with_capacity(requested_names.len());
+    for name in requested_names {
+        match name {
+            MANY_SMALL_FILES_DATASET => {
+                datasets.push(ensure_many_small_files_dataset(dataset_root)?);
+            }
+            BIG_FILES_DATASET => {
+                datasets.push(ensure_big_files_dataset(dataset_root)?);
+            }
+            MIXED_DATASET => {
+                datasets.push(ensure_mixed_dataset(dataset_root)?);
+            }
+            other => bail!("unsupported dataset `{other}`"),
+        }
+    }
+
+    Ok(datasets)
+}
+
+fn resolve_values<T>(label: &str, defaults: &[T], requested: &[T]) -> Result<Vec<T>>
+where
+    T: Copy + Display + Ord,
+{
+    if requested.is_empty() {
+        return Ok(defaults.to_vec());
+    }
+
+    let allowed = defaults.iter().copied().collect::<BTreeSet<_>>();
+    let mut selected = BTreeSet::new();
+    for value in requested {
+        if !allowed.contains(value) {
+            bail!(
+                "unsupported {label} value `{value}`; allowed values: {}",
+                join_values(defaults)
+            );
+        }
+        selected.insert(*value);
+    }
+
+    Ok(selected.into_iter().collect())
+}
+
+fn join_values<T>(values: &[T]) -> String
+where
+    T: Display,
+{
+    values
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+// В raw CSV фиксируем уже нормализованные runtime knobs, чтобы resume и summary
+// агрегировали именно тот sender-конфиг, который реально исполнялся.
+fn scenario_options(threads: u32, frame_target_mb: u64, read_buffer_kb: u64) -> SendOptions {
+    SendOptions {
+        threads,
+        frame_target_bytes: frame_target_mb * 1024 * 1024,
+        read_buffer_bytes: (read_buffer_kb * 1024) as usize,
+        ..default_matrix_send_options()
+    }
+}
+
+fn raw_row(scenario: ScenarioKey, repeat_index: u32, metrics: LoopbackRunMetrics) -> RawResultRow {
+    RawResultRow {
+        scenario,
+        repeat_index,
+        files_count: metrics.files_count,
+        sent_frames: metrics.sent_frames,
+        raw_read_bytes: metrics.raw_read_bytes,
+        tar_input_bytes: metrics.tar_input_bytes,
+        compressed_payload_bytes: metrics.compressed_payload_bytes,
+        wire_bytes: metrics.wire_bytes,
+        wire_overhead_bytes: metrics.wire_overhead_bytes,
+        read_duration_ms: metrics.read_duration_ms,
+        compress_duration_ms: metrics.compress_duration_ms,
+        send_duration_ms: metrics.send_duration_ms,
+        total_duration_ms: metrics.total_duration_ms,
+        read_mib_s: metrics.read_mib_s,
+        compress_mib_s: metrics.compress_mib_s,
+        send_mib_s: metrics.send_mib_s,
+        total_mib_s: metrics.total_mib_s,
+        avg_cpu_pct: metrics.avg_cpu_pct,
+        max_cpu_pct: metrics.max_cpu_pct,
+        avg_rss_mib: metrics.avg_rss_mib,
+        max_rss_mib: metrics.max_rss_mib,
+        avg_private_mib: metrics.avg_private_mib,
+        max_private_mib: metrics.max_private_mib,
+        compression_ratio_pct: metrics.compression_ratio_pct,
+        wire_pct_of_read: metrics.wire_pct_of_read,
+        wire_overhead_pct: metrics.wire_overhead_pct,
+    }
+}

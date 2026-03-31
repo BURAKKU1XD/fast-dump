@@ -1,0 +1,42 @@
+name: Stress
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 3 * * 1"
+
+concurrency:
+  group: stress
+  cancel-in-progress: false
+
+jobs:
+  connectivity-stress:
+    runs-on: windows-latest
+    timeout-minutes: 120
+    env:
+      RUST_BACKTRACE: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run ignored connectivity stress test
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path artifacts | Out-Null
+          cargo test --test integration sender_and_receiver_roundtrip_random_files_and_verify_hashes -- --ignored --nocapture 2>&1 | Tee-Object -FilePath artifacts/stress.log
+          $exitCode = $LASTEXITCODE
+          if ($exitCode -ne 0) {
+            exit $exitCode
+          }
+
+      - name: Upload stress log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: stress-log
+          path: artifacts/stress.log

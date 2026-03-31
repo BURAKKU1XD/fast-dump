@@ -7,10 +7,32 @@ edition = "2024"
 anyhow = "1"
 clap = { version = "4.5", features = ["derive"] }
 crossbeam-channel = "0.5"
-jwalk = "0.8"
+env_logger = "0.11"
+log = "0.4"
 tar = "0.4"
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 zstd = { version = "0.13", features = ["zstdmt"] }
+
+[dev-dependencies]
+criterion = "0.5"
+socket2 = "0.5"
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_ProcessStatus", "Win32_System_Threading"] }
+
+[[bench]]
+name = "prepare_dump"
+harness = false
+
+[[bench]]
+name = "loopback_send_dump"
+harness = false
+
+[[bench]]
+name = "receive_frame_commit"
+harness = false
+
+[[bench]]
+name = "scan_source"
+harness = false
 
 [profile.release]
 lto = "thin"

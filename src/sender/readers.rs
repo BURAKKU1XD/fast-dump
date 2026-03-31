@@ -1,0 +1,1282 @@
+use std::collections::{BTreeMap, VecDeque};
+use std::fs::{self, File, OpenOptions};
+use std::io::{Read, Write};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::thread;
+use std::time::Instant;
+
+use anyhow::{Context, Result};
+use crossbeam_channel::{Receiver, Sender, TrySendError, bounded};
+use log::debug;
+
+use super::{InputFile, PipelineProfileCollector};
+
+#[cfg(test)]
+pub(crate) mod test_hooks {
+    use std::collections::{BTreeMap, VecDeque};
+    use std::fs::OpenOptions;
+    use std::io::Write;
+    use std::path::Path;
+    use std::sync::{Mutex, MutexGuard, OnceLock};
+
+    static SCHEDULED_READER_TASKS: OnceLock<Mutex<BTreeMap<String, usize>>> = OnceLock::new();
+    static BEFORE_OPEN_HOOKS: OnceLock<Mutex<BTreeMap<String, VecDeque<BeforeOpenHook>>>> =
+        OnceLock::new();
+    static AFTER_OPEN_HOOKS: OnceLock<Mutex<BTreeMap<String, VecDeque<AfterOpenHook>>>> =
+        OnceLock::new();
+    static FORCED_SHORT_READS: OnceLock<Mutex<BTreeMap<String, VecDeque<u64>>>> = OnceLock::new();
+    static HOOK_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    #[derive(Debug)]
+    enum BeforeOpenHook {
+        Fail,
+    }
+
+    #[derive(Debug)]
+    enum AfterOpenHook {
+        Append(Vec<u8>),
+    }
+
+    fn scheduled_reader_tasks() -> &'static Mutex<BTreeMap<String, usize>> {
+        SCHEDULED_READER_TASKS.get_or_init(|| Mutex::new(BTreeMap::new()))
+    }
+
+    fn before_open_hooks() -> &'static Mutex<BTreeMap<String, VecDeque<BeforeOpenHook>>> {
+        BEFORE_OPEN_HOOKS.get_or_init(|| Mutex::new(BTreeMap::new()))
+    }
+
+    fn after_open_hooks() -> &'static Mutex<BTreeMap<String, VecDeque<AfterOpenHook>>> {
+        AFTER_OPEN_HOOKS.get_or_init(|| Mutex::new(BTreeMap::new()))
+    }
+
+    fn forced_short_reads() -> &'static Mutex<BTreeMap<String, VecDeque<u64>>> {
+        FORCED_SHORT_READS.get_or_init(|| Mutex::new(BTreeMap::new()))
+    }
+
+    pub(crate) fn lock() -> MutexGuard<'static, ()> {
+        HOOK_LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
+    }
+
+    fn path_key(path: &Path) -> String {
+        path.to_string_lossy().into_owned()
+    }
+
+    fn push_before_open(path: &Path, hook: BeforeOpenHook) {
+        before_open_hooks()
+            .lock()
+            .unwrap()
+            .entry(path_key(path))
+            .or_default()
+            .push_back(hook);
+    }
+
+    fn push_after_open(path: &Path, hook: AfterOpenHook) {
+        after_open_hooks()
+            .lock()
+            .unwrap()
+            .entry(path_key(path))
+            .or_default()
+            .push_back(hook);
+    }
+
+    fn push_forced_short_read(path: &Path, limit: u64) {
+        forced_short_reads()
+            .lock()
+            .unwrap()
+            .entry(path_key(path))
+            .or_default()
+            .push_back(limit);
+    }
+
+    pub(crate) fn record_scheduled_reader_task(path: &Path) {
+        let mut scheduled = scheduled_reader_tasks().lock().unwrap();
+        *scheduled.entry(path_key(path)).or_default() += 1;
+    }
+
+    pub(crate) fn scheduled_reader_task_count(path: &Path) -> usize {
+        scheduled_reader_tasks()
+            .lock()
+            .unwrap()
+            .get(&path_key(path))
+            .copied()
+            .unwrap_or(0)
+    }
+
+    pub(crate) fn fail_next_open(path: &Path) {
+        push_before_open(path, BeforeOpenHook::Fail);
+    }
+
+    pub(crate) fn append_bytes_after_next_open(path: &Path, bytes: Vec<u8>) {
+        push_after_open(path, AfterOpenHook::Append(bytes));
+    }
+
+    pub(crate) fn force_short_read_after_next_open(path: &Path, limit: u64) {
+        push_forced_short_read(path, limit);
+    }
+
+    pub(crate) fn before_open(path: &Path) -> std::io::Result<()> {
+        let hook = before_open_hooks()
+            .lock()
+            .unwrap()
+            .get_mut(&path_key(path))
+            .and_then(VecDeque::pop_front);
+        match hook {
+            Some(BeforeOpenHook::Fail) => Err(std::io::Error::other(
+                "sender test hook injected open failure",
+            )),
+            None => Ok(()),
+        }
+    }
+
+    pub(crate) fn after_open(path: &Path) -> std::io::Result<()> {
+        let hook = after_open_hooks()
+            .lock()
+            .unwrap()
+            .get_mut(&path_key(path))
+            .and_then(VecDeque::pop_front);
+        match hook {
+            Some(AfterOpenHook::Append(bytes)) => {
+                let mut file = OpenOptions::new().append(true).open(path)?;
+                file.write_all(&bytes)?;
+                Ok(())
+            }
+            None => Ok(()),
+        }
+    }
+
+    pub(crate) fn forced_short_read_after_open(path: &Path) -> Option<u64> {
+        forced_short_reads()
+            .lock()
+            .unwrap()
+            .get_mut(&path_key(path))
+            .and_then(VecDeque::pop_front)
+    }
+
+    pub(crate) fn clear() {
+        before_open_hooks().lock().unwrap().clear();
+        after_open_hooks().lock().unwrap().clear();
+        forced_short_reads().lock().unwrap().clear();
+    }
+}
+
+#[cfg(not(test))]
+pub(crate) mod test_hooks {
+    use std::path::Path;
+
+    pub(crate) fn record_scheduled_reader_task(_path: &Path) {}
+
+    pub(crate) fn after_open(_path: &Path) -> std::io::Result<()> {
+        Ok(())
+    }
+
+    pub(crate) fn before_open(_path: &Path) -> std::io::Result<()> {
+        Ok(())
+    }
+
+    pub(crate) fn forced_short_read_after_open(_path: &Path) -> Option<u64> {
+        None
+    }
+}
+
+#[derive(Debug)]
+struct ReaderTask {
+    file: InputFile,
+    read_buffer_bytes: usize,
+    profile: Option<PipelineProfileCollector>,
+}
+
+#[derive(Debug)]
+enum ReaderCommand {
+    Read(ReaderTask),
+    Stop,
+}
+
+const MAX_SNAPSHOT_ATTEMPTS: u32 = 3;
+static STAGED_FILE_COUNTER: AtomicU64 = AtomicU64::new(1);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FileDisposition {
+    Clean,
+    BestEffort,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum FileSkipReason {
+    OpenFailed,
+    UnstableAfterRetries,
+}
+
+#[derive(Debug)]
+pub(crate) struct FileSnapshot {
+    pub(crate) file: InputFile,
+    pub(crate) size_at_open: u64,
+    pub(crate) staged_path: PathBuf,
+    pub(crate) disposition: FileDisposition,
+    pub(crate) retries: u32,
+}
+
+impl Drop for FileSnapshot {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.staged_path);
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct SkippedFile {
+    pub(crate) file: InputFile,
+    pub(crate) reason: FileSkipReason,
+    pub(crate) retries: u32,
+}
+
+#[derive(Debug)]
+pub(crate) enum FileReadOutcome {
+    Snapshot(FileSnapshot),
+    Skip(SkippedFile),
+}
+
+#[derive(Debug)]
+pub(crate) enum ReadEvent {
+    Ready(FileReadOutcome),
+    Fatal { file_index: u64, message: String },
+}
+
+impl ReadEvent {
+    fn file_index(&self) -> u64 {
+        match self {
+            Self::Ready(FileReadOutcome::Snapshot(snapshot)) => snapshot.file.index,
+            Self::Ready(FileReadOutcome::Skip(skipped)) => skipped.file.index,
+            Self::Fatal { file_index, .. } => *file_index,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AdaptiveReaderScaling {
+    min_readers: usize,
+    max_readers: usize,
+    target_workers: usize,
+    empty_observations: usize,
+    full_observations: usize,
+    scale_up_cooldown: usize,
+    bytes_since_scale_check: u64,
+    last_growth_window_bytes: Option<u64>,
+}
+
+impl AdaptiveReaderScaling {
+    fn new(pending_len: usize, min_readers: usize, max_readers: usize) -> Self {
+        let max_readers = pending_len.max(1).min(max_readers.max(1));
+        let min_readers = pending_len.min(min_readers.max(1)).min(max_readers);
+
+        Self {
+            min_readers,
+            max_readers,
+            target_workers: min_readers,
+            empty_observations: 0,
+            full_observations: 0,
+            scale_up_cooldown: 0,
+            bytes_since_scale_check: 0,
+            last_growth_window_bytes: None,
+        }
+    }
+
+    fn target_workers(&self) -> usize {
+        self.target_workers
+    }
+
+    fn note_bytes_consumed(&mut self, bytes: usize) {
+        self.bytes_since_scale_check = self.bytes_since_scale_check.saturating_add(bytes as u64);
+    }
+
+    fn note_waiting_for_input(&mut self, pending_remaining: usize) -> bool {
+        self.full_observations = 0;
+        if self.scale_up_cooldown > 0 {
+            self.scale_up_cooldown -= 1;
+            self.empty_observations = 0;
+            return false;
+        }
+        if pending_remaining <= self.target_workers || self.target_workers >= self.max_readers {
+            self.empty_observations = 0;
+            return false;
+        }
+
+        self.empty_observations += 1;
+        if self.empty_observations < 2 {
+            return false;
+        }
+
+        self.empty_observations = 0;
+        // Новый рост reader-пула имеет смысл только если прошлое расширение
+        // дало больший объём реально потреблённых байт между окнами starvation.
+        let window_bytes = std::mem::take(&mut self.bytes_since_scale_check);
+        if let Some(previous_window_bytes) = self.last_growth_window_bytes
+            && window_bytes <= previous_window_bytes
+        {
+            return false;
+        }
+        self.last_growth_window_bytes = Some(window_bytes);
+        self.target_workers += 1;
+        // Небольшой cooldown не даёт пулу "взрываться" из-за кратковременного пустого окна.
+        self.scale_up_cooldown = 1;
+        true
+    }
+
+    fn note_queue_pressure(&mut self, queue_len: usize, queue_capacity: usize) -> bool {
+        self.empty_observations = 0;
+        if self.scale_up_cooldown > 0 {
+            self.scale_up_cooldown -= 1;
+        }
+        if self.target_workers <= self.min_readers || queue_capacity == 0 {
+            self.full_observations = 0;
+            return false;
+        }
+
+        // Если очередь близка к насыщению несколько наблюдений подряд, текущий рост readers
+        // уже не помогает компрессору и только держит лишние буферы в памяти.
+        let near_full_threshold = queue_capacity.saturating_sub(self.target_workers).max(1);
+        if queue_len < near_full_threshold {
+            self.full_observations = 0;
+            return false;
+        }
+
+        self.full_observations += 1;
+        if self.full_observations < 2 {
+            return false;
+        }
+
+        self.full_observations = 0;
+        self.target_workers -= 1;
+        self.bytes_since_scale_check = 0;
+        self.last_growth_window_bytes = None;
+        self.scale_up_cooldown = 3;
+        true
+    }
+}
+
+pub(crate) struct ReaderPool {
+    task_tx: Sender<ReaderCommand>,
+    task_rx: Receiver<ReaderCommand>,
+    event_tx: Sender<ReadEvent>,
+    event_rx: Receiver<ReadEvent>,
+    handles: Vec<thread::JoinHandle<()>>,
+    buffered: BTreeMap<u64, VecDeque<ReadEvent>>,
+    worker_limit: usize,
+    active_workers: usize,
+    min_workers: usize,
+    event_capacity: usize,
+    scaling: AdaptiveReaderScaling,
+    read_buffer_bytes: usize,
+    profile: Option<PipelineProfileCollector>,
+}
+
+impl ReaderPool {
+    pub(crate) fn new(
+        pending_len: usize,
+        min_readers: usize,
+        max_readers: usize,
+        read_buffer_bytes: usize,
+        profile: Option<PipelineProfileCollector>,
+    ) -> Self {
+        let scaling = AdaptiveReaderScaling::new(pending_len, min_readers, max_readers);
+        let worker_limit = scaling.max_readers.max(1);
+        let initial_workers = scaling.target_workers();
+        let event_capacity = (worker_limit * 2).max(1);
+        let (task_tx, task_rx) = bounded(worker_limit.max(1));
+        let (event_tx, event_rx) = bounded(event_capacity);
+        let mut pool = Self {
+            task_tx,
+            task_rx,
+            event_tx,
+            event_rx,
+            handles: Vec::new(),
+            buffered: BTreeMap::new(),
+            worker_limit,
+            active_workers: 0,
+            min_workers: scaling.min_readers,
+            event_capacity,
+            scaling,
+            read_buffer_bytes,
+            profile,
+        };
+
+        for _ in 0..initial_workers {
+            pool.spawn_worker();
+        }
+        pool
+    }
+
+    pub(crate) fn prefetch_target(&self) -> usize {
+        self.active_workers.max(1)
+    }
+
+    pub(crate) fn schedule(&mut self, file: InputFile) -> Result<()> {
+        test_hooks::record_scheduled_reader_task(&file.abs_path);
+        self.task_tx
+            .send(ReaderCommand::Read(ReaderTask {
+                file,
+                read_buffer_bytes: self.read_buffer_bytes,
+                profile: self.profile.clone(),
+            }))
+            .context("failed to schedule sender reader task")
+    }
+
+    pub(crate) fn next_for_with_scheduler<F>(
+        &mut self,
+        file_index: u64,
+        mut schedule_more: F,
+    ) -> Result<ReadEvent>
+    where
+        F: FnMut(&mut Self) -> Result<(usize, bool)>,
+    {
+        loop {
+            self.maybe_scale_down()?;
+
+            if let Some(event) = self.take_buffered_event(file_index) {
+                self.note_event_consumed(&event);
+                return Ok(event);
+            }
+
+            let (scheduled_not_consumed, has_more_to_schedule) = schedule_more(self)?;
+
+            // Когда compressor/network ждёт следующий file boundary, sender может
+            // расширить reader pool, но только если за текущим окном ещё есть работа.
+            if self.event_rx.is_empty() {
+                let pending_hint = if has_more_to_schedule {
+                    scheduled_not_consumed.max(self.scaling.target_workers().saturating_add(1))
+                } else {
+                    scheduled_not_consumed
+                };
+                if self.scaling.note_waiting_for_input(pending_hint) {
+                    self.spawn_additional_reader();
+                    let _ = schedule_more(self)?;
+                }
+            }
+
+            let event = self
+                .event_rx
+                .recv()
+                .context("sender reader pipeline disconnected unexpectedly")?;
+            self.buffered
+                .entry(event.file_index())
+                .or_default()
+                .push_back(event);
+            let _ = schedule_more(self)?;
+        }
+    }
+
+    fn take_buffered_event(&mut self, file_index: u64) -> Option<ReadEvent> {
+        let events = self.buffered.get_mut(&file_index)?;
+        let event = events.pop_front()?;
+        if events.is_empty() {
+            self.buffered.remove(&file_index);
+        }
+        Some(event)
+    }
+
+    fn note_event_consumed(&mut self, event: &ReadEvent) {
+        if let ReadEvent::Ready(FileReadOutcome::Snapshot(snapshot)) = event {
+            self.scaling
+                .note_bytes_consumed(snapshot.size_at_open.min(usize::MAX as u64) as usize);
+        }
+    }
+
+    fn maybe_scale_down(&mut self) -> Result<()> {
+        if self.active_workers <= self.min_workers {
+            return Ok(());
+        }
+        if !self
+            .scaling
+            .note_queue_pressure(self.event_rx.len(), self.event_capacity)
+        {
+            return Ok(());
+        }
+
+        self.active_workers -= 1;
+        match self.task_tx.try_send(ReaderCommand::Stop) {
+            Ok(()) => {
+                debug!(
+                    "sender reader pool scaled down: active_workers={} target_workers={} queue_len={} queue_capacity={}",
+                    self.active_workers,
+                    self.scaling.target_workers,
+                    self.event_rx.len(),
+                    self.event_capacity
+                );
+            }
+            Err(TrySendError::Full(_)) => {
+                self.active_workers += 1;
+                self.scaling.target_workers += 1;
+                self.scaling.scale_up_cooldown = 0;
+                debug!(
+                    "sender reader pool scale-down cancelled because stop queue is full: active_workers={} target_workers={}",
+                    self.active_workers, self.scaling.target_workers
+                );
+            }
+            Err(TrySendError::Disconnected(_)) => {
+                return Err(anyhow::anyhow!("failed to schedule sender reader shutdown"));
+            }
+        }
+        Ok(())
+    }
+
+    fn spawn_additional_reader(&mut self) {
+        if self.active_workers >= self.worker_limit {
+            return;
+        }
+        debug!(
+            "sender reader pool scaling up: active_workers={} target_workers={} worker_limit={}",
+            self.active_workers, self.scaling.target_workers, self.worker_limit
+        );
+        self.spawn_worker();
+    }
+
+    fn spawn_worker(&mut self) {
+        self.active_workers += 1;
+        let task_rx = self.task_rx.clone();
+        let event_tx = self.event_tx.clone();
+        self.handles.push(thread::spawn(move || {
+            while let Ok(command) = task_rx.recv() {
+                match command {
+                    ReaderCommand::Read(task) => {
+                        if read_file_into_events(task, &event_tx).is_err() {
+                            break;
+                        }
+                    }
+                    ReaderCommand::Stop => break,
+                }
+            }
+        }));
+    }
+
+    pub(crate) fn finish(self) {
+        drop(self);
+    }
+}
+
+impl Drop for ReaderPool {
+    fn drop(&mut self) {
+        let (task_tx, task_rx) = bounded::<ReaderCommand>(0);
+        let (event_tx, event_rx) = bounded::<ReadEvent>(0);
+        let _ = std::mem::replace(&mut self.task_tx, task_tx);
+        let _ = std::mem::replace(&mut self.task_rx, task_rx);
+        let _ = std::mem::replace(&mut self.event_tx, event_tx);
+        let _ = std::mem::replace(&mut self.event_rx, event_rx);
+
+        for handle in std::mem::take(&mut self.handles) {
+            let _ = handle.join();
+        }
+    }
+}
+
+fn read_file_into_events(
+    task: ReaderTask,
+    event_tx: &Sender<ReadEvent>,
+) -> std::result::Result<(), ()> {
+    let file_index = task.file.index;
+    let event = match read_file_outcome(task) {
+        Ok(outcome) => ReadEvent::Ready(outcome),
+        Err(message) => ReadEvent::Fatal {
+            file_index,
+            message,
+        },
+    };
+    event_tx.send(event).map_err(|_| ())
+}
+
+#[derive(Debug)]
+enum AttemptFailure {
+    Open(String),
+    Retryable(String),
+    Fatal(String),
+}
+
+fn read_file_outcome(task: ReaderTask) -> std::result::Result<FileReadOutcome, String> {
+    let ReaderTask {
+        file,
+        read_buffer_bytes,
+        profile,
+    } = task;
+    let mut saw_retryable_failure = false;
+
+    for attempt in 1..=MAX_SNAPSHOT_ATTEMPTS {
+        match capture_snapshot_attempt(&file, read_buffer_bytes, profile.as_ref(), attempt) {
+            Ok(snapshot) => return Ok(FileReadOutcome::Snapshot(snapshot)),
+            Err(AttemptFailure::Open(message)) => {
+                debug!(
+                    "sender snapshot open attempt failed: file_index={} path={} attempt={} message={}",
+                    file.index, file.rel_path, attempt, message
+                );
+                if attempt == MAX_SNAPSHOT_ATTEMPTS {
+                    return Ok(FileReadOutcome::Skip(SkippedFile {
+                        file,
+                        reason: if saw_retryable_failure {
+                            FileSkipReason::UnstableAfterRetries
+                        } else {
+                            FileSkipReason::OpenFailed
+                        },
+                        retries: attempt.saturating_sub(1),
+                    }));
+                }
+            }
+            Err(AttemptFailure::Retryable(message)) => {
+                saw_retryable_failure = true;
+                debug!(
+                    "sender snapshot attempt will retry: file_index={} path={} attempt={} message={}",
+                    file.index, file.rel_path, attempt, message
+                );
+                if attempt == MAX_SNAPSHOT_ATTEMPTS {
+                    return Ok(FileReadOutcome::Skip(SkippedFile {
+                        file,
+                        reason: FileSkipReason::UnstableAfterRetries,
+                        retries: attempt.saturating_sub(1),
+                    }));
+                }
+            }
+            Err(AttemptFailure::Fatal(message)) => return Err(message),
+        }
+    }
+
+    unreachable!("snapshot loop must return on success or retry exhaustion")
+}
+
+fn capture_snapshot_attempt(
+    file: &InputFile,
+    read_buffer_bytes: usize,
+    profile: Option<&PipelineProfileCollector>,
+    attempt: u32,
+) -> std::result::Result<FileSnapshot, AttemptFailure> {
+    let read_started = Instant::now();
+    test_hooks::before_open(&file.abs_path).map_err(|error| {
+        AttemptFailure::Open(format!(
+            "failed to prepare sender file {} before open: {error}",
+            file.abs_path.display()
+        ))
+    })?;
+
+    let mut input = File::open(&file.abs_path).map_err(|error| {
+        AttemptFailure::Open(format!(
+            "failed to open sender file {}: {error}",
+            file.abs_path.display()
+        ))
+    })?;
+    let size_at_open = input
+        .metadata()
+        .map_err(|error| {
+            AttemptFailure::Retryable(format!(
+                "failed to read sender file metadata from opened handle {}: {error}",
+                file.abs_path.display()
+            ))
+        })?
+        .len();
+    test_hooks::after_open(&file.abs_path).map_err(|error| {
+        AttemptFailure::Fatal(format!(
+            "failed to prepare sender file {} after open: {error}",
+            file.abs_path.display()
+        ))
+    })?;
+    let forced_short_read_limit = test_hooks::forced_short_read_after_open(&file.abs_path);
+
+    let (staged_path, mut staged) = create_staged_file(file.index).map_err(|error| {
+        AttemptFailure::Fatal(format!(
+            "failed to create staged snapshot for sender file {}: {error:#}",
+            file.abs_path.display()
+        ))
+    })?;
+    let mut buffer = vec![0_u8; read_buffer_bytes];
+    let mut remaining = size_at_open;
+    let mut read_buffers = 0_u64;
+    let mut exposed_bytes = 0_u64;
+
+    while remaining > 0 {
+        if let Some(limit) = forced_short_read_limit
+            && exposed_bytes >= limit
+        {
+            remove_staged_file(&staged_path);
+            return Err(AttemptFailure::Retryable(format!(
+                "sender file {} reached EOF before size_at_open {} bytes",
+                file.abs_path.display(),
+                size_at_open
+            )));
+        }
+        let mut read_limit = buffer.len().min(remaining as usize);
+        if let Some(limit) = forced_short_read_limit {
+            read_limit = read_limit.min(limit.saturating_sub(exposed_bytes) as usize);
+        }
+        let read = input.read(&mut buffer[..read_limit]).map_err(|error| {
+            remove_staged_file(&staged_path);
+            AttemptFailure::Retryable(format!(
+                "failed to read sender file {}: {error}",
+                file.abs_path.display()
+            ))
+        })?;
+        if read == 0 {
+            remove_staged_file(&staged_path);
+            return Err(AttemptFailure::Retryable(format!(
+                "sender file {} reached EOF before size_at_open {} bytes",
+                file.abs_path.display(),
+                size_at_open
+            )));
+        }
+        staged.write_all(&buffer[..read]).map_err(|error| {
+            remove_staged_file(&staged_path);
+            AttemptFailure::Fatal(format!(
+                "failed to stage sender snapshot {} into {}: {error}",
+                file.abs_path.display(),
+                staged_path.display()
+            ))
+        })?;
+        remaining -= read as u64;
+        exposed_bytes += read as u64;
+        read_buffers += 1;
+    }
+    staged.flush().map_err(|error| {
+        remove_staged_file(&staged_path);
+        AttemptFailure::Fatal(format!(
+            "failed to flush staged sender snapshot {}: {error}",
+            staged_path.display()
+        ))
+    })?;
+
+    let read_finished = Instant::now();
+    debug!(
+        "sender reader captured snapshot: file_index={} path={} size_at_open={} attempt={} elapsed_ms={}",
+        file.index,
+        file.rel_path,
+        size_at_open,
+        attempt,
+        read_finished
+            .saturating_duration_since(read_started)
+            .as_millis()
+    );
+    if let Some(profile) = profile {
+        profile.record_file_read(
+            file.index,
+            &file.rel_path,
+            size_at_open,
+            read_buffers,
+            read_started,
+            read_finished,
+        );
+    }
+
+    Ok(FileSnapshot {
+        file: file.clone(),
+        size_at_open,
+        staged_path,
+        disposition: if attempt == 1 {
+            FileDisposition::Clean
+        } else {
+            FileDisposition::BestEffort
+        },
+        retries: attempt.saturating_sub(1),
+    })
+}
+
+fn create_staged_file(file_index: u64) -> Result<(PathBuf, File)> {
+    let staging_dir = std::env::temp_dir().join("fast-dump-staging");
+    fs::create_dir_all(&staging_dir).with_context(|| {
+        format!(
+            "failed to create sender staging directory {}",
+            staging_dir.display()
+        )
+    })?;
+
+    loop {
+        let nonce = STAGED_FILE_COUNTER.fetch_add(1, Ordering::Relaxed);
+        let staged_path = staging_dir.join(format!(
+            "snapshot-{}-{}-{}.part",
+            std::process::id(),
+            file_index,
+            nonce
+        ));
+        match OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&staged_path)
+        {
+            Ok(file) => return Ok((staged_path, file)),
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!(
+                        "failed to open staged sender snapshot {}",
+                        staged_path.display()
+                    )
+                });
+            }
+        }
+    }
+}
+
+fn remove_staged_file(path: &Path) {
+    let _ = fs::remove_file(path);
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+    use std::path::{Path, PathBuf};
+    use std::sync::MutexGuard;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    use crossbeam_channel::bounded;
+
+    use super::{
+        AdaptiveReaderScaling, FileDisposition, FileReadOutcome, FileSkipReason, FileSnapshot,
+        ReadEvent, ReaderCommand, ReaderPool, ReaderTask, SkippedFile, read_file_into_events,
+    };
+    use crate::sender::InputFile;
+
+    struct TestDir {
+        path: PathBuf,
+    }
+
+    struct ReadHookGuard {
+        _lock: MutexGuard<'static, ()>,
+    }
+
+    impl TestDir {
+        fn new() -> Self {
+            let unique = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!(
+                "fast-dump-sender-readers-tests-{}-{}",
+                std::process::id(),
+                unique
+            ));
+            fs::create_dir_all(&path).unwrap();
+            Self { path }
+        }
+
+        fn path(&self) -> &Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TestDir {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.path);
+        }
+    }
+
+    impl ReadHookGuard {
+        fn new() -> Self {
+            let lock = super::test_hooks::lock();
+            super::test_hooks::clear();
+            Self { _lock: lock }
+        }
+    }
+
+    impl Drop for ReadHookGuard {
+        fn drop(&mut self) {
+            super::test_hooks::clear();
+        }
+    }
+
+    fn write_input_file(temp: &TestDir, rel_path: &str, bytes: &[u8], index: u64) -> InputFile {
+        let path = temp.path().join(rel_path);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        fs::write(&path, bytes).unwrap();
+        InputFile {
+            index,
+            abs_path: path,
+            rel_path: rel_path.replace('\\', "/"),
+        }
+    }
+
+    #[test]
+    fn adaptive_reader_scaling_starts_at_min_and_scales_up_on_repeated_starvation() {
+        let mut scaling = AdaptiveReaderScaling::new(8, 2, 5);
+
+        assert_eq!(scaling.target_workers(), 2);
+        assert!(!scaling.note_waiting_for_input(8));
+        assert!(scaling.note_waiting_for_input(8));
+        assert_eq!(scaling.target_workers(), 3);
+    }
+
+    #[test]
+    fn adaptive_reader_scaling_scales_down_when_queue_stays_near_full() {
+        let mut scaling = AdaptiveReaderScaling::new(8, 2, 5);
+        assert!(!scaling.note_waiting_for_input(8));
+        assert!(scaling.note_waiting_for_input(8));
+        assert_eq!(scaling.target_workers(), 3);
+
+        assert!(!scaling.note_queue_pressure(6, 6));
+        assert!(scaling.note_queue_pressure(6, 6));
+        assert_eq!(scaling.target_workers(), 2);
+    }
+
+    #[test]
+    fn adaptive_reader_scaling_cooldown_blocks_immediate_regrowth_after_scale_down() {
+        let mut scaling = AdaptiveReaderScaling::new(8, 2, 5);
+        assert!(!scaling.note_waiting_for_input(8));
+        assert!(scaling.note_waiting_for_input(8));
+        assert_eq!(scaling.target_workers(), 3);
+        assert!(!scaling.note_queue_pressure(6, 6));
+        assert!(scaling.note_queue_pressure(6, 6));
+        assert_eq!(scaling.target_workers(), 2);
+
+        assert!(!scaling.note_waiting_for_input(8));
+        assert!(!scaling.note_waiting_for_input(8));
+        assert!(!scaling.note_waiting_for_input(8));
+        assert!(!scaling.note_waiting_for_input(8));
+        assert!(scaling.note_waiting_for_input(8));
+        assert_eq!(scaling.target_workers(), 3);
+    }
+
+    #[test]
+    fn adaptive_reader_scaling_ignores_queue_pressure_when_scaling_down_is_not_needed() {
+        let mut scaling = AdaptiveReaderScaling::new(8, 2, 5);
+
+        assert!(!scaling.note_queue_pressure(1, 8));
+        assert_eq!(scaling.target_workers(), 2);
+
+        assert!(!scaling.note_waiting_for_input(8));
+        assert!(scaling.note_waiting_for_input(8));
+        assert_eq!(scaling.target_workers(), 3);
+
+        assert!(!scaling.note_queue_pressure(1, 8));
+        assert_eq!(scaling.target_workers(), 3);
+    }
+
+    #[test]
+    fn adaptive_reader_scaling_stops_growing_when_throughput_does_not_improve() {
+        let mut scaling = AdaptiveReaderScaling::new(8, 2, 5);
+        scaling.note_bytes_consumed(100);
+
+        assert!(!scaling.note_waiting_for_input(8));
+        assert!(scaling.note_waiting_for_input(8));
+        assert_eq!(scaling.target_workers(), 3);
+
+        scaling.note_bytes_consumed(80);
+        assert!(!scaling.note_waiting_for_input(8));
+        assert!(!scaling.note_waiting_for_input(8));
+        assert!(!scaling.note_waiting_for_input(8));
+        assert_eq!(scaling.target_workers(), 3);
+    }
+
+    #[test]
+    fn adaptive_reader_scaling_can_grow_again_after_later_throughput_gain() {
+        let mut scaling = AdaptiveReaderScaling::new(8, 2, 5);
+        scaling.note_bytes_consumed(100);
+
+        assert!(!scaling.note_waiting_for_input(8));
+        assert!(scaling.note_waiting_for_input(8));
+        assert_eq!(scaling.target_workers(), 3);
+
+        scaling.note_bytes_consumed(80);
+        assert!(!scaling.note_waiting_for_input(8));
+        assert!(!scaling.note_waiting_for_input(8));
+        assert!(!scaling.note_waiting_for_input(8));
+        assert_eq!(scaling.target_workers(), 3);
+
+        scaling.note_bytes_consumed(160);
+        assert!(!scaling.note_waiting_for_input(8));
+        assert!(scaling.note_waiting_for_input(8));
+        assert_eq!(scaling.target_workers(), 4);
+    }
+
+    #[test]
+    fn adaptive_reader_scaling_resets_throughput_baseline_after_scale_down() {
+        let mut scaling = AdaptiveReaderScaling::new(8, 2, 5);
+        scaling.note_bytes_consumed(100);
+
+        assert!(!scaling.note_waiting_for_input(8));
+        assert!(scaling.note_waiting_for_input(8));
+        assert_eq!(scaling.target_workers(), 3);
+
+        assert!(!scaling.note_queue_pressure(6, 6));
+        assert!(scaling.note_queue_pressure(6, 6));
+        assert_eq!(scaling.target_workers(), 2);
+
+        scaling.note_bytes_consumed(80);
+        assert!(!scaling.note_waiting_for_input(8));
+        assert!(!scaling.note_waiting_for_input(8));
+        assert!(!scaling.note_waiting_for_input(8));
+        assert!(!scaling.note_waiting_for_input(8));
+        assert!(scaling.note_waiting_for_input(8));
+        assert_eq!(scaling.target_workers(), 3);
+    }
+
+    fn skipped_event(file_index: u64) -> ReadEvent {
+        ReadEvent::Ready(FileReadOutcome::Skip(SkippedFile {
+            file: InputFile {
+                index: file_index,
+                abs_path: PathBuf::from(format!("file-{file_index}.bin")),
+                rel_path: format!("file-{file_index}.bin"),
+            },
+            reason: FileSkipReason::OpenFailed,
+            retries: 2,
+        }))
+    }
+
+    #[test]
+    fn read_event_reports_file_index_for_all_variants() {
+        let temp = TestDir::new();
+        let file = write_input_file(&temp, "alpha.bin", b"abc", 7);
+        let staged_path = temp.path().join("alpha.snapshot");
+        fs::write(&staged_path, b"abc").unwrap();
+
+        assert_eq!(
+            ReadEvent::Ready(FileReadOutcome::Snapshot(FileSnapshot {
+                file: file.clone(),
+                size_at_open: 3,
+                staged_path,
+                disposition: FileDisposition::Clean,
+                retries: 0,
+            }))
+            .file_index(),
+            7
+        );
+        assert_eq!(skipped_event(8).file_index(), 8);
+        assert_eq!(
+            ReadEvent::Fatal {
+                file_index: 9,
+                message: "boom".to_owned(),
+            }
+            .file_index(),
+            9
+        );
+    }
+
+    #[test]
+    fn read_file_into_events_skips_file_after_open_retry_budget() {
+        let _guard = ReadHookGuard::new();
+        let temp = TestDir::new();
+        let file = write_input_file(&temp, "missing.bin", b"payload", 4);
+        for _ in 0..3 {
+            super::test_hooks::fail_next_open(&file.abs_path);
+        }
+        let (event_tx, event_rx) = bounded::<ReadEvent>(1);
+        let task = ReaderTask {
+            file,
+            read_buffer_bytes: 8,
+            profile: None,
+        };
+
+        assert!(read_file_into_events(task, &event_tx).is_ok());
+        match event_rx.recv().unwrap() {
+            ReadEvent::Ready(FileReadOutcome::Skip(skipped)) => {
+                assert_eq!(skipped.file.index, 4);
+                assert_eq!(skipped.reason, FileSkipReason::OpenFailed);
+                assert_eq!(skipped.retries, 2);
+            }
+            other => panic!("unexpected read event: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn read_file_into_events_accepts_file_growth_after_open() {
+        let _guard = ReadHookGuard::new();
+        let temp = TestDir::new();
+        let file = write_input_file(&temp, "alpha.bin", b"abc", 1);
+        super::test_hooks::append_bytes_after_next_open(&file.abs_path, b"def".to_vec());
+        let (event_tx, event_rx) = bounded::<ReadEvent>(1);
+
+        let result = read_file_into_events(
+            ReaderTask {
+                file,
+                read_buffer_bytes: 8,
+                profile: None,
+            },
+            &event_tx,
+        );
+
+        assert!(result.is_ok());
+        match event_rx.recv().unwrap() {
+            ReadEvent::Ready(FileReadOutcome::Snapshot(snapshot)) => {
+                assert_eq!(snapshot.file.index, 1);
+                assert_eq!(snapshot.size_at_open, 3);
+                assert_eq!(snapshot.disposition, FileDisposition::Clean);
+                assert_eq!(snapshot.retries, 0);
+                assert_eq!(fs::read(&snapshot.staged_path).unwrap(), b"abc");
+            }
+            other => panic!("unexpected read event: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn read_file_into_events_retries_short_read_and_marks_best_effort_on_success() {
+        let _guard = ReadHookGuard::new();
+        let temp = TestDir::new();
+        let file = write_input_file(&temp, "alpha.bin", b"abcdef", 1);
+        super::test_hooks::force_short_read_after_next_open(&file.abs_path, 3);
+        let (event_tx, event_rx) = bounded::<ReadEvent>(1);
+
+        let result = read_file_into_events(
+            ReaderTask {
+                file,
+                read_buffer_bytes: 8,
+                profile: None,
+            },
+            &event_tx,
+        );
+
+        assert!(result.is_ok());
+        match event_rx.recv().unwrap() {
+            ReadEvent::Ready(FileReadOutcome::Snapshot(snapshot)) => {
+                assert_eq!(snapshot.file.index, 1);
+                assert_eq!(snapshot.size_at_open, 6);
+                assert_eq!(snapshot.disposition, FileDisposition::BestEffort);
+                assert_eq!(snapshot.retries, 1);
+                assert_eq!(fs::read(&snapshot.staged_path).unwrap(), b"abcdef");
+            }
+            other => panic!("unexpected read event: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn read_file_into_events_skips_unstable_file_after_retry_budget() {
+        let _guard = ReadHookGuard::new();
+        let temp = TestDir::new();
+        let file = write_input_file(&temp, "alpha.bin", b"abcdef", 1);
+        for _ in 0..3 {
+            super::test_hooks::force_short_read_after_next_open(&file.abs_path, 3);
+        }
+        let (event_tx, event_rx) = bounded::<ReadEvent>(1);
+
+        let result = read_file_into_events(
+            ReaderTask {
+                file,
+                read_buffer_bytes: 8,
+                profile: None,
+            },
+            &event_tx,
+        );
+
+        assert!(result.is_ok());
+        match event_rx.recv().unwrap() {
+            ReadEvent::Ready(FileReadOutcome::Skip(skipped)) => {
+                assert_eq!(skipped.file.index, 1);
+                assert_eq!(skipped.reason, FileSkipReason::UnstableAfterRetries);
+                assert_eq!(skipped.retries, 2);
+            }
+            other => panic!("unexpected read event: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn read_file_into_events_returns_err_when_ready_consumer_disconnects() {
+        let temp = TestDir::new();
+        let file = write_input_file(&temp, "empty.bin", b"", 2);
+        let (event_tx, event_rx) = bounded::<ReadEvent>(0);
+        drop(event_rx);
+
+        let result = read_file_into_events(
+            ReaderTask {
+                file,
+                read_buffer_bytes: 8,
+                profile: None,
+            },
+            &event_tx,
+        );
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn read_file_into_events_returns_err_when_skip_consumer_disconnects() {
+        let temp = TestDir::new();
+        let (event_tx, event_rx) = bounded::<ReadEvent>(0);
+        drop(event_rx);
+
+        let result = read_file_into_events(
+            ReaderTask {
+                file: InputFile {
+                    index: 3,
+                    abs_path: temp.path().join("missing.bin"),
+                    rel_path: "missing.bin".to_owned(),
+                },
+                read_buffer_bytes: 8,
+                profile: None,
+            },
+            &event_tx,
+        );
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn schedule_prefetch_reports_disconnected_task_channel() {
+        let temp = TestDir::new();
+        let pending = write_input_file(&temp, "alpha.bin", b"abc", 1);
+        let mut pool = ReaderPool::new(1, 1, 1, 8, None);
+        let (task_tx, task_rx) = bounded::<ReaderCommand>(0);
+        drop(task_rx);
+        pool.task_tx = task_tx;
+
+        let error = pool.schedule(pending).unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("failed to schedule sender reader task")
+        );
+    }
+
+    #[test]
+    fn reader_pool_next_for_reports_pipeline_disconnect() {
+        let mut pool = ReaderPool::new(0, 1, 1, 8, None);
+        let (event_tx, event_rx) = bounded::<ReadEvent>(0);
+        drop(event_tx);
+        pool.event_rx = event_rx;
+
+        let error = pool
+            .next_for_with_scheduler(1, |_pool| Ok((0, false)))
+            .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("sender reader pipeline disconnected unexpectedly")
+        );
+    }
+
+    #[test]
+    fn maybe_scale_down_restores_counters_when_stop_queue_is_full() {
+        let mut pool = ReaderPool::new(1, 1, 2, 8, None);
+        let (task_tx, task_rx) = bounded::<ReaderCommand>(1);
+        task_tx.send(ReaderCommand::Stop).unwrap();
+        pool.task_tx = task_tx;
+        pool.task_rx = task_rx;
+        pool.active_workers = 2;
+        pool.min_workers = 1;
+        pool.event_capacity = 1;
+        pool.scaling.min_readers = 1;
+        pool.scaling.target_workers = 2;
+        pool.scaling.full_observations = 1;
+        pool.event_tx.send(skipped_event(1)).unwrap();
+
+        pool.maybe_scale_down().unwrap();
+
+        assert_eq!(pool.active_workers, 2);
+        assert_eq!(pool.scaling.target_workers, 2);
+        assert_eq!(pool.scaling.scale_up_cooldown, 0);
+    }
+
+    #[test]
+    fn maybe_scale_down_reports_disconnected_task_channel() {
+        let mut pool = ReaderPool::new(1, 1, 2, 8, None);
+        let (task_tx, task_rx) = bounded::<ReaderCommand>(0);
+        drop(task_rx);
+        pool.task_tx = task_tx;
+        pool.active_workers = 2;
+        pool.min_workers = 1;
+        pool.event_capacity = 1;
+        pool.scaling.min_readers = 1;
+        pool.scaling.target_workers = 2;
+        pool.scaling.full_observations = 1;
+        pool.event_tx.send(skipped_event(1)).unwrap();
+
+        let error = pool.maybe_scale_down().unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("failed to schedule sender reader shutdown")
+        );
+    }
+}
