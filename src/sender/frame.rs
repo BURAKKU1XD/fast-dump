@@ -13,7 +13,7 @@ use tar::{EntryType, Header};
 
 use crate::network::protocol::{self, ResumeState};
 
-use super::readers::IN_MEMORY_SNAPSHOT_THRESHOLD_BYTES;
+use super::readers::{IN_MEMORY_SNAPSHOT_THRESHOLD_BYTES, start_long_read_watchdog};
 use super::{
     DirectFileStream, FileDisposition, FileReadOutcome, FileSkipReason, InputFile, InputFileKind,
     PendingFileWalker, PipelineProfile, PipelineProfileCollector, ReadEvent, ReaderPool,
@@ -1056,6 +1056,13 @@ pub(crate) fn stream_direct_file<W>(
 where
     W: Write,
 {
+    // Прямой поток больших файлов дольше всего удерживает reader worker, поэтому
+    // отдельный watchdog помогает увидеть path даже если read() заблокировался.
+    let _watchdog = start_long_read_watchdog(
+        &direct.file.abs_path,
+        "direct-stream",
+        direct.retries.saturating_add(1),
+    );
     let mut buffer = vec![0_u8; direct.read_buffer_bytes.max(1)];
     let mut remaining = direct.size_at_open;
     let mut exposed_bytes = 0_u64;

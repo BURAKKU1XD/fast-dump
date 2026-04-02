@@ -88,7 +88,7 @@ enum DiscoveredEntryKind {
     Directory,
     Regular,
     Symlink { target: PathBuf },
-    Unsupported(UnsupportedEntryKind),
+    Skipped(SkippedEntryReason),
 }
 
 #[cfg_attr(not(unix), allow(dead_code))]
@@ -112,6 +112,12 @@ impl std::fmt::Display for UnsupportedEntryKind {
         };
         f.write_str(label)
     }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum SkippedEntryReason {
+    Unsupported(UnsupportedEntryKind),
+    UnreadableSymlinkTarget { error: String },
 }
 
 enum DirectoryListingCommand {
@@ -330,6 +336,10 @@ mod test_hooks {
         format!("metadata:{}", path_key(path))
     }
 
+    fn read_link_key(path: &Path) -> String {
+        format!("read_link:{}", path_key(path))
+    }
+
     fn maybe_fail(key: String) -> std::io::Result<()> {
         let mut failures = fs_failures().lock().unwrap();
         let Some(remaining) = failures.get_mut(&key) else {
@@ -354,12 +364,20 @@ mod test_hooks {
         fs_failures().lock().unwrap().insert(metadata_key(path), 1);
     }
 
+    pub(crate) fn fail_next_read_link(path: &Path) {
+        fs_failures().lock().unwrap().insert(read_link_key(path), 1);
+    }
+
     pub(crate) fn before_read_dir(path: &Path) -> std::io::Result<()> {
         maybe_fail(read_dir_key(path))
     }
 
     pub(crate) fn before_metadata(path: &Path) -> std::io::Result<()> {
         maybe_fail(metadata_key(path))
+    }
+
+    pub(crate) fn before_read_link(path: &Path) -> std::io::Result<()> {
+        maybe_fail(read_link_key(path))
     }
 
     pub(crate) fn clear() {
@@ -378,6 +396,10 @@ mod test_hooks {
     pub(crate) fn before_metadata(_path: &Path) -> std::io::Result<()> {
         Ok(())
     }
+
+    pub(crate) fn before_read_link(_path: &Path) -> std::io::Result<()> {
+        Ok(())
+    }
 }
 
 fn read_dir_path(path: &Path) -> std::io::Result<fs::ReadDir> {
@@ -391,6 +413,7 @@ fn metadata_path(path: &Path) -> std::io::Result<fs::Metadata> {
 }
 
 fn read_link_path(path: &Path) -> std::io::Result<PathBuf> {
+    test_hooks::before_read_link(path)?;
     fs::read_link(path)
 }
 
@@ -503,8 +526,8 @@ impl PendingFileWalker {
                 DiscoveredEntryKind::Symlink { target } => {
                     InputFile::symlink(self.next_index, entry.abs_path, entry.rel_path, target)
                 }
-                DiscoveredEntryKind::Unsupported(kind) => {
-                    warn_skipped_unsupported_entry(&entry.abs_path, kind);
+                DiscoveredEntryKind::Skipped(reason) => {
+                    warn_skipped_entry(&entry.abs_path, &reason);
                     continue;
                 }
             };
@@ -616,11 +639,22 @@ pub fn scan_source(
     })
 }
 
-fn warn_skipped_unsupported_entry(path: &Path, kind: UnsupportedEntryKind) {
-    eprintln!(
-        "warning: skipping unsupported {kind} entry {}",
-        path.display()
-    );
+fn warn_skipped_entry(path: &Path, reason: &SkippedEntryReason) {
+    match reason {
+        SkippedEntryReason::Unsupported(kind) => {
+            eprintln!(
+                "warning: skipping unsupported {kind} entry {}",
+                path.display()
+            );
+        }
+        SkippedEntryReason::UnreadableSymlinkTarget { error } => {
+            eprintln!(
+                "warning: skipping symlink entry {} because failed to read link target: {}",
+                path.display(),
+                error
+            );
+        }
+    }
 }
 
 fn classify_discovered_entry(path: &Path, file_type: fs::FileType) -> Result<DiscoveredEntryKind> {
@@ -631,13 +665,18 @@ fn classify_discovered_entry(path: &Path, file_type: fs::FileType) -> Result<Dis
         return Ok(DiscoveredEntryKind::Regular);
     }
     if file_type.is_symlink() {
-        let target = read_link_path(path)
-            .with_context(|| format!("failed to read sender symlink target {}", path.display()))?;
-        return Ok(DiscoveredEntryKind::Symlink { target });
+        return Ok(match read_link_path(path) {
+            Ok(target) => DiscoveredEntryKind::Symlink { target },
+            Err(error) => {
+                DiscoveredEntryKind::Skipped(SkippedEntryReason::UnreadableSymlinkTarget {
+                    error: error.to_string(),
+                })
+            }
+        });
     }
 
-    Ok(DiscoveredEntryKind::Unsupported(
-        classify_unsupported_entry_kind(&file_type),
+    Ok(DiscoveredEntryKind::Skipped(
+        SkippedEntryReason::Unsupported(classify_unsupported_entry_kind(&file_type)),
     ))
 }
 
@@ -764,8 +803,8 @@ fn collect_files_recursive(
                 files.push(InputFile::symlink(*next_index, path, rel_path, target));
                 *next_index += 1;
             }
-            DiscoveredEntryKind::Unsupported(kind) => {
-                warn_skipped_unsupported_entry(&path, kind);
+            DiscoveredEntryKind::Skipped(reason) => {
+                warn_skipped_entry(&path, &reason);
             }
         }
     }
@@ -1114,6 +1153,36 @@ mod tests {
         assert_eq!(pending[1].link_target(), Some(target.as_path()));
         assert_eq!(final_file_index, 2);
         assert_eq!(final_file_path, "skip-me.txt");
+    }
+
+    #[test]
+    fn collect_pending_files_skips_symlink_when_link_target_cannot_be_read() {
+        let _guard = FsFailureGuard::new();
+        let temp = TestDir::new();
+        fs::write(temp.path().join("real.txt"), b"abc").unwrap();
+        let target = temp.path().join("real.txt");
+        let symlink = temp.path().join("skip-me.txt");
+        match create_symlink(&symlink, &target) {
+            Ok(()) => {}
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::PermissionDenied | std::io::ErrorKind::Unsupported
+                ) || error.raw_os_error() == Some(1314) =>
+            {
+                return;
+            }
+            Err(error) => panic!("failed to create symlink fixture: {error}"),
+        }
+        super::test_hooks::fail_next_read_link(&symlink);
+
+        let (pending, final_file_index, final_file_path) =
+            collect_pending_files(temp.path().to_path_buf(), &empty_resume_state(), 1, 1).unwrap();
+
+        let rel_paths: Vec<_> = pending.iter().map(|file| file.rel_path.as_str()).collect();
+        assert_eq!(rel_paths, vec!["real.txt"]);
+        assert_eq!(final_file_index, 1);
+        assert_eq!(final_file_path, "real.txt");
     }
 
     #[test]

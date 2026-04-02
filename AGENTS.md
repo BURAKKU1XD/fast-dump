@@ -324,7 +324,8 @@ Protocol rules:
 ## File Type Policy
 
 - Support regular files and symlinks.
-- Preserve symlinks as symlink entries in tar without dereferencing targets.
+- Preserve symlinks as symlink entries in tar without dereferencing targets when their link targets can be read.
+- Skip symlinks whose link targets become unreadable during source traversal with a warning.
 - Skip sockets, devices, FIFOs, and other unsupported special entries with a kind-specific warning.
 
 ## Testing and Verification

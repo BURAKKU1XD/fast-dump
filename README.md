@@ -166,7 +166,8 @@ At most one unacknowledged frame is lost on disconnect.
   - short read or open failure restarts the file from scratch
   - at most `3` immediate attempts are made
   - exhausted files are skipped and counted in aggregate stats
-- Symlinks are stored as tar symlink entries and keep their original link target.
+- Symlinks are stored as tar symlink entries and keep their original link target when the sender can read that target.
+- Symlinks whose link targets become unreadable during source traversal are skipped with a warning.
 - Unsupported special entries such as sockets, devices, and FIFOs are skipped with a kind-specific warning.
 - Frame boundaries stay on completed files, but `frame_target` is treated as a
   soft target rather than a mandatory per-file flush boundary.
@@ -224,6 +225,19 @@ Build:
 ```powershell
 cargo build
 ```
+
+Build release artifacts for every supported target that is available in the
+current environment:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\build-artifacts.ps1
+```
+
+The script writes artifacts to `dist/`, builds `x86_64-pc-windows-msvc` and
+`x86_64-unknown-linux-musl`, prefers a native musl toolchain for Linux, and can
+fall back to local `zig` plus `cargo-zigbuild` when available. Unsupported
+targets are marked as `skipped` with an explicit reason. Use `-RequireAll` to
+turn skipped targets into a hard failure.
 
 Run tests:
 

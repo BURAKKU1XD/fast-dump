@@ -1,14 +1,38 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::fs::File;
 use std::io::Read;
+use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Condvar, Mutex, OnceLock};
 use std::thread;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use crossbeam_channel::{Receiver, Sender, TrySendError, bounded};
 use log::debug;
 
 use super::{InputFile, PipelineProfileCollector};
+
+const LONG_READ_WARNING_AFTER: Duration = Duration::from_secs(30);
+const LONG_READ_WARNING_REPEAT: Duration = Duration::from_secs(30);
+const LONG_READ_WATCHDOG_POLL: Duration = Duration::from_secs(5);
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct LongReadWarningSchedule {
+    first_warning_after: Duration,
+    repeat_warning_after: Duration,
+    poll_interval: Duration,
+}
+
+impl LongReadWarningSchedule {
+    const fn default() -> Self {
+        Self {
+            first_warning_after: LONG_READ_WARNING_AFTER,
+            repeat_warning_after: LONG_READ_WARNING_REPEAT,
+            poll_interval: LONG_READ_WATCHDOG_POLL,
+        }
+    }
+}
 
 #[cfg(test)]
 pub(crate) mod test_hooks {
@@ -17,6 +41,9 @@ pub(crate) mod test_hooks {
     use std::io::Write;
     use std::path::Path;
     use std::sync::{Mutex, MutexGuard, OnceLock};
+    use std::time::Duration;
+
+    use super::LongReadWarningSchedule;
 
     static SCHEDULED_READER_TASKS: OnceLock<Mutex<BTreeMap<String, usize>>> = OnceLock::new();
     static BEFORE_OPEN_HOOKS: OnceLock<Mutex<BTreeMap<String, VecDeque<BeforeOpenHook>>>> =
@@ -24,11 +51,15 @@ pub(crate) mod test_hooks {
     static AFTER_OPEN_HOOKS: OnceLock<Mutex<BTreeMap<String, VecDeque<AfterOpenHook>>>> =
         OnceLock::new();
     static FORCED_SHORT_READS: OnceLock<Mutex<BTreeMap<String, VecDeque<u64>>>> = OnceLock::new();
+    static LONG_READ_WARNING_SCHEDULE: OnceLock<Mutex<Option<LongReadWarningSchedule>>> =
+        OnceLock::new();
+    static LONG_READ_WARNINGS: OnceLock<Mutex<Vec<String>>> = OnceLock::new();
     static HOOK_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
     #[derive(Debug)]
     enum BeforeOpenHook {
         Fail,
+        Sleep(Duration),
     }
 
     #[derive(Debug)]
@@ -50,6 +81,14 @@ pub(crate) mod test_hooks {
 
     fn forced_short_reads() -> &'static Mutex<BTreeMap<String, VecDeque<u64>>> {
         FORCED_SHORT_READS.get_or_init(|| Mutex::new(BTreeMap::new()))
+    }
+
+    fn long_read_warning_schedule_cell() -> &'static Mutex<Option<LongReadWarningSchedule>> {
+        LONG_READ_WARNING_SCHEDULE.get_or_init(|| Mutex::new(None))
+    }
+
+    fn long_read_warnings() -> &'static Mutex<Vec<String>> {
+        LONG_READ_WARNINGS.get_or_init(|| Mutex::new(Vec::new()))
     }
 
     pub(crate) fn lock() -> MutexGuard<'static, ()> {
@@ -105,6 +144,10 @@ pub(crate) mod test_hooks {
         push_before_open(path, BeforeOpenHook::Fail);
     }
 
+    pub(crate) fn sleep_before_next_open(path: &Path, duration: Duration) {
+        push_before_open(path, BeforeOpenHook::Sleep(duration));
+    }
+
     pub(crate) fn append_bytes_after_next_open(path: &Path, bytes: Vec<u8>) {
         push_after_open(path, AfterOpenHook::Append(bytes));
     }
@@ -123,6 +166,10 @@ pub(crate) mod test_hooks {
             Some(BeforeOpenHook::Fail) => Err(std::io::Error::other(
                 "sender test hook injected open failure",
             )),
+            Some(BeforeOpenHook::Sleep(duration)) => {
+                std::thread::sleep(duration);
+                Ok(())
+            }
             None => Ok(()),
         }
     }
@@ -151,16 +198,36 @@ pub(crate) mod test_hooks {
             .and_then(VecDeque::pop_front)
     }
 
+    pub(crate) fn set_long_read_warning_schedule(schedule: LongReadWarningSchedule) {
+        *long_read_warning_schedule_cell().lock().unwrap() = Some(schedule);
+    }
+
+    pub(crate) fn long_read_warning_schedule() -> Option<LongReadWarningSchedule> {
+        *long_read_warning_schedule_cell().lock().unwrap()
+    }
+
+    pub(crate) fn record_long_read_warning(message: String) {
+        long_read_warnings().lock().unwrap().push(message);
+    }
+
+    pub(crate) fn recorded_long_read_warnings() -> Vec<String> {
+        long_read_warnings().lock().unwrap().clone()
+    }
+
     pub(crate) fn clear() {
         before_open_hooks().lock().unwrap().clear();
         after_open_hooks().lock().unwrap().clear();
         forced_short_reads().lock().unwrap().clear();
+        *long_read_warning_schedule_cell().lock().unwrap() = None;
+        long_read_warnings().lock().unwrap().clear();
     }
 }
 
 #[cfg(not(test))]
 pub(crate) mod test_hooks {
     use std::path::Path;
+
+    use super::LongReadWarningSchedule;
 
     pub(crate) fn record_scheduled_reader_task(_path: &Path) {}
 
@@ -173,6 +240,11 @@ pub(crate) mod test_hooks {
     }
 
     pub(crate) fn forced_short_read_after_open(_path: &Path) -> Option<u64> {
+        None
+    }
+
+    #[allow(dead_code)]
+    pub(crate) fn long_read_warning_schedule() -> Option<LongReadWarningSchedule> {
         None
     }
 }
@@ -206,6 +278,166 @@ pub(crate) enum FileSkipReason {
 }
 
 pub(crate) const IN_MEMORY_SNAPSHOT_THRESHOLD_BYTES: u64 = 64 * 1024;
+
+#[derive(Debug)]
+struct ActiveLongRead {
+    path: String,
+    stage: &'static str,
+    attempt: u32,
+    started_at: Instant,
+    warnings_emitted: u32,
+}
+
+#[derive(Debug)]
+struct PendingLongReadWarning {
+    path: String,
+    stage: &'static str,
+    attempt: u32,
+    elapsed: Duration,
+}
+
+#[derive(Default)]
+struct LongReadMonitor {
+    state: Mutex<LongReadMonitorState>,
+    wake: Condvar,
+}
+
+#[derive(Default)]
+struct LongReadMonitorState {
+    started: bool,
+    active: BTreeMap<u64, ActiveLongRead>,
+}
+
+pub(crate) struct LongReadWatchdog {
+    monitor: &'static LongReadMonitor,
+    id: u64,
+}
+
+static LONG_READ_MONITOR: OnceLock<LongReadMonitor> = OnceLock::new();
+static NEXT_LONG_READ_ID: AtomicU64 = AtomicU64::new(1);
+
+fn long_read_monitor() -> &'static LongReadMonitor {
+    LONG_READ_MONITOR.get_or_init(LongReadMonitor::default)
+}
+
+fn long_read_warning_schedule() -> LongReadWarningSchedule {
+    #[cfg(test)]
+    if let Some(schedule) = test_hooks::long_read_warning_schedule() {
+        return schedule;
+    }
+
+    LongReadWarningSchedule::default()
+}
+
+fn spawn_long_read_monitor_thread(monitor: &'static LongReadMonitor) {
+    let _ = thread::Builder::new()
+        .name("sender-read-watchdog".to_owned())
+        .spawn(move || run_long_read_monitor(monitor));
+}
+
+fn next_long_read_warning_threshold(
+    schedule: LongReadWarningSchedule,
+    warnings_emitted: u32,
+) -> Duration {
+    schedule
+        .repeat_warning_after
+        .checked_mul(warnings_emitted)
+        .and_then(|repeat| schedule.first_warning_after.checked_add(repeat))
+        .unwrap_or(Duration::MAX)
+}
+
+fn format_long_read_warning(warning: &PendingLongReadWarning) -> String {
+    format!(
+        "warning: sender file read is still in progress: stage={} attempt={} elapsed_ms={} path={}",
+        warning.stage,
+        warning.attempt,
+        warning.elapsed.as_millis(),
+        warning.path
+    )
+}
+
+fn emit_long_read_warning(warning: PendingLongReadWarning) {
+    let message = format_long_read_warning(&warning);
+    eprintln!("{message}");
+    #[cfg(test)]
+    test_hooks::record_long_read_warning(message);
+}
+
+fn run_long_read_monitor(monitor: &'static LongReadMonitor) {
+    loop {
+        let mut state = monitor.state.lock().unwrap();
+        while state.active.is_empty() {
+            state = monitor.wake.wait(state).unwrap();
+        }
+
+        let poll_interval = long_read_warning_schedule().poll_interval;
+        let (mut state, _) = monitor.wake.wait_timeout(state, poll_interval).unwrap();
+        if state.active.is_empty() {
+            continue;
+        }
+
+        let schedule = long_read_warning_schedule();
+        let now = Instant::now();
+        let mut warnings = Vec::new();
+        for active in state.active.values_mut() {
+            let elapsed = now.saturating_duration_since(active.started_at);
+            let threshold = next_long_read_warning_threshold(schedule, active.warnings_emitted);
+            if elapsed < threshold {
+                continue;
+            }
+
+            active.warnings_emitted = active.warnings_emitted.saturating_add(1);
+            warnings.push(PendingLongReadWarning {
+                path: active.path.clone(),
+                stage: active.stage,
+                attempt: active.attempt,
+                elapsed,
+            });
+        }
+        drop(state);
+
+        for warning in warnings {
+            emit_long_read_warning(warning);
+        }
+    }
+}
+
+pub(crate) fn start_long_read_watchdog(
+    path: &Path,
+    stage: &'static str,
+    attempt: u32,
+) -> LongReadWatchdog {
+    let monitor = long_read_monitor();
+    let id = NEXT_LONG_READ_ID.fetch_add(1, Ordering::Relaxed);
+    let mut state = monitor.state.lock().unwrap();
+    if !state.started {
+        state.started = true;
+        spawn_long_read_monitor_thread(monitor);
+    }
+    state.active.insert(
+        id,
+        ActiveLongRead {
+            path: path.display().to_string(),
+            stage,
+            attempt,
+            started_at: Instant::now(),
+            warnings_emitted: 0,
+        },
+    );
+    drop(state);
+    monitor.wake.notify_one();
+
+    LongReadWatchdog { monitor, id }
+}
+
+impl Drop for LongReadWatchdog {
+    fn drop(&mut self) {
+        let mut state = self.monitor.state.lock().unwrap();
+        state.active.remove(&self.id);
+        drop(state);
+        self.monitor.wake.notify_one();
+    }
+}
 
 #[derive(Debug)]
 pub(crate) enum SnapshotStorage {
@@ -689,6 +921,9 @@ fn capture_snapshot_attempt(
     attempt: u32,
 ) -> std::result::Result<FileReadOutcome, AttemptFailure> {
     let read_started = Instant::now();
+    // Отдельный watchdog нужен, потому что blocking open/read может зависнуть
+    // без ошибки и без возврата управления в reader worker.
+    let _watchdog = start_long_read_watchdog(&file.abs_path, "snapshot-capture", attempt);
     test_hooks::before_open(&file.abs_path).map_err(|error| {
         AttemptFailure::Open(format!(
             "failed to prepare sender file {} before open: {error}",
@@ -816,14 +1051,16 @@ mod tests {
     use std::fs;
     use std::path::{Path, PathBuf};
     use std::sync::MutexGuard;
-    use std::time::{SystemTime, UNIX_EPOCH};
+    use std::thread;
+    use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
     use crossbeam_channel::bounded;
 
     use super::{
         AdaptiveReaderScaling, FileDisposition, FileReadOutcome, FileSkipReason, FileSnapshot,
-        IN_MEMORY_SNAPSHOT_THRESHOLD_BYTES, MAX_SNAPSHOT_ATTEMPTS, ReadEvent, ReaderCommand,
-        ReaderPool, ReaderTask, SkippedFile, SnapshotStorage, read_file_into_events,
+        IN_MEMORY_SNAPSHOT_THRESHOLD_BYTES, LongReadWarningSchedule, MAX_SNAPSHOT_ATTEMPTS,
+        ReadEvent, ReaderCommand, ReaderPool, ReaderTask, SkippedFile, SnapshotStorage,
+        read_file_into_events,
     };
     use crate::sender::InputFile;
 
@@ -1126,6 +1363,55 @@ mod tests {
                 assert_eq!(snapshot.bytes_for_test(), b"abcdef");
             }
             other => panic!("unexpected read event: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn read_file_into_events_warns_when_open_stays_blocked_too_long() {
+        let _guard = ReadHookGuard::new();
+        let temp = TestDir::new();
+        let file = write_input_file(&temp, "slow.bin", b"abc", 1);
+        super::test_hooks::set_long_read_warning_schedule(LongReadWarningSchedule {
+            first_warning_after: Duration::from_millis(20),
+            repeat_warning_after: Duration::from_millis(20),
+            poll_interval: Duration::from_millis(5),
+        });
+        super::test_hooks::sleep_before_next_open(&file.abs_path, Duration::from_millis(60));
+        let (event_tx, event_rx) = bounded::<ReadEvent>(1);
+
+        let result = read_file_into_events(
+            ReaderTask {
+                file: file.clone(),
+                read_buffer_bytes: 8,
+                max_attempts: MAX_SNAPSHOT_ATTEMPTS,
+                profile: None,
+            },
+            &event_tx,
+        );
+
+        assert!(result.is_ok());
+        match event_rx.recv().unwrap() {
+            ReadEvent::Ready(FileReadOutcome::Snapshot(snapshot)) => {
+                assert_eq!(snapshot.file.index, 1);
+                assert_eq!(snapshot.bytes_for_test(), b"abc");
+            }
+            other => panic!("unexpected read event: {other:?}"),
+        }
+
+        let deadline = Instant::now() + Duration::from_millis(250);
+        loop {
+            let warnings = super::test_hooks::recorded_long_read_warnings();
+            if warnings.iter().any(|warning| {
+                warning.contains("stage=snapshot-capture")
+                    && warning.contains(&file.abs_path.display().to_string())
+            }) {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "long-read watchdog did not emit warning in time"
+            );
+            thread::sleep(Duration::from_millis(10));
         }
     }
 
