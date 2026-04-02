@@ -1,577 +1,365 @@
 {
-  "schema_version": 1,
-  "source_document": "PERFOMANCE_UPDATE.md",
-  "generated_at": "2026-03-31",
-  "status": "completed",
-  "phases": [
+  "version": 1,
+  "updated_at": "2026-04-02",
+  "tracks": [
     {
-      "id": "P1",
-      "name": "Protocol And Safety",
-      "goal": "Add explicit frame abort support and keep committed-frame semantics intact."
-    },
-    {
-      "id": "P2",
-      "name": "Sender Retry And Skip Rebuild Logic",
-      "goal": "Support whole-frame rollback with bounded per-file retries and terminal skips."
-    },
-    {
-      "id": "P3",
-      "name": "Remove Disk Staging From Hot Path",
-      "goal": "Replace temp-file snapshots with in-memory small-file prefetch and direct large-file streaming."
-    },
-    {
-      "id": "P4",
-      "name": "Ordered Parallel Walk",
-      "goal": "Parallelize directory listing in a bounded way without reintroducing full prescan."
-    },
-    {
-      "id": "P5",
-      "name": "Dynamic Frames",
-      "goal": "Replace strict fixed-size frame behavior with a soft frame policy and reduced per-file flush pressure."
-    },
-    {
-      "id": "P6",
-      "name": "Bench And Observability",
-      "goal": "Measure the new pipeline with enough detail to validate the redesign."
-    },
-    {
-      "id": "P7",
-      "name": "Deferred Receiver Issue Journal Upload",
-      "goal": "Optionally send detailed skip journal data to the receiver after the core throughput work is stable."
-    }
-  ],
-  "tasks": [
-    {
-      "id": "P1-T1",
-      "phase_id": "P1",
-      "title": "Add FrameAbort and AbortAck protocol messages",
-      "summary": "Extend the wire protocol with explicit messages for discarding the current uncommitted frame without reconnect-based control flow.",
-      "details": [
-        "Add FrameAbort and AbortAck message variants to the protocol model.",
-        "Define message encoding, decoding, validation, and state-transition rules.",
-        "Document when sender is allowed to issue FrameAbort and what receiver must guarantee before AbortAck."
-      ],
-      "dependencies": [],
-      "affected_files": [
-        "src/network/protocol.rs",
-        "src/network/protocol.md",
-        "tests/connectivity/protocol_flow.rs"
-      ],
-      "deliverables": [
-        "Protocol enums and codec updated for FrameAbort and AbortAck.",
-        "Protocol documentation updated with new message sequence and invariants.",
-        "Protocol tests covering roundtrip encode and decode."
-      ],
-      "acceptance_criteria": [
-        "Protocol codec roundtrips FrameAbort and AbortAck.",
-        "Receiver rejects malformed or out-of-order abort messages.",
-        "Documentation matches the implemented message flow."
-      ]
-    },
-    {
-      "id": "P1-T2",
-      "phase_id": "P1",
-      "title": "Implement receiver-side explicit frame rollback",
-      "summary": "Teach the receiver to truncate the partial archive back to the last committed boundary when a frame is explicitly aborted.",
-      "details": [
-        "Track the transient frame state needed to discard uncommitted bytes safely.",
-        "On FrameAbort, truncate archive back to the last committed archive_len.",
-        "Clear transient frame checksum and byte counters before replying AbortAck."
-      ],
-      "dependencies": [
-        "P1-T1"
-      ],
-      "affected_files": [
-        "src/receiver/session.rs",
-        "src/receiver/frame.rs",
-        "src/receiver/journal.rs",
-        "tests/connectivity/resume.rs",
-        "tests/connectivity/protocol_flow.rs"
-      ],
-      "deliverables": [
-        "Receiver handler for FrameAbort.",
-        "AbortAck response path.",
-        "Rollback tests for a partially written frame."
-      ],
-      "acceptance_criteria": [
-        "After FrameAbort, the receiver archive length equals the last committed archive_len.",
-        "No uncommitted bytes remain on disk after AbortAck.",
-        "Normal committed-frame behavior remains unchanged."
-      ]
-    },
-    {
-      "id": "P1-T3",
-      "phase_id": "P1",
-      "title": "Implement sender-side explicit frame abort flow",
-      "summary": "Allow sender session logic to discard the current frame in-band and resume rebuilding without reconnecting.",
-      "details": [
-        "Add a sender helper that emits FrameAbort and waits for AbortAck.",
-        "Replace reconnect-as-control-flow assumptions in the future rollback path.",
-        "Surface abort statistics for later bench reporting."
-      ],
-      "dependencies": [
-        "P1-T1",
-        "P1-T2"
-      ],
-      "affected_files": [
-        "src/sender/session.rs",
-        "tests/connectivity/protocol_flow.rs",
-        "tests/connectivity/resume.rs"
-      ],
-      "deliverables": [
-        "Sender-side abort helper.",
-        "Session tests that abort and rebuild a frame without reconnect."
-      ],
-      "acceptance_criteria": [
-        "Sender can abort an uncommitted frame and continue the same session.",
-        "AbortAck mismatch or failure is surfaced as a hard error.",
-        "Existing finish and ack flows still pass."
-      ]
-    },
-    {
-      "id": "P2-T1",
-      "phase_id": "P2",
-      "title": "Introduce frame rebuild state machine with file attempt tracking",
-      "summary": "Refactor sender frame construction so a mid-file failure triggers frame rollback and rebuild while preserving per-file retry counters.",
-      "details": [
-        "Track the current frame start boundary and the file currently being streamed.",
-        "Persist per-file attempt counters across frame rebuilds within the same dump session.",
-        "Restart frame construction from the last committed boundary after AbortAck."
-      ],
-      "dependencies": [
-        "P1-T3"
-      ],
-      "affected_files": [
-        "src/sender/session.rs",
-        "src/sender/frame.rs",
-        "tests/connectivity/resume.rs",
-        "tests/connectivity/stress.rs"
-      ],
-      "deliverables": [
-        "Sender frame rebuild state machine.",
-        "Regression tests for rebuild after a retryable file failure."
-      ],
-      "acceptance_criteria": [
-        "A retryable file failure does not corrupt the committed archive.",
-        "Frame rebuild resumes from the last committed frame boundary, not from process start.",
-        "Attempts for the failing file increment across rebuilds."
-      ]
-    },
-    {
-      "id": "P2-T2",
-      "phase_id": "P2",
-      "title": "Enforce terminal skip after three failed file attempts",
-      "summary": "After three failed attempts, stop rebuilding the same file forever and mark it skipped for the current dump.",
-      "details": [
-        "Keep the retry budget fixed at three attempts per file.",
-        "After the third failure, mark the file terminally skipped.",
-        "Ensure skipped files still allow deterministic progress across later reconnects and resumes."
-      ],
-      "dependencies": [
-        "P2-T1"
-      ],
-      "affected_files": [
-        "src/sender/session.rs",
-        "src/sender/readers.rs",
-        "tests/connectivity/resume.rs",
-        "tests/connectivity/stress.rs"
-      ],
-      "deliverables": [
-        "Terminal skip path integrated with frame rebuild logic.",
-        "Tests for repeated failure followed by skip."
-      ],
-      "acceptance_criteria": [
-        "A file is not attempted more than three times per dump.",
-        "After terminal skip, the dump continues with later files.",
-        "Skipped files do not cause endless abort and rebuild loops."
-      ]
-    },
-    {
-      "id": "P2-T3",
-      "phase_id": "P2",
-      "title": "Add sender-side issue journal model",
-      "summary": "Record terminal skip details locally so the dump has structured diagnostics beyond aggregate counters.",
-      "details": [
-        "Define a sender issue journal entry with file_index, path, attempts, reason, and last_error.",
-        "Append a journal entry whenever a file reaches terminal skip.",
-        "Expose the journal in sender-side reporting without blocking the core throughput changes."
-      ],
-      "dependencies": [
-        "P2-T2"
-      ],
-      "affected_files": [
-        "src/sender/session.rs",
-        "src/sender/mod.rs",
-        "src/app.rs",
-        "tests/connectivity/observability.rs"
-      ],
-      "deliverables": [
-        "Issue journal data model.",
-        "Sender report updated to expose journal data or a stable local artifact."
-      ],
-      "acceptance_criteria": [
-        "Every terminal skip produces exactly one issue journal entry.",
-        "Aggregate skip counters stay consistent with detailed journal entries.",
-        "Sender output remains backward-compatible unless intentionally versioned."
-      ]
-    },
-    {
-      "id": "P3-T1",
-      "phase_id": "P3",
-      "title": "Add in-memory prefetch path for small files",
-      "summary": "Preserve file-level parallelism for tiny files without paying the temp-file staging cost.",
-      "details": [
-        "Replace disk-backed staging for small files with bounded in-memory buffers.",
-        "Keep reader-pool parallelism for the small-file path.",
-        "Introduce a tunable threshold that decides whether a file uses the in-memory path."
-      ],
-      "dependencies": [
-        "P2-T2"
-      ],
-      "affected_files": [
-        "src/sender/readers.rs",
-        "src/sender/frame.rs",
-        "src/sender/session.rs",
-        "tests/connectivity/stress.rs"
-      ],
-      "deliverables": [
-        "Prepared small-file buffer path.",
-        "Configurable threshold for in-memory prefetch.",
-        "Tests for bounded memory behavior on small files."
-      ],
-      "acceptance_criteria": [
-        "Small files no longer require temp files in the normal hot path.",
-        "Memory use is bounded by configured concurrency and threshold.",
-        "The small-file path preserves retry and skip semantics."
-      ]
-    },
-    {
-      "id": "P3-T2",
-      "phase_id": "P3",
-      "title": "Add direct streaming path for large files",
-      "summary": "Stream large files from the source handle directly into tar, zstd, and network so sender temp disk is no longer a limiting resource.",
-      "details": [
-        "Read large files directly from the opened source handle in the sender hot path.",
-        "Keep size_at_open semantics for tar header sizing and retry logic.",
-        "On mid-file failure, trigger frame abort and rebuild."
-      ],
-      "dependencies": [
-        "P1-T3",
-        "P2-T2"
-      ],
-      "affected_files": [
-        "src/sender/session.rs",
-        "src/sender/frame.rs",
-        "src/sender/readers.rs",
-        "tests/connectivity/roundtrip_fast.rs",
-        "tests/connectivity/stress.rs"
-      ],
-      "deliverables": [
-        "Large-file direct-stream path.",
-        "Regression tests for mid-file failure and rebuild."
-      ],
-      "acceptance_criteria": [
-        "Large files can be sent without creating temp snapshots proportional to file size.",
-        "Mid-file failure on the large-file path correctly aborts and rebuilds the frame.",
-        "Large-file successful sends still produce a valid archive."
-      ]
-    },
-    {
-      "id": "P3-T3",
-      "phase_id": "P3",
-      "title": "Remove temp-file snapshots from the default fast path",
-      "summary": "Once the new small-file and large-file paths are stable, stop relying on staged temp files for normal production sends.",
-      "details": [
-        "Remove or demote create_staged_file from the main runtime path.",
-        "Delete now-unused temp-file cleanup logic from the fast path.",
-        "Update runtime documentation to match the new data paths."
-      ],
-      "dependencies": [
-        "P3-T1",
-        "P3-T2"
-      ],
-      "affected_files": [
-        "src/sender/readers.rs",
-        "src/sender/frame.rs",
-        "src/sender/session.rs",
-        "README.md",
-        "AGENTS.md"
-      ],
-      "deliverables": [
-        "Fast path no longer depends on temp-file staging.",
-        "Documentation updated to describe the new runtime behavior."
-      ],
-      "acceptance_criteria": [
-        "The production send path does not create temp file snapshots in the common case.",
-        "Documentation no longer claims disk staging for the normal fast path.",
-        "Regression suite still passes for sender and receiver flows."
-      ]
-    },
-    {
-      "id": "P4-T1",
-      "phase_id": "P4",
-      "title": "Implement bounded async directory listing pool",
-      "summary": "Prepare directory entries in parallel while keeping a single coordinator responsible for deterministic DFS output order.",
-      "details": [
-        "Add a bounded directory listing pool that prepares sorted entry lists for directories.",
-        "Ensure the traversal coordinator remains the only source of truth for DFS order and file_index assignment.",
-        "Avoid unbounded accumulation of directory listings in memory."
-      ],
-      "dependencies": [],
-      "affected_files": [
-        "src/sender/source.rs",
-        "tests/connectivity/stress.rs"
-      ],
-      "deliverables": [
-        "Async directory listing infrastructure.",
-        "Deterministic order tests comparing old and new traversal output."
-      ],
-      "acceptance_criteria": [
-        "Traversal order remains identical to the current deterministic DFS order.",
-        "The number of in-flight directory tasks is bounded.",
-        "No full pending-file prescan is reintroduced."
-      ]
-    },
-    {
-      "id": "P4-T2",
-      "phase_id": "P4",
-      "title": "Integrate ordered async walk with PendingFrameFiles",
-      "summary": "Feed the prepared directory listings into the existing pending-file pipeline without materializing the full file set.",
-      "details": [
-        "Refactor PendingFileWalker and PendingFrameFiles to consume asynchronously prepared directory listings.",
-        "Keep resume validation intact when the committed prefix is skipped.",
-        "Preserve deterministic boundaries used by frame rebuild and resume."
-      ],
-      "dependencies": [
-        "P4-T1"
-      ],
-      "affected_files": [
-        "src/sender/source.rs",
-        "src/sender/frame.rs",
-        "src/sender/session.rs",
-        "tests/connectivity/resume.rs"
-      ],
-      "deliverables": [
-        "Pending-file integration for async walk.",
-        "Resume regression tests for the new traversal path."
-      ],
-      "acceptance_criteria": [
-        "PendingFrameFiles still yields files in stable order.",
-        "Resume validation still detects source mismatch correctly.",
-        "The send path does not require a full prescan."
-      ]
-    },
-    {
-      "id": "P4-T3",
-      "phase_id": "P4",
-      "title": "Add traversal wait metrics",
-      "summary": "Instrument the new walk so benchmarks can tell whether directory preparation still stalls the send path.",
-      "details": [
-        "Measure coordinator wait time for directory listings.",
-        "Measure queue depth or in-flight directory task count.",
-        "Expose these metrics to the benchmark layer."
-      ],
-      "dependencies": [
-        "P4-T2"
-      ],
-      "affected_files": [
-        "src/sender/source.rs",
-        "src/sender/profile.rs",
-        "benches/pipeline/stats.rs",
-        "benches/pipeline/results.rs"
-      ],
-      "deliverables": [
-        "Traversal-wait profile data.",
-        "Bench outputs with traversal metrics."
-      ],
-      "acceptance_criteria": [
-        "Bench runs can report traversal wait time.",
-        "Instrumentation overhead stays low enough for matrix usage.",
-        "Metrics distinguish listing wait from file read and compress time."
-      ]
-    },
-    {
-      "id": "P5-T1",
-      "phase_id": "P5",
-      "title": "Introduce soft frame policy abstraction",
-      "summary": "Replace the implicit fixed-size frame behavior with an explicit policy object that can consider bytes, file count, and file risk.",
-      "details": [
-        "Define frame policy inputs: soft_target_bytes, max_files_per_frame, large_file_single_frame_threshold, retried_file_isolated.",
-        "Make the sender ask the policy whether to continue or close the current frame after a completed file.",
-        "Keep frame boundaries aligned to completed files."
-      ],
-      "dependencies": [
-        "P3-T2"
-      ],
-      "affected_files": [
-        "src/sender/session.rs",
-        "src/sender/frame.rs",
-        "src/cli/mod.rs",
-        "tests/connectivity/protocol_flow.rs"
-      ],
-      "deliverables": [
-        "Frame policy abstraction.",
-        "Runtime wiring for policy inputs."
-      ],
-      "acceptance_criteria": [
-        "Frame closing is driven by a policy, not a single hard coded byte check.",
-        "The policy can isolate large and retried files.",
-        "Committed frame semantics remain unchanged."
-      ]
-    },
-    {
-      "id": "P5-T2",
-      "phase_id": "P5",
-      "title": "Reduce mandatory per-file zstd flush pressure",
-      "summary": "Stop flushing the encoder at every file boundary and only flush or finish when the frame policy requires it.",
-      "details": [
-        "Remove the unconditional flush on every completed file from the hot path.",
-        "Keep correctness for frame end and ack boundaries.",
-        "Verify that compression batching improves without corrupting frame semantics."
-      ],
-      "dependencies": [
-        "P5-T1"
-      ],
-      "affected_files": [
-        "src/sender/session.rs",
-        "src/sender/frame.rs",
-        "tests/connectivity/protocol_flow.rs",
-        "tests/connectivity/stress.rs"
-      ],
-      "deliverables": [
-        "Policy-driven flush behavior.",
-        "Tests for valid frame output without per-file flush."
-      ],
-      "acceptance_criteria": [
-        "The hot path no longer flushes zstd for every file by default.",
-        "Frame output remains valid and resumable.",
-        "Bench results can observe reduced flush count."
-      ]
-    },
-    {
-      "id": "P5-T3",
-      "phase_id": "P5",
-      "title": "Isolate large and previously retried files into dedicated frames",
-      "summary": "Bound rollback blast radius by giving risky files their own frames when the policy decides it is practical.",
-      "details": [
-        "Force single-file frames for files above the configured large-file threshold.",
-        "Allow the policy to isolate a file after it has already failed once.",
-        "Keep the policy compatible with the existing completed-file-only frame boundary rule."
-      ],
-      "dependencies": [
-        "P5-T1"
-      ],
-      "affected_files": [
-        "src/sender/session.rs",
-        "src/sender/frame.rs",
-        "tests/connectivity/resume.rs",
-        "tests/connectivity/stress.rs"
-      ],
-      "deliverables": [
-        "Dedicated-frame handling for large and retried files.",
-        "Tests validating reduced rollback scope."
-      ],
-      "acceptance_criteria": [
-        "Large files can be isolated into their own frames.",
-        "Previously retried files can be isolated when policy requires it.",
-        "Rollback after a risky file failure does not discard unrelated committed frames."
-      ]
-    },
-    {
-      "id": "P6-T1",
-      "phase_id": "P6",
-      "title": "Extend bench raw and summary schema for redesign metrics",
-      "summary": "Add enough telemetry to prove whether the redesign actually fixes the expected bottlenecks.",
-      "details": [
-        "Add traversal wait time, frame abort count, frame rebuild count, skipped file count, per-frame file count, ack wait time, and flush count.",
-        "Propagate the new fields through raw CSV, summary CSV, and markdown tables.",
-        "Add schema tests for parse, aggregate, and output compatibility."
-      ],
-      "dependencies": [
-        "P4-T3",
-        "P5-T2",
-        "P2-T3"
-      ],
-      "affected_files": [
-        "benches/pipeline/stats.rs",
-        "benches/pipeline/results.rs",
-        "benches/pipeline/loopback.rs",
-        "tests/bench_matrix.rs",
-        "BENCH.md"
-      ],
-      "deliverables": [
-        "Updated bench schemas.",
-        "Schema regression tests.",
-        "Updated benchmark documentation."
-      ],
-      "acceptance_criteria": [
-        "New metrics are present in raw and summary outputs.",
-        "CSV parsing and aggregation tests cover the new fields.",
-        "Documentation reflects the current bench schema."
-      ]
-    },
-    {
-      "id": "P6-T2",
-      "phase_id": "P6",
-      "title": "Rerun matrix and document post-redesign recommendations",
-      "summary": "Once the new pipeline lands, rerun the matrix and replace assumptions with measured conclusions.",
-      "details": [
-        "Rerun the coarse matrix across all agreed datasets.",
-        "Compare manySmallFiles scaling before and after the redesign.",
-        "Update BENCH.md, README.md, and PERFOMANCE_UPDATE.md with measured conclusions and any revised defaults."
-      ],
-      "dependencies": [
-        "P3-T3",
-        "P4-T3",
-        "P5-T3",
-        "P6-T1"
-      ],
-      "affected_files": [
-        "target/bench-matrix/results_raw.csv",
-        "target/bench-matrix/results_summary.csv",
-        "BENCH.md",
-        "README.md",
-        "PERFOMANCE_UPDATE.md"
-      ],
-      "deliverables": [
-        "Fresh benchmark runs.",
-        "Updated recommendations and docs."
-      ],
-      "acceptance_criteria": [
-        "Post-redesign matrix results are recorded.",
-        "Documentation describes measured outcomes rather than planned behavior.",
-        "Recommended defaults are justified by current data."
-      ]
-    },
-    {
-      "id": "P7-T1",
-      "phase_id": "P7",
-      "title": "Optionally upload detailed issue journal to receiver",
-      "summary": "Add a later-phase protocol tail that transfers the detailed skip journal to the receiver after the core throughput work is stable.",
-      "details": [
-        "Design a compact protocol message sequence for issue journal upload.",
-        "Persist the received issue journal next to the final archive.",
-        "Keep this work deferred until the throughput redesign and measurements are complete."
-      ],
-      "dependencies": [
-        "P2-T3",
-        "P6-T2"
-      ],
-      "affected_files": [
-        "src/network/protocol.rs",
-        "src/network/protocol.md",
-        "src/receiver/session.rs",
-        "src/sender/session.rs",
-        "tests/connectivity/observability.rs"
-      ],
-      "deliverables": [
-        "Deferred protocol design for issue journal upload.",
-        "Receiver-side persistence of the uploaded journal."
-      ],
-      "acceptance_criteria": [
-        "Detailed journal upload is optional and does not block the core send path.",
-        "Receiver can store the uploaded journal alongside the dump.",
-        "Protocol documentation clearly marks this as post-core work."
+      "id": "safety",
+      "title": "Reliability Tasks Derived from SAFETY.md",
+      "source": "SAFETY.md",
+      "status": "planned",
+      "goals": [
+        "Increase confidence in sender/receiver correctness, wire protocol behavior, resume semantics, and finalization.",
+        "Reduce flakiness and false confidence caused by timing-sensitive test harness behavior.",
+        "Separate fast PR checks, extended reliability coverage, and soak-style stability runs."
+      ],
+      "tasks": [
+        {
+          "id": "safety-01",
+          "title": "Stabilize the test harness and remove critical dependence on fixed sleeps",
+          "priority": "highest",
+          "status": "todo",
+          "depends_on": [],
+          "files": [
+            "tests/connectivity/support.rs",
+            "tests/connectivity/transport.rs"
+          ],
+          "problem": [
+            "Some integration tests rely on fixed sleeps instead of observable readiness conditions.",
+            "This can hide races on fast machines and create flaky failures on slower or busier machines."
+          ],
+          "deliverables": [
+            "A shared helper for waiting until the receiver is ready to accept a session.",
+            "A shared helper for waiting until an archive, journal, or expected artifact exists.",
+            "Removal of fixed sleeps as the primary synchronization mechanism wherever possible."
+          ],
+          "subtasks": [
+            "Find all places where sender or receiver startup is synchronized by a fixed delay.",
+            "Replace those delays with readiness checks or timeout-bounded polling loops.",
+            "Make sure the new helpers work for both push and pull scenarios.",
+            "Improve timeout error messages so a failure reports which condition was never reached."
+          ],
+          "acceptance_criteria": [
+            "Core connectivity tests no longer depend on a single fixed sleep for correctness.",
+            "Timeout failures clearly describe which readiness condition was not met.",
+            "Repeated local runs of key tests do not introduce new flaky behavior."
+          ]
+        },
+        {
+          "id": "safety-02",
+          "title": "Create and lock down a matrix of critical failure points",
+          "priority": "highest",
+          "status": "todo",
+          "depends_on": [
+            "safety-01"
+          ],
+          "files": [
+            "SAFETY.md",
+            "tests/connectivity/protocol_flow.rs",
+            "tests/connectivity/resume.rs",
+            "tests/connectivity/support.rs"
+          ],
+          "problem": [
+            "There are error-path tests already, but there is no explicit failure matrix tied to expected invariants.",
+            "Without a failure matrix, it is easy to miss gaps between transport setup, frame commit, resume, and finish."
+          ],
+          "deliverables": [
+            "A list of critical failure points with expected sender and receiver behavior.",
+            "A mapping from each failure point to an existing or planned test.",
+            "A documented list of known coverage gaps, if any remain."
+          ],
+          "subtasks": [
+            "Define failure points before the first FrameChunk, in the middle of a frame, after FrameEnd but before Ack, on checksum mismatch, on trailing bytes, and on invalid message order.",
+            "For each failure point, specify the expected state of the part file, journal, final archive, and issue journal.",
+            "Connect each failure point to an existing test or create a follow-up coverage task."
+          ],
+          "acceptance_criteria": [
+            "Every critical failure point is recorded in a visible matrix.",
+            "There are no untracked gaps in the frame loop, resume flow, or finish path."
+          ]
+        },
+        {
+          "id": "safety-03",
+          "title": "Expand protocol negative coverage for invalid message ordering and invalid states",
+          "priority": "high",
+          "status": "todo",
+          "depends_on": [
+            "safety-02"
+          ],
+          "files": [
+            "tests/connectivity/protocol_flow.rs",
+            "src/network/protocol.rs",
+            "src/network/protocol.md"
+          ],
+          "problem": [
+            "Happy-path behavior and some protocol failures are covered, but invalid ordering and invalid state transitions need systematic coverage.",
+            "Without explicit negative tests, regressions in protocol validation can slip through unnoticed."
+          ],
+          "deliverables": [
+            "Additional protocol-flow tests for invalid packet ordering and invalid state transitions.",
+            "Assertions that sender or receiver emits Error and preserves a consistent on-disk state."
+          ],
+          "subtasks": [
+            "Add a scenario with FrameEnd outside a valid frame sequence.",
+            "Add a scenario with Finish before the frame loop is completed correctly.",
+            "Add a scenario with IssueJournalChunk outside its allowed window.",
+            "Add any missing negative handshake or role-mismatch coverage.",
+            "Verify that protocol documentation matches test expectations."
+          ],
+          "acceptance_criteria": [
+            "Invalid message order is rejected deterministically.",
+            "Protocol-level failures are covered by explicit tests instead of timing accidents."
+          ]
+        },
+        {
+          "id": "safety-04",
+          "title": "Strengthen receiver state integrity coverage for journal, truncate, and rollback",
+          "priority": "high",
+          "status": "todo",
+          "depends_on": [
+            "safety-02"
+          ],
+          "files": [
+            "tests/connectivity/resume.rs",
+            "src/receiver/journal.rs",
+            "src/receiver/resume.rs",
+            "src/receiver/finish.rs"
+          ],
+          "problem": [
+            "Receiver correctness depends on strict agreement between committed archive length and the persisted journal.",
+            "Errors around trailing bytes, checksum mismatch, and partial frames are high-risk because they can silently corrupt state."
+          ],
+          "deliverables": [
+            "Tests for discarding an unacknowledged frame.",
+            "Tests for truncating back to committed archive_len after verification failure.",
+            "Tests for loud failure on irreconcilable trailing bytes.",
+            "Tests that journal removal happens only after successful finalization."
+          ],
+          "subtasks": [
+            "Cover disconnect after FrameEnd but before Ack.",
+            "Cover disconnect in the middle of FrameChunk delivery.",
+            "Cover resume with trailing bytes beyond committed archive_len.",
+            "Cover incompatible journal versus part-file state.",
+            "Verify that uploaded issue journal data never mutates resume state."
+          ],
+          "acceptance_criteria": [
+            "Receiver never commits an unverified frame.",
+            "After failure, on-disk state is either safely recovered or the process fails loudly.",
+            "Journal cleanup only happens after successful finalize-and-rename."
+          ]
+        },
+        {
+          "id": "safety-05",
+          "title": "Add archive correctness assertions beyond simple payload hash matching",
+          "priority": "high",
+          "status": "todo",
+          "depends_on": [
+            "safety-01"
+          ],
+          "files": [
+            "tests/connectivity/support.rs",
+            "tests/connectivity/roundtrip_fast.rs"
+          ],
+          "problem": [
+            "Payload hash matching is useful, but it does not prove all archive rules.",
+            "It is possible to produce an archive with matching payload bytes while still violating path, entry-type, ordering, or finalization rules."
+          ],
+          "deliverables": [
+            "Helpers for validating archive-level invariants.",
+            "Tests for normalized relative paths, deterministic ordering, and regular-file-only content.",
+            "Checks for tar end blocks and correct issue journal behavior."
+          ],
+          "subtasks": [
+            "Verify that the tar contains only regular files.",
+            "Verify that stored paths are relative and normalized to '/'.",
+            "Verify deterministic file ordering.",
+            "Verify that skipped files are absent from the archive.",
+            "Verify that .issues.tsv is written only when terminal skips exist."
+          ],
+          "acceptance_criteria": [
+            "Roundtrip tests enforce archive invariants, not just content hashes.",
+            "Archive rule violations produce clear test failures."
+          ]
+        },
+        {
+          "id": "safety-06",
+          "title": "Systematically cover live-file retry, best-effort, and skip semantics",
+          "priority": "high",
+          "status": "todo",
+          "depends_on": [
+            "safety-02"
+          ],
+          "files": [
+            "tests/connectivity/resume.rs",
+            "tests/connectivity/roundtrip_fast.rs",
+            "tests/connectivity/support.rs",
+            "src/sender/session.rs",
+            "src/sender/readers.rs",
+            "src/sender/source.rs"
+          ],
+          "problem": [
+            "Best-effort live-file handling is critical for correctness but easy to break silently.",
+            "Growth, truncation, open failure, share violation, and terminal skip cases need explicit coverage."
+          ],
+          "deliverables": [
+            "Fault-style tests for unstable live files.",
+            "Assertions for clean versus best_effort versus skip classification in sender reporting.",
+            "Validation that live-file behavior remains consistent with resume semantics."
+          ],
+          "subtasks": [
+            "Simulate a file that grows after open and verify reading stops at size_at_open.",
+            "Simulate early EOF and verify the sender retries from the start of the file.",
+            "Simulate open failure or share violation and verify correct skip classification.",
+            "Verify that a file sent after one or two failed attempts is classified as best_effort.",
+            "Verify that terminal skips do not create endless retry loops across reconnects."
+          ],
+          "acceptance_criteria": [
+            "Live-file tests match the documented best-effort semantics.",
+            "SendReport and receiver state remain consistent for retry and skip scenarios."
+          ]
+        },
+        {
+          "id": "safety-07",
+          "title": "Expand binary end-to-end coverage for push, pull, token, dump-id, and warning scenarios",
+          "priority": "medium",
+          "status": "todo",
+          "depends_on": [
+            "safety-05",
+            "safety-06"
+          ],
+          "files": [
+            "tests/connectivity/roundtrip_fast.rs",
+            "tests/connectivity/support.rs",
+            "README.md",
+            "AGENTS.md"
+          ],
+          "problem": [
+            "The real CLI matrix needs more explicit binary-level validation across supported transport and reporting modes.",
+            "One push test and one pull test are not enough as a long-term safety signal."
+          ],
+          "deliverables": [
+            "Expanded binary roundtrip coverage for the supported CLI and transport matrix.",
+            "Coverage for warning-mode scenarios that generate issue journal output."
+          ],
+          "subtasks": [
+            "Cover push and pull binary roundtrips.",
+            "Cover runs with token and without token.",
+            "Cover dump-id fallback when dump-id is not provided.",
+            "Cover boundary and mixed fixtures.",
+            "Cover completed_with_warnings with issue journal persistence."
+          ],
+          "acceptance_criteria": [
+            "The supported transport matrix is covered by binary tests.",
+            "CLI behavior remains aligned with repository documentation."
+          ]
+        },
+        {
+          "id": "safety-08",
+          "title": "Split the reliability strategy into fast PR checks and an extended suite",
+          "priority": "medium",
+          "status": "todo",
+          "depends_on": [
+            "safety-03",
+            "safety-04",
+            "safety-05",
+            "safety-06",
+            "safety-07"
+          ],
+          "files": [
+            ".github",
+            "README.md",
+            "SAFETY.md"
+          ],
+          "problem": [
+            "A single flat test strategy is both too weak for true reliability confidence and too expensive for every PR.",
+            "A tiered approach is needed so engineers know what must run for a PR, a large refactor, or a release."
+          ],
+          "deliverables": [
+            "A defined Tier 1 fast gate and Tier 2 extended reliability suite.",
+            "Documented commands or workflows for each level."
+          ],
+          "subtasks": [
+            "Define a fast PR gate with the minimum critical regressions covered.",
+            "Define an extended suite for pre-merge, release, and nightly runs.",
+            "Document how to run each tier."
+          ],
+          "acceptance_criteria": [
+            "The project has a documented tiered reliability strategy.",
+            "Engineers can tell which test set to run for each development stage."
+          ]
+        },
+        {
+          "id": "safety-09",
+          "title": "Add a soak mode for rare race conditions and flaky failure detection",
+          "priority": "medium",
+          "status": "todo",
+          "depends_on": [
+            "safety-01",
+            "safety-08"
+          ],
+          "files": [
+            "tests/connectivity",
+            "scripts",
+            "README.md",
+            "SAFETY.md"
+          ],
+          "problem": [
+            "Single test runs do not reliably expose rare timing bugs, races, or cross-test contamination.",
+            "The project needs a repeatable long-run mode for critical reliability scenarios."
+          ],
+          "deliverables": [
+            "A separate soak entrypoint or script.",
+            "Iteration, seed, and scenario logging for failures.",
+            "A documented minimum soak set of critical tests."
+          ],
+          "subtasks": [
+            "Select the critical scenarios that belong in the soak set.",
+            "Create a convenient local soak command with configurable repeat count.",
+            "Create a CI or nightly soak entrypoint.",
+            "Preserve useful diagnostics on failure."
+          ],
+          "acceptance_criteria": [
+            "The repository provides a repeatable soak mode for local and CI use.",
+            "Failures report iteration context and the scenario that failed."
+          ]
+        },
+        {
+          "id": "safety-10",
+          "title": "Define final reliability acceptance criteria and documentation sync rules",
+          "priority": "medium",
+          "status": "todo",
+          "depends_on": [
+            "safety-03",
+            "safety-04",
+            "safety-05",
+            "safety-06",
+            "safety-07",
+            "safety-08",
+            "safety-09"
+          ],
+          "files": [
+            "SAFETY.md",
+            "README.md",
+            "AGENTS.md",
+            "src/network/protocol.md"
+          ],
+          "problem": [
+            "Even strong tests lose value if reliability expectations are not reflected in the project documentation.",
+            "The project needs an explicit definition of done for safety work."
+          ],
+          "deliverables": [
+            "A concise reliability acceptance checklist.",
+            "A documented rule that protocol, resume, archive, and test-strategy docs must be updated together."
+          ],
+          "subtasks": [
+            "Collect the acceptance criteria into a single checklist.",
+            "Verify that repository documentation matches actual reliability invariants.",
+            "Document the expectation that docs must change together with behavior."
+          ],
+          "acceptance_criteria": [
+            "The repository has a single visible safety definition of done.",
+            "README, AGENTS, and protocol documentation remain aligned with implementation and test strategy."
+          ]
+        }
       ]
     }
   ]

@@ -1,4 +1,5 @@
 use std::collections::BTreeSet;
+use std::ffi::OsString;
 use std::fmt::Display;
 use std::path::{Path, PathBuf};
 
@@ -18,6 +19,9 @@ use super::shared::{
     matrix_read_buffer_values_kb, matrix_thread_counts,
 };
 use super::stats::{LoopbackRunMetrics, run_loopback_scenario};
+
+const DEFAULT_LARGE_FILE_SINGLE_FRAME_THRESHOLD_MIB: u64 = 16;
+const MIB: u64 = 1024 * 1024;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -39,8 +43,49 @@ struct MatrixArgs {
     repeats: u32,
     #[arg(long, default_value_t = DEFAULT_MEMORY_BUDGET_MIB)]
     memory_budget_mib: u64,
+    #[arg(long = "large-file-single-frame-thresholds-mib", value_delimiter = ',', num_args = 1.., hide = true)]
+    large_file_single_frame_thresholds_mib: Vec<u64>,
+    #[arg(long, hide = true)]
+    shuffle_scenarios: bool,
+    #[arg(long, hide = true)]
+    shuffle_seed: Option<u64>,
     #[arg(long, hide = true)]
     bench: bool,
+}
+
+struct LargeFileThresholdEnvGuard {
+    previous: Option<OsString>,
+}
+
+impl LargeFileThresholdEnvGuard {
+    fn set(threshold_bytes: u64) -> Self {
+        let previous = std::env::var_os("FAST_DUMP_LARGE_FILE_SINGLE_FRAME_THRESHOLD_BYTES");
+        // В bench-runner меняем env только между завершёнными сценариями; worker threads
+        // конкретного прогона уже завершены до восстановления переменной.
+        unsafe {
+            std::env::set_var(
+                "FAST_DUMP_LARGE_FILE_SINGLE_FRAME_THRESHOLD_BYTES",
+                threshold_bytes.to_string(),
+            );
+        }
+        Self { previous }
+    }
+}
+
+impl Drop for LargeFileThresholdEnvGuard {
+    fn drop(&mut self) {
+        // См. комментарий в set(): env живёт только как knob для следующего isolated run.
+        unsafe {
+            if let Some(previous) = &self.previous {
+                std::env::set_var(
+                    "FAST_DUMP_LARGE_FILE_SINGLE_FRAME_THRESHOLD_BYTES",
+                    previous,
+                );
+            } else {
+                std::env::remove_var("FAST_DUMP_LARGE_FILE_SINGLE_FRAME_THRESHOLD_BYTES");
+            }
+        }
+    }
 }
 
 pub(crate) fn main() -> Result<()> {
@@ -97,9 +142,13 @@ fn run_matrix(args: MatrixArgs) -> Result<()> {
         bail!("--repeats must be at least 1");
     }
 
-    let output_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("target")
-        .join("bench-matrix");
+    let output_dir = std::env::var_os("FAST_DUMP_BENCH_MATRIX_DIR")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+                .join("target")
+                .join("bench-matrix")
+        });
     if !args.resume {
         reset_results(&output_dir)?;
     }
@@ -113,64 +162,91 @@ fn run_matrix(args: MatrixArgs) -> Result<()> {
     let threads = resolve_values("threads", &matrix_thread_counts(), &args.threads)?;
     let frames_mb = resolve_values("frames", &matrix_frame_target_values_mb(), &args.frames_mb)?;
     let buffers_kb = resolve_values("buffers", &matrix_read_buffer_values_kb(), &args.buffers_kb)?;
+    let thresholds_mib = resolve_large_file_single_frame_thresholds_mib(
+        &args.large_file_single_frame_thresholds_mib,
+    )?;
+    let shuffle_seed = args
+        .shuffle_seed
+        .unwrap_or_else(|| u64::from(std::process::id()) << 32 | u64::from(args.repeats));
 
     for dataset in datasets {
         eprintln!(
-            "[bench-matrix] dataset={} path={} scenarios={} repeats={} resume={}",
+            "[bench-matrix] dataset={} path={} scenarios={} repeats={} thresholds={} resume={} shuffle={}",
             dataset.name,
             dataset.path.display(),
-            threads.len() * frames_mb.len() * buffers_kb.len(),
+            threads.len() * frames_mb.len() * buffers_kb.len() * thresholds_mib.len(),
             args.repeats,
-            args.resume
+            join_values(&thresholds_mib),
+            args.resume,
+            args.shuffle_scenarios
         );
 
         let mut executed_runs = 0_usize;
         let mut skipped_runs = 0_usize;
+        let mut planned_runs = Vec::new();
         for threads in &threads {
             for frame_target_mb in &frames_mb {
                 for read_buffer_kb in &buffers_kb {
-                    for repeat_index in 1..=args.repeats {
-                        let scenario = ScenarioKey {
-                            dataset: dataset.name.to_owned(),
-                            threads: *threads,
-                            frame_target_mb: *frame_target_mb,
-                            read_buffer_kb: *read_buffer_kb,
-                        };
-
-                        if args.resume && completed.contains_key(&(scenario.clone(), repeat_index))
-                        {
-                            skipped_runs += 1;
-                            continue;
+                    for threshold_mib in &thresholds_mib {
+                        for repeat_index in 1..=args.repeats {
+                            planned_runs.push((
+                                ScenarioKey {
+                                    dataset: dataset.name.to_owned(),
+                                    threads: *threads,
+                                    frame_target_mb: *frame_target_mb,
+                                    read_buffer_kb: *read_buffer_kb,
+                                    large_file_single_frame_threshold_mib: *threshold_mib,
+                                },
+                                repeat_index,
+                            ));
                         }
-
-                        eprintln!(
-                            "[bench-matrix] run dataset={} threads={} frame={}MiB buffer={}KiB repeat={}/{}",
-                            scenario.dataset,
-                            scenario.threads,
-                            scenario.frame_target_mb,
-                            scenario.read_buffer_kb,
-                            repeat_index,
-                            args.repeats
-                        );
-
-                        let options = scenario_options(
-                            scenario.threads,
-                            scenario.frame_target_mb,
-                            scenario.read_buffer_kb,
-                        );
-                        let metrics = run_loopback_scenario(&dataset.path, &options);
-                        let row = raw_row(scenario.clone(), repeat_index, metrics);
-
-                        append_raw_result(&raw_results_path, &row)?;
-                        raw_rows.push(row.clone());
-                        completed.insert((scenario, repeat_index), row);
-
-                        let summaries = aggregate_summary_rows(&raw_rows);
-                        write_summary_csv(&summary_results_path, &summaries)?;
-                        executed_runs += 1;
                     }
                 }
             }
+        }
+
+        if args.shuffle_scenarios {
+            shuffle_planned_runs(
+                &mut planned_runs,
+                shuffle_seed ^ dataset_shuffle_salt(dataset.name),
+            );
+        }
+
+        for (scenario, repeat_index) in planned_runs {
+            if args.resume && completed.contains_key(&(scenario.clone(), repeat_index)) {
+                skipped_runs += 1;
+                continue;
+            }
+
+            eprintln!(
+                "[bench-matrix] run dataset={} threads={} frame={}MiB buffer={}KiB isolate={}MiB repeat={}/{}",
+                scenario.dataset,
+                scenario.threads,
+                scenario.frame_target_mb,
+                scenario.read_buffer_kb,
+                scenario.large_file_single_frame_threshold_mib,
+                repeat_index,
+                args.repeats
+            );
+
+            let _threshold_guard = LargeFileThresholdEnvGuard::set(
+                scenario.large_file_single_frame_threshold_mib * MIB,
+            );
+            let options = scenario_options(
+                scenario.threads,
+                scenario.frame_target_mb,
+                scenario.read_buffer_kb,
+            );
+            let metrics = run_loopback_scenario(&dataset.path, &options);
+            let row = raw_row(scenario.clone(), repeat_index, metrics);
+
+            append_raw_result(&raw_results_path, &row)?;
+            raw_rows.push(row.clone());
+            completed.insert((scenario, repeat_index), row);
+
+            let summaries = aggregate_summary_rows(&raw_rows);
+            write_summary_csv(&summary_results_path, &summaries)?;
+            executed_runs += 1;
         }
 
         let summaries = aggregate_summary_rows(&raw_rows);
@@ -232,6 +308,43 @@ where
     }
 
     Ok(selected.into_iter().collect())
+}
+
+fn resolve_large_file_single_frame_thresholds_mib(requested: &[u64]) -> Result<Vec<u64>> {
+    if requested.is_empty() {
+        return Ok(vec![DEFAULT_LARGE_FILE_SINGLE_FRAME_THRESHOLD_MIB]);
+    }
+
+    let mut selected = BTreeSet::new();
+    for value in requested {
+        if *value == 0 {
+            bail!("large-file-single-frame-thresholds-mib must not contain 0");
+        }
+        selected.insert(*value);
+    }
+
+    Ok(selected.into_iter().collect())
+}
+
+fn dataset_shuffle_salt(dataset: &str) -> u64 {
+    dataset.bytes().fold(0_u64, |acc, byte| {
+        acc.wrapping_mul(131).wrapping_add(u64::from(byte))
+    })
+}
+
+fn shuffle_planned_runs(runs: &mut [(ScenarioKey, u32)], seed: u64) {
+    if runs.len() < 2 {
+        return;
+    }
+
+    let mut state = seed.max(1);
+    for index in (1..runs.len()).rev() {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        let swap_index = (state as usize) % (index + 1);
+        runs.swap(index, swap_index);
+    }
 }
 
 fn join_values<T>(values: &[T]) -> String

@@ -14,10 +14,53 @@ use crate::network::protocol::ResumeState;
 use super::PipelineProfileCollector;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum InputFileKind {
+    Regular,
+    Symlink { target: PathBuf },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct InputFile {
     pub(crate) index: u64,
     pub(crate) abs_path: PathBuf,
     pub(crate) rel_path: String,
+    pub(crate) kind: InputFileKind,
+}
+
+impl InputFile {
+    pub(crate) fn regular(index: u64, abs_path: PathBuf, rel_path: String) -> Self {
+        Self {
+            index,
+            abs_path,
+            rel_path,
+            kind: InputFileKind::Regular,
+        }
+    }
+
+    pub(crate) fn symlink(
+        index: u64,
+        abs_path: PathBuf,
+        rel_path: String,
+        target: PathBuf,
+    ) -> Self {
+        Self {
+            index,
+            abs_path,
+            rel_path,
+            kind: InputFileKind::Symlink { target },
+        }
+    }
+
+    pub(crate) fn is_regular(&self) -> bool {
+        matches!(self.kind, InputFileKind::Regular)
+    }
+
+    pub(crate) fn link_target(&self) -> Option<&Path> {
+        match &self.kind {
+            InputFileKind::Regular => None,
+            InputFileKind::Symlink { target } => Some(target.as_path()),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -37,7 +80,38 @@ struct DirectoryFrame {
 struct DiscoveredEntry {
     rel_path: String,
     abs_path: PathBuf,
-    file_type: fs::FileType,
+    kind: DiscoveredEntryKind,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum DiscoveredEntryKind {
+    Directory,
+    Regular,
+    Symlink { target: PathBuf },
+    Unsupported(UnsupportedEntryKind),
+}
+
+#[cfg_attr(not(unix), allow(dead_code))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum UnsupportedEntryKind {
+    Socket,
+    Fifo,
+    BlockDevice,
+    CharDevice,
+    Other,
+}
+
+impl std::fmt::Display for UnsupportedEntryKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let label = match self {
+            Self::Socket => "socket",
+            Self::Fifo => "fifo",
+            Self::BlockDevice => "block-device",
+            Self::CharDevice => "char-device",
+            Self::Other => "special",
+        };
+        f.write_str(label)
+    }
 }
 
 enum DirectoryListingCommand {
@@ -130,7 +204,7 @@ impl DirectoryListingPool {
 
     fn prefetch_directories(&self, entries: &[DiscoveredEntry]) {
         for entry in entries {
-            if entry.file_type.is_dir() {
+            if matches!(entry.kind, DiscoveredEntryKind::Directory) {
                 self.submit_if_room(&entry.abs_path);
             }
         }
@@ -316,6 +390,10 @@ fn metadata_path(path: &Path) -> std::io::Result<fs::Metadata> {
     fs::metadata(path)
 }
 
+fn read_link_path(path: &Path) -> std::io::Result<PathBuf> {
+    fs::read_link(path)
+}
+
 fn validate_source_directory(source: &Path) -> Result<()> {
     let metadata = metadata_path(source)
         .with_context(|| format!("failed to inspect sender source {}", source.display()))?;
@@ -412,25 +490,23 @@ impl PendingFileWalker {
                 return Ok(None);
             };
 
-            if entry.file_type.is_dir() {
-                let entries = self.listing_pool.take_or_read(&entry.abs_path)?;
-                self.listing_pool.prefetch_directories(&entries);
-                self.stack.push(DirectoryFrame { entries });
-                continue;
-            }
-
-            if !entry.file_type.is_file() {
-                eprintln!(
-                    "warning: skipping non-regular entry {}",
-                    entry.abs_path.display()
-                );
-                continue;
-            }
-
-            let file = InputFile {
-                index: self.next_index,
-                abs_path: entry.abs_path,
-                rel_path: entry.rel_path,
+            let file = match entry.kind {
+                DiscoveredEntryKind::Directory => {
+                    let entries = self.listing_pool.take_or_read(&entry.abs_path)?;
+                    self.listing_pool.prefetch_directories(&entries);
+                    self.stack.push(DirectoryFrame { entries });
+                    continue;
+                }
+                DiscoveredEntryKind::Regular => {
+                    InputFile::regular(self.next_index, entry.abs_path, entry.rel_path)
+                }
+                DiscoveredEntryKind::Symlink { target } => {
+                    InputFile::symlink(self.next_index, entry.abs_path, entry.rel_path, target)
+                }
+                DiscoveredEntryKind::Unsupported(kind) => {
+                    warn_skipped_unsupported_entry(&entry.abs_path, kind);
+                    continue;
+                }
             };
             self.next_index += 1;
             self.last_discovered_file = Some(file.clone());
@@ -519,6 +595,9 @@ pub fn scan_source(
     // Для диагностического scan-отчёта размер можно собрать отдельно,
     // но sender не использует эту цифру как источник истины для tar.
     let pending_bytes = pending.iter().try_fold(0_u64, |total, file| {
+        if !file.is_regular() {
+            return Ok::<_, anyhow::Error>(total);
+        }
         let size = metadata_path(&file.abs_path)
             .with_context(|| {
                 format!(
@@ -535,6 +614,53 @@ pub fn scan_source(
         final_file_index,
         final_file_path,
     })
+}
+
+fn warn_skipped_unsupported_entry(path: &Path, kind: UnsupportedEntryKind) {
+    eprintln!(
+        "warning: skipping unsupported {kind} entry {}",
+        path.display()
+    );
+}
+
+fn classify_discovered_entry(path: &Path, file_type: fs::FileType) -> Result<DiscoveredEntryKind> {
+    if file_type.is_dir() {
+        return Ok(DiscoveredEntryKind::Directory);
+    }
+    if file_type.is_file() {
+        return Ok(DiscoveredEntryKind::Regular);
+    }
+    if file_type.is_symlink() {
+        let target = read_link_path(path)
+            .with_context(|| format!("failed to read sender symlink target {}", path.display()))?;
+        return Ok(DiscoveredEntryKind::Symlink { target });
+    }
+
+    Ok(DiscoveredEntryKind::Unsupported(
+        classify_unsupported_entry_kind(&file_type),
+    ))
+}
+
+#[cfg(unix)]
+fn classify_unsupported_entry_kind(file_type: &fs::FileType) -> UnsupportedEntryKind {
+    use std::os::unix::fs::FileTypeExt;
+
+    if file_type.is_socket() {
+        UnsupportedEntryKind::Socket
+    } else if file_type.is_fifo() {
+        UnsupportedEntryKind::Fifo
+    } else if file_type.is_block_device() {
+        UnsupportedEntryKind::BlockDevice
+    } else if file_type.is_char_device() {
+        UnsupportedEntryKind::CharDevice
+    } else {
+        UnsupportedEntryKind::Other
+    }
+}
+
+#[cfg(not(unix))]
+fn classify_unsupported_entry_kind(_file_type: &fs::FileType) -> UnsupportedEntryKind {
+    UnsupportedEntryKind::Other
 }
 
 fn validate_resume_state_against_files(
@@ -581,10 +707,11 @@ fn read_sorted_entries(source: &Path, dir: &Path) -> Result<Vec<DiscoveredEntry>
                 entry.path().display()
             )
         })?;
+        let kind = classify_discovered_entry(&path, file_type)?;
         entries.push(DiscoveredEntry {
             rel_path,
             abs_path: path,
-            file_type,
+            kind,
         });
     }
     entries.sort_by(|left, right| left.rel_path.cmp(&right.rel_path));
@@ -619,26 +746,28 @@ fn collect_files_recursive(
                 entry.path().display()
             )
         })?;
-        entries.push((rel_path, path, file_type));
+        let kind = classify_discovered_entry(&path, file_type)?;
+        entries.push((rel_path, path, kind));
     }
     entries.sort_by(|left, right| left.0.cmp(&right.0));
 
-    for (rel_path, path, file_type) in entries {
-        if file_type.is_dir() {
-            collect_files_recursive(source, &path, next_index, files)?;
-            continue;
+    for (rel_path, path, kind) in entries {
+        match kind {
+            DiscoveredEntryKind::Directory => {
+                collect_files_recursive(source, &path, next_index, files)?;
+            }
+            DiscoveredEntryKind::Regular => {
+                files.push(InputFile::regular(*next_index, path, rel_path));
+                *next_index += 1;
+            }
+            DiscoveredEntryKind::Symlink { target } => {
+                files.push(InputFile::symlink(*next_index, path, rel_path, target));
+                *next_index += 1;
+            }
+            DiscoveredEntryKind::Unsupported(kind) => {
+                warn_skipped_unsupported_entry(&path, kind);
+            }
         }
-        if file_type.is_file() {
-            files.push(InputFile {
-                index: *next_index,
-                abs_path: path,
-                rel_path,
-            });
-            *next_index += 1;
-            continue;
-        }
-
-        eprintln!("warning: skipping non-regular entry {}", path.display());
     }
 
     Ok(())
@@ -738,11 +867,7 @@ mod tests {
             fs::create_dir_all(parent).unwrap();
         }
         fs::write(&path, bytes).unwrap();
-        InputFile {
-            index,
-            abs_path: path,
-            rel_path: rel_path.replace('\\', "/"),
-        }
+        InputFile::regular(index, path, rel_path.replace('\\', "/"))
     }
 
     fn empty_resume_state() -> ResumeState {
@@ -962,7 +1087,7 @@ mod tests {
     }
 
     #[test]
-    fn collect_pending_files_skips_symlink_entries_when_platform_allows_it() {
+    fn collect_pending_files_preserves_symlink_entries_when_platform_allows_it() {
         let temp = TestDir::new();
         fs::write(temp.path().join("real.txt"), b"abc").unwrap();
         let target = temp.path().join("real.txt");
@@ -984,9 +1109,11 @@ mod tests {
             collect_pending_files(temp.path().to_path_buf(), &empty_resume_state(), 1, 1).unwrap();
 
         let rel_paths: Vec<_> = pending.iter().map(|file| file.rel_path.as_str()).collect();
-        assert_eq!(rel_paths, vec!["real.txt"]);
-        assert_eq!(final_file_index, 1);
-        assert_eq!(final_file_path, "real.txt");
+        assert_eq!(rel_paths, vec!["real.txt", "skip-me.txt"]);
+        assert!(pending[0].is_regular());
+        assert_eq!(pending[1].link_target(), Some(target.as_path()));
+        assert_eq!(final_file_index, 2);
+        assert_eq!(final_file_path, "skip-me.txt");
     }
 
     #[test]

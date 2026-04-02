@@ -152,7 +152,7 @@ At most one unacknowledged frame is lost on disconnect.
 
 ## Current Data-Path Behavior
 
-- The archive contains only regular files that were successfully captured.
+- The archive contains regular files that were successfully captured and symlink entries whose targets are preserved without dereferencing.
 - Empty directories and directory metadata are ignored.
 - Source traversal is deterministic:
   - depth-first
@@ -166,7 +166,8 @@ At most one unacknowledged frame is lost on disconnect.
   - short read or open failure restarts the file from scratch
   - at most `3` immediate attempts are made
   - exhausted files are skipped and counted in aggregate stats
-- Non-regular entries are skipped with a warning.
+- Symlinks are stored as tar symlink entries and keep their original link target.
+- Unsupported special entries such as sockets, devices, and FIFOs are skipped with a kind-specific warning.
 - Frame boundaries stay on completed files, but `frame_target` is treated as a
   soft target rather than a mandatory per-file flush boundary.
 - Large direct-stream files and previously retried files may be isolated into

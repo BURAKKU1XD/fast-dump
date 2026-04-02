@@ -119,7 +119,7 @@ wishlist.
 
 ## Archive Rules
 
-- Archive contains only regular files that were successfully sent.
+- Archive contains regular files that were successfully sent and symlink entries whose targets are preserved without dereferencing.
 - Empty directories and directory metadata are ignored.
 - Paths stored in tar are relative to the selected root and normalized to `/`.
 - File traversal order is deterministic:
@@ -323,8 +323,9 @@ Protocol rules:
 
 ## File Type Policy
 
-- Support regular files first.
-- Skip symlinks, sockets, devices, and other special entries with a warning.
+- Support regular files and symlinks.
+- Preserve symlinks as symlink entries in tar without dereferencing targets.
+- Skip sockets, devices, FIFOs, and other unsupported special entries with a kind-specific warning.
 
 ## Testing and Verification
 

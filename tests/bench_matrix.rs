@@ -43,6 +43,7 @@ fn sample_row(repeat_index: u32, total_duration_ms: f64, sent_frames: u64) -> Ra
             threads: 4,
             frame_target_mb: 16,
             read_buffer_kb: 256,
+            large_file_single_frame_threshold_mib: 16,
         },
         repeat_index,
         files_count: 1024,

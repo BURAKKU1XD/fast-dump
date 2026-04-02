@@ -1,7 +1,10 @@
+use std::borrow::Cow;
 use std::collections::VecDeque;
+use std::env;
 use std::fs;
 use std::io::{self, Read, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+use std::str;
 use std::time::Instant;
 
 use anyhow::{Context, Result};
@@ -12,7 +15,7 @@ use crate::network::protocol::{self, ResumeState};
 
 use super::readers::IN_MEMORY_SNAPSHOT_THRESHOLD_BYTES;
 use super::{
-    DirectFileStream, FileDisposition, FileReadOutcome, FileSkipReason, InputFile,
+    DirectFileStream, FileDisposition, FileReadOutcome, FileSkipReason, InputFile, InputFileKind,
     PendingFileWalker, PipelineProfile, PipelineProfileCollector, ReadEvent, ReaderPool,
     SnapshotStorage,
 };
@@ -20,6 +23,10 @@ use super::{
 const DEFAULT_READ_BUFFER_BYTES: usize = 1024 * 1024;
 const TAR_HEADER_BYTES: u64 = 512;
 const DEFAULT_MAX_FILES_PER_FRAME: usize = 4096;
+pub(crate) const DEFAULT_LARGE_FILE_SINGLE_FRAME_THRESHOLD_BYTES: u64 = 16 * 1024 * 1024;
+const GNU_LONG_LINK_PATH: &str = "././@LongLink";
+const LARGE_FILE_SINGLE_FRAME_THRESHOLD_ENV: &str =
+    "FAST_DUMP_LARGE_FILE_SINGLE_FRAME_THRESHOLD_BYTES";
 
 #[derive(Debug, Clone)]
 pub(crate) struct RetryableStreamFailure {
@@ -81,6 +88,7 @@ pub(crate) struct FrameBuildStats {
 impl FrameBuildStats {
     pub(crate) fn note_snapshot(
         &mut self,
+        file: &InputFile,
         disposition: FileDisposition,
         size_at_open: u64,
         retries: u32,
@@ -89,7 +97,7 @@ impl FrameBuildStats {
         self.bytes_sent_raw = self.bytes_sent_raw.saturating_add(size_at_open);
         self.tar_bytes_sent = self
             .tar_bytes_sent
-            .saturating_add(tar_entry_bytes(size_at_open));
+            .saturating_add(tar_entry_bytes_for_file(file, size_at_open));
         match disposition {
             FileDisposition::Clean => {
                 self.files_sent_clean += 1;
@@ -143,8 +151,10 @@ pub(crate) struct FrameProgress {
 }
 
 impl FrameProgress {
-    pub(crate) fn note_payload_file(&mut self, size_at_open: u64) {
-        self.tar_bytes = self.tar_bytes.saturating_add(tar_entry_bytes(size_at_open));
+    pub(crate) fn note_payload_file(&mut self, file: &InputFile, size_at_open: u64) {
+        self.tar_bytes = self
+            .tar_bytes
+            .saturating_add(tar_entry_bytes_for_file(file, size_at_open));
         self.files_with_payload = self.files_with_payload.saturating_add(1);
     }
 }
@@ -154,7 +164,12 @@ impl FramePolicy {
         Self {
             soft_target_bytes: frame_target_bytes.max(1),
             max_files_per_frame: DEFAULT_MAX_FILES_PER_FRAME,
-            large_file_single_frame_threshold: IN_MEMORY_SNAPSHOT_THRESHOLD_BYTES.saturating_add(1),
+            // Держим direct-stream порог и dedicated-frame порог отдельно:
+            // medium direct-stream файлы можно оставлять в общем frame,
+            // а truly large файлы по-прежнему изолировать ради rollback scope.
+            large_file_single_frame_threshold: resolve_large_file_single_frame_threshold_bytes(
+                env_override_large_file_single_frame_threshold_bytes(),
+            ),
             isolate_retried_files: true,
         }
     }
@@ -209,12 +224,41 @@ impl FramePolicy {
     fn is_probably_large(&self, file: &InputFile) -> bool {
         // Это эвристика только для выбора границы frame. Корректность tar header
         // и retry-семантика по-прежнему опираются на metadata открытого handle.
+        if !file.is_regular() {
+            return false;
+        }
+
         fs::metadata(&file.abs_path)
             .map(|metadata| {
                 metadata.is_file() && metadata.len() >= self.large_file_single_frame_threshold
             })
             .unwrap_or(false)
     }
+}
+
+fn env_override_large_file_single_frame_threshold_bytes() -> Option<u64> {
+    let raw = env::var(LARGE_FILE_SINGLE_FRAME_THRESHOLD_ENV).ok()?;
+    let trimmed = raw.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    match trimmed.parse::<u64>() {
+        Ok(value) => Some(value),
+        Err(error) => {
+            debug!(
+                "ignoring invalid {}={:?}: {}",
+                LARGE_FILE_SINGLE_FRAME_THRESHOLD_ENV, raw, error
+            );
+            None
+        }
+    }
+}
+
+fn resolve_large_file_single_frame_threshold_bytes(explicit_threshold: Option<u64>) -> u64 {
+    explicit_threshold
+        .unwrap_or(DEFAULT_LARGE_FILE_SINGLE_FRAME_THRESHOLD_BYTES)
+        .max(IN_MEMORY_SNAPSHOT_THRESHOLD_BYTES.saturating_add(1))
 }
 
 #[derive(Clone)]
@@ -285,7 +329,13 @@ impl PendingFrameFiles {
     // Очередь pending-файлов держит только уже запланированное окно.
     // Остальные пути остаются на стороне walker и открываются по мере надобности.
     pub(crate) fn prefetch(&mut self, readers: &mut ReaderPool) -> Result<(usize, bool)> {
-        self.prefetch_with(readers, |pool, file| pool.schedule(file))
+        self.prefetch_with(readers, |pool, file| {
+            if file.is_regular() {
+                pool.schedule(file)
+            } else {
+                Ok(())
+            }
+        })
     }
 
     pub(crate) fn prefetch_with<F>(
@@ -533,53 +583,75 @@ fn prepare_buffered_frame(
             break last.clone();
         }
         let mut completed_payload = None;
-        match readers.next_for_with_scheduler(file.index, |pool| pending.prefetch(pool))? {
-            ReadEvent::Ready(FileReadOutcome::Snapshot(snapshot)) => {
-                let header_started = Instant::now();
-                append_tar_header(&mut encoder, &snapshot.file.rel_path, snapshot.size_at_open)?;
-                if let Some(profile) = config.profile {
-                    profile.record_compress(TAR_HEADER_BYTES, header_started.elapsed());
+        if file.is_regular() {
+            match readers.next_for_with_scheduler(file.index, |pool| pending.prefetch(pool))? {
+                ReadEvent::Ready(FileReadOutcome::Snapshot(snapshot)) => {
+                    let header_started = Instant::now();
+                    append_tar_file_header(&mut encoder, &snapshot.file, snapshot.size_at_open)?;
+                    if let Some(profile) = config.profile {
+                        profile.record_compress(
+                            tar_header_bytes_for_file(&snapshot.file),
+                            header_started.elapsed(),
+                        );
+                    }
+                    stream_staged_snapshot(&mut encoder, &snapshot, config.profile)?;
+                    let padding_bytes = tar_padding_bytes(snapshot.size_at_open) as u64;
+                    let padding_started = Instant::now();
+                    append_tar_file_padding(&mut encoder, &snapshot.file, snapshot.size_at_open)?;
+                    if let Some(profile) = config.profile {
+                        profile.record_compress(padding_bytes, padding_started.elapsed());
+                    }
+                    stats.note_snapshot(
+                        &snapshot.file,
+                        snapshot.disposition,
+                        snapshot.size_at_open,
+                        snapshot.retries,
+                    );
+                    completed_payload = Some((snapshot.size_at_open, snapshot.retries));
                 }
-                stream_staged_snapshot(&mut encoder, &snapshot, config.profile)?;
-                let padding_bytes = tar_padding_bytes(snapshot.size_at_open) as u64;
-                let padding_started = Instant::now();
-                append_tar_padding(&mut encoder, &snapshot.file.rel_path, snapshot.size_at_open)?;
-                if let Some(profile) = config.profile {
-                    profile.record_compress(padding_bytes, padding_started.elapsed());
+                ReadEvent::Ready(FileReadOutcome::Direct(mut direct)) => {
+                    let header_started = Instant::now();
+                    append_tar_file_header(&mut encoder, &direct.file, direct.size_at_open)?;
+                    if let Some(profile) = config.profile {
+                        profile.record_compress(
+                            tar_header_bytes_for_file(&direct.file),
+                            header_started.elapsed(),
+                        );
+                    }
+                    stream_direct_file(&mut encoder, &mut direct, config.profile)?;
+                    let padding_bytes = tar_padding_bytes(direct.size_at_open) as u64;
+                    let padding_started = Instant::now();
+                    append_tar_file_padding(&mut encoder, &direct.file, direct.size_at_open)?;
+                    if let Some(profile) = config.profile {
+                        profile.record_compress(padding_bytes, padding_started.elapsed());
+                    }
+                    stats.note_snapshot(
+                        &direct.file,
+                        direct.disposition,
+                        direct.size_at_open,
+                        direct.retries,
+                    );
+                    completed_payload = Some((direct.size_at_open, direct.retries));
                 }
-                stats.note_snapshot(
-                    snapshot.disposition,
-                    snapshot.size_at_open,
-                    snapshot.retries,
-                );
-                completed_payload = Some((snapshot.size_at_open, snapshot.retries));
+                ReadEvent::Ready(FileReadOutcome::Skip(skipped)) => {
+                    stats.note_skip(skipped.reason, skipped.retries);
+                }
+                ReadEvent::Fatal { message, .. } => anyhow::bail!("{message}"),
             }
-            ReadEvent::Ready(FileReadOutcome::Direct(mut direct)) => {
-                let header_started = Instant::now();
-                append_tar_header(&mut encoder, &direct.file.rel_path, direct.size_at_open)?;
-                if let Some(profile) = config.profile {
-                    profile.record_compress(TAR_HEADER_BYTES, header_started.elapsed());
-                }
-                stream_direct_file(&mut encoder, &mut direct, config.profile)?;
-                let padding_bytes = tar_padding_bytes(direct.size_at_open) as u64;
-                let padding_started = Instant::now();
-                append_tar_padding(&mut encoder, &direct.file.rel_path, direct.size_at_open)?;
-                if let Some(profile) = config.profile {
-                    profile.record_compress(padding_bytes, padding_started.elapsed());
-                }
-                stats.note_snapshot(direct.disposition, direct.size_at_open, direct.retries);
-                completed_payload = Some((direct.size_at_open, direct.retries));
+        } else {
+            let header_started = Instant::now();
+            append_tar_file_header(&mut encoder, &file, 0)?;
+            if let Some(profile) = config.profile {
+                profile.record_compress(tar_header_bytes_for_file(&file), header_started.elapsed());
             }
-            ReadEvent::Ready(FileReadOutcome::Skip(skipped)) => {
-                stats.note_skip(skipped.reason, skipped.retries);
-            }
-            ReadEvent::Fatal { message, .. } => anyhow::bail!("{message}"),
+            stats.note_snapshot(&file, FileDisposition::Clean, 0, 0);
+            completed_payload = Some((0, 0));
         }
         let last = consume_buffered_file(pending)?;
         last_completed = Some(last.clone());
         let _ = pending.prefetch(readers)?;
         if let Some((size_at_open, retries)) = completed_payload {
-            progress.note_payload_file(size_at_open);
+            progress.note_payload_file(&last, size_at_open);
             if policy.should_close_after_current(
                 progress,
                 size_at_open,
@@ -629,12 +701,30 @@ fn prepare_buffered_frame(
     }))
 }
 
-pub(crate) fn tar_entry_bytes(size_at_open: u64) -> u64 {
-    TAR_HEADER_BYTES + size_at_open + tar_padding_bytes(size_at_open) as u64
+pub(crate) fn tar_entry_bytes(rel_path: &str, size_at_open: u64) -> u64 {
+    tar_header_bytes(rel_path) + size_at_open + tar_padding_bytes(size_at_open) as u64
 }
 
-fn tar_padding_bytes(size_at_open: u64) -> usize {
+pub(crate) fn tar_header_bytes(rel_path: &str) -> u64 {
+    TAR_HEADER_BYTES + tar_long_path_entry_bytes(rel_path)
+}
+
+pub(crate) fn tar_padding_bytes(size_at_open: u64) -> usize {
     ((512 - (size_at_open % 512)) % 512) as usize
+}
+
+fn tar_long_path_entry_bytes(rel_path: &str) -> u64 {
+    if !path_requires_gnu_long_link(rel_path) {
+        return 0;
+    }
+
+    let payload_len = rel_path.len() as u64 + 1;
+    TAR_HEADER_BYTES + payload_len + tar_padding_bytes(payload_len) as u64
+}
+
+fn path_requires_gnu_long_link(rel_path: &str) -> bool {
+    let mut header = Header::new_gnu();
+    header.set_path(rel_path).is_err()
 }
 
 pub(crate) fn append_tar_header<W>(writer: &mut W, rel_path: &str, size_at_open: u64) -> Result<()>
@@ -642,9 +732,7 @@ where
     W: Write,
 {
     let mut header = Header::new_gnu();
-    header
-        .set_path(rel_path)
-        .with_context(|| format!("failed to encode tar path {rel_path}"))?;
+    prepare_path_header_for_file(writer, &mut header, rel_path)?;
     header.set_entry_type(EntryType::Regular);
     header.set_size(size_at_open);
     header.set_mode(0o644);
@@ -669,6 +757,259 @@ where
         writer
             .write_all(&zeros[..padding])
             .with_context(|| format!("failed to write tar padding for {rel_path}"))?;
+    }
+
+    Ok(())
+}
+
+fn tar_entry_payload_bytes_for_file(file: &InputFile, size_at_open: u64) -> u64 {
+    match file.kind {
+        InputFileKind::Regular => size_at_open + tar_padding_bytes(size_at_open) as u64,
+        InputFileKind::Symlink { .. } => 0,
+    }
+}
+
+fn tar_long_link_entry_bytes_for_file(file: &InputFile) -> u64 {
+    let Some(target) = file.link_target() else {
+        return 0;
+    };
+    if !link_target_requires_gnu_long_link(target) {
+        return 0;
+    }
+
+    match path_to_tar_bytes(target) {
+        Ok(bytes) => {
+            let payload_len = bytes.len() as u64 + 1;
+            TAR_HEADER_BYTES + payload_len + tar_padding_bytes(payload_len) as u64
+        }
+        Err(_) => 0,
+    }
+}
+
+pub(crate) fn tar_entry_bytes_for_file(file: &InputFile, size_at_open: u64) -> u64 {
+    match file.kind {
+        InputFileKind::Regular => tar_entry_bytes(&file.rel_path, size_at_open),
+        InputFileKind::Symlink { .. } => {
+            tar_header_bytes_for_file(file) + tar_entry_payload_bytes_for_file(file, size_at_open)
+        }
+    }
+}
+
+pub(crate) fn tar_header_bytes_for_file(file: &InputFile) -> u64 {
+    match file.kind {
+        InputFileKind::Regular => tar_header_bytes(&file.rel_path),
+        InputFileKind::Symlink { .. } => {
+            TAR_HEADER_BYTES
+                + tar_long_path_entry_bytes(&file.rel_path)
+                + tar_long_link_entry_bytes_for_file(file)
+        }
+    }
+}
+
+fn link_target_requires_gnu_long_link(target: &Path) -> bool {
+    let mut header = Header::new_gnu();
+    match header.set_link_name(target) {
+        Ok(()) => false,
+        Err(_) => match path_to_tar_bytes(target) {
+            Ok(bytes) => bytes.len() >= header.as_old().linkname.len(),
+            Err(_) => false,
+        },
+    }
+}
+
+#[cfg(all(unix, not(target_arch = "wasm32")))]
+fn path_to_tar_bytes(path: &Path) -> std::io::Result<Cow<'_, [u8]>> {
+    use std::os::unix::ffi::OsStrExt;
+
+    Ok(Cow::Borrowed(path.as_os_str().as_bytes()))
+}
+
+#[cfg(any(windows, target_arch = "wasm32"))]
+fn path_to_tar_bytes(path: &Path) -> std::io::Result<Cow<'_, [u8]>> {
+    let value = path.as_os_str().to_str().ok_or_else(|| {
+        std::io::Error::other(format!("path {} is not valid Unicode", path.display()))
+    })?;
+    if value.contains('\\') {
+        let mut normalized = value.as_bytes().to_vec();
+        for byte in &mut normalized {
+            if *byte == b'\\' {
+                *byte = b'/';
+            }
+        }
+        Ok(Cow::Owned(normalized))
+    } else {
+        Ok(Cow::Borrowed(value.as_bytes()))
+    }
+}
+
+fn truncated_utf8_prefix(bytes: &[u8], max_len: usize) -> Result<&str> {
+    let prefix = &bytes[..bytes.len().min(max_len)];
+    match str::from_utf8(prefix) {
+        Ok(value) => Ok(value),
+        Err(error) => str::from_utf8(&prefix[..error.valid_up_to()])
+            .context("failed to truncate GNU long tar path to a valid utf-8 prefix"),
+    }
+}
+
+fn append_gnu_long_data_entry<W>(
+    writer: &mut W,
+    data: &[u8],
+    record_type: u8,
+    context_path: &str,
+    context_label: &str,
+) -> Result<()>
+where
+    W: Write,
+{
+    let payload_len = data.len() as u64 + 1;
+    let mut header = Header::new_gnu();
+    header
+        .set_path(GNU_LONG_LINK_PATH)
+        .context("failed to encode GNU long-link tar header path")?;
+    header.set_entry_type(EntryType::new(record_type));
+    header.set_size(payload_len);
+    header.set_mode(0o644);
+    header.set_uid(0);
+    header.set_gid(0);
+    header.set_mtime(0);
+    header.set_cksum();
+    writer.write_all(header.as_bytes()).with_context(|| {
+        format!("failed to write GNU long-link tar header for {context_label} {context_path}")
+    })?;
+    writer.write_all(data).with_context(|| {
+        format!("failed to write GNU long-link tar payload for {context_label} {context_path}")
+    })?;
+    writer.write_all(&[0]).with_context(|| {
+        format!("failed to terminate GNU long-link tar payload for {context_label} {context_path}")
+    })?;
+
+    let padding = tar_padding_bytes(payload_len);
+    if padding != 0 {
+        let zeros = [0_u8; 512];
+        writer.write_all(&zeros[..padding]).with_context(|| {
+            format!("failed to write GNU long-link tar padding for {context_label} {context_path}")
+        })?;
+    }
+
+    Ok(())
+}
+
+fn prepare_path_header_for_file<W>(
+    writer: &mut W,
+    header: &mut Header,
+    rel_path: &str,
+) -> Result<()>
+where
+    W: Write,
+{
+    if let Err(error) = header.set_path(rel_path) {
+        let path_bytes = path_to_tar_bytes(Path::new(rel_path))
+            .with_context(|| format!("failed to encode tar path {rel_path}"))?;
+        if path_bytes.len() < header.as_old().name.len() {
+            return Err(error).with_context(|| format!("failed to encode tar path {rel_path}"));
+        }
+
+        // Для длинных путей пишем GNU LongLink рядом с обычным entry header,
+        // потому что вручную сериализуем tar без `tar::Builder`.
+        append_gnu_long_data_entry(writer, &path_bytes, b'L', rel_path, "path")?;
+        let truncated = truncated_utf8_prefix(&path_bytes, header.as_old().name.len())?;
+        header
+            .set_path(truncated)
+            .context("failed to encode truncated tar path after GNU long-link extension")?;
+    }
+
+    Ok(())
+}
+
+fn prepare_link_name_for_file<W>(
+    writer: &mut W,
+    header: &mut Header,
+    target: &Path,
+    rel_path: &str,
+) -> Result<()>
+where
+    W: Write,
+{
+    if let Err(error) = header.set_link_name(target) {
+        let link_bytes = path_to_tar_bytes(target).with_context(|| {
+            format!(
+                "failed to encode tar symlink target {} for {}",
+                target.display(),
+                rel_path
+            )
+        })?;
+        if link_bytes.len() < header.as_old().linkname.len() {
+            return Err(error).with_context(|| {
+                format!(
+                    "failed to encode tar symlink target {} for {}",
+                    target.display(),
+                    rel_path
+                )
+            });
+        }
+
+        // Для длинного link target tar ждёт отдельную GNU long-link запись
+        // перед symlink header, а в самом header оставляем короткий префикс.
+        append_gnu_long_data_entry(writer, &link_bytes, b'K', rel_path, "link target")?;
+        let truncated = truncated_utf8_prefix(&link_bytes, header.as_old().linkname.len())?;
+        header.set_link_name(truncated).context(
+            "failed to encode truncated tar symlink target after GNU long-link extension",
+        )?;
+    }
+
+    Ok(())
+}
+
+pub(crate) fn append_tar_file_header<W>(
+    writer: &mut W,
+    file: &InputFile,
+    size_at_open: u64,
+) -> Result<()>
+where
+    W: Write,
+{
+    if file.is_regular() {
+        return append_tar_header(writer, &file.rel_path, size_at_open);
+    }
+
+    let mut header = Header::new_gnu();
+    prepare_path_header_for_file(writer, &mut header, &file.rel_path)?;
+
+    match &file.kind {
+        InputFileKind::Regular => {
+            header.set_entry_type(EntryType::Regular);
+            header.set_size(size_at_open);
+            header.set_mode(0o644);
+        }
+        InputFileKind::Symlink { target } => {
+            prepare_link_name_for_file(writer, &mut header, target, &file.rel_path)?;
+            header.set_entry_type(EntryType::new(b'2'));
+            header.set_size(0);
+            header.set_mode(0o777);
+        }
+    }
+
+    header.set_uid(0);
+    header.set_gid(0);
+    header.set_mtime(0);
+    header.set_cksum();
+    writer
+        .write_all(header.as_bytes())
+        .with_context(|| format!("failed to write tar header for {}", file.rel_path))?;
+
+    Ok(())
+}
+
+pub(crate) fn append_tar_file_padding<W>(
+    writer: &mut W,
+    file: &InputFile,
+    size_at_open: u64,
+) -> Result<()>
+where
+    W: Write,
+{
+    if file.is_regular() {
+        return append_tar_padding(writer, &file.rel_path, size_at_open);
     }
 
     Ok(())
@@ -792,10 +1133,17 @@ where
 mod tests {
     use std::fs;
     use std::fs::File;
+    use std::io::Cursor;
     use std::path::{Path, PathBuf};
     use std::time::{Instant, SystemTime, UNIX_EPOCH};
+    use tar::{Archive, EntryType};
 
-    use super::{prepare_dump, stream_direct_file, tar_entry_bytes};
+    use super::{
+        DEFAULT_LARGE_FILE_SINGLE_FRAME_THRESHOLD_BYTES, IN_MEMORY_SNAPSHOT_THRESHOLD_BYTES,
+        append_tar_file_header, append_tar_file_padding, prepare_dump,
+        resolve_large_file_single_frame_threshold_bytes, stream_direct_file,
+        tar_entry_bytes_for_file,
+    };
     use crate::network::protocol::ResumeState;
     use crate::sender::{DirectFileStream, FileDisposition, InputFile, PipelineProfileCollector};
 
@@ -863,6 +1211,14 @@ mod tests {
         let mut bytes = vec![0_u8; size];
         generator.fill(&mut bytes);
         fs::write(path, bytes).unwrap();
+    }
+
+    fn write_sized_file(path: &Path, size: u64) {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        let file = File::create(path).unwrap();
+        file.set_len(size).unwrap();
     }
 
     #[test]
@@ -954,6 +1310,7 @@ mod tests {
 
     #[test]
     fn tar_entry_bytes_matches_header_payload_and_padding() {
+        let file = InputFile::regular(1, PathBuf::from("file.bin"), "file.bin".to_owned());
         for (size, expected_bytes) in [
             (0_u64, 512_u64),
             (10, 1024),
@@ -962,17 +1319,82 @@ mod tests {
             (513, 1536),
             (1024, 1536),
         ] {
-            assert_eq!(tar_entry_bytes(size), expected_bytes, "size={size}");
+            assert_eq!(
+                tar_entry_bytes_for_file(&file, size),
+                expected_bytes,
+                "size={size}"
+            );
         }
     }
 
     #[test]
-    fn prepare_dump_keeps_large_file_isolated_with_soft_frame_policy() {
+    fn tar_entry_bytes_accounts_for_gnu_long_path_extension() {
+        let rel_path = format!("root/{}/payload.bin", "deep".repeat(30));
+        let file = InputFile::regular(1, PathBuf::from("payload.bin"), rel_path.clone());
+
+        assert_eq!(tar_entry_bytes_for_file(&file, 0), 1536);
+    }
+
+    #[test]
+    fn append_tar_header_supports_long_paths_via_gnu_long_link() {
+        let rel_path = format!("root/{}/payload.bin", "deep".repeat(30));
+        let file = InputFile::regular(1, PathBuf::from("payload.bin"), rel_path.clone());
+        let mut archive_bytes = Vec::new();
+
+        append_tar_file_header(&mut archive_bytes, &file, 0).unwrap();
+        append_tar_file_padding(&mut archive_bytes, &file, 0).unwrap();
+        archive_bytes.extend_from_slice(&[0_u8; 1024]);
+
+        let mut archive = Archive::new(Cursor::new(archive_bytes));
+        let entries = archive
+            .entries()
+            .unwrap()
+            .map(|entry| {
+                let entry = entry.unwrap();
+                entry.path().unwrap().to_string_lossy().into_owned()
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(entries, vec![rel_path]);
+    }
+
+    #[test]
+    fn append_tar_header_writes_symlink_entries() {
+        let file = InputFile::symlink(
+            1,
+            PathBuf::from("link.txt"),
+            "link.txt".to_owned(),
+            PathBuf::from("../target.txt"),
+        );
+        let mut archive_bytes = Vec::new();
+
+        append_tar_file_header(&mut archive_bytes, &file, 0).unwrap();
+        append_tar_file_padding(&mut archive_bytes, &file, 0).unwrap();
+        archive_bytes.extend_from_slice(&[0_u8; 1024]);
+
+        let mut archive = Archive::new(Cursor::new(archive_bytes));
+        let mut entries = archive.entries().unwrap();
+        let entry = entries.next().unwrap().unwrap();
+
+        assert_eq!(entry.path().unwrap().to_string_lossy(), "link.txt");
+        assert_eq!(
+            entry.link_name().unwrap().unwrap().to_string_lossy(),
+            "../target.txt"
+        );
+        assert_eq!(entry.header().entry_type(), EntryType::new(b'2'));
+    }
+
+    #[test]
+    fn prepare_dump_keeps_truly_large_file_isolated_with_soft_frame_policy() {
         let source_dir = TestDir::new();
         let payload_path = source_dir.path().join("payload.bin");
-        write_random_file(&payload_path, 256 * 1024, 11);
+        let payload_size = DEFAULT_LARGE_FILE_SINGLE_FRAME_THRESHOLD_BYTES + 4096;
+        write_sized_file(&payload_path, payload_size);
         fs::write(source_dir.path().join("tail.txt"), b"tail").unwrap();
-        let payload_tar_bytes = tar_entry_bytes(256 * 1024);
+        let payload_tar_bytes = tar_entry_bytes_for_file(
+            &InputFile::regular(1, PathBuf::from("payload.bin"), "payload.bin".to_owned()),
+            payload_size,
+        );
 
         let below_target = prepare_dump(
             source_dir.path().to_path_buf(),
@@ -1044,6 +1466,47 @@ mod tests {
     }
 
     #[test]
+    fn prepare_dump_keeps_medium_direct_stream_file_in_shared_frame() {
+        let source_dir = TestDir::new();
+        fs::write(source_dir.path().join("alpha.txt"), b"alpha").unwrap();
+        write_sized_file(
+            &source_dir.path().join("payload.bin"),
+            crate::sender::readers::IN_MEMORY_SNAPSHOT_THRESHOLD_BYTES + 4096,
+        );
+        fs::write(source_dir.path().join("zeta.txt"), b"tail").unwrap();
+
+        let dump = prepare_dump(
+            source_dir.path().to_path_buf(),
+            &ResumeState {
+                last_committed_frame: 0,
+                last_committed_file_index: 0,
+                last_committed_file_path: String::new(),
+                archive_len: 0,
+            },
+            3,
+            1,
+            16 * 1024 * 1024,
+        )
+        .unwrap();
+
+        assert_eq!(dump.frames.len(), 1);
+        assert_eq!(dump.frames[0].outbound.first_file_path, "alpha.txt");
+        assert_eq!(dump.frames[0].outbound.last_file_path, "zeta.txt");
+    }
+
+    #[test]
+    fn frame_policy_clamps_override_to_direct_stream_cutover() {
+        assert_eq!(
+            resolve_large_file_single_frame_threshold_bytes(Some(1)),
+            IN_MEMORY_SNAPSHOT_THRESHOLD_BYTES.saturating_add(1)
+        );
+        assert_eq!(
+            resolve_large_file_single_frame_threshold_bytes(Some(8 * 1024 * 1024)),
+            8 * 1024 * 1024
+        );
+    }
+
+    #[test]
     fn stream_direct_file_records_read_profile_and_uses_configured_buffer() {
         let source_dir = TestDir::new();
         let payload_path = source_dir.path().join("direct.bin");
@@ -1051,11 +1514,7 @@ mod tests {
         let profile = PipelineProfileCollector::default();
         let mut writer = Vec::new();
         let mut direct = DirectFileStream {
-            file: InputFile {
-                index: 7,
-                abs_path: payload_path.clone(),
-                rel_path: "direct.bin".to_owned(),
-            },
+            file: InputFile::regular(7, payload_path.clone(), "direct.bin".to_owned()),
             input: File::open(&payload_path).unwrap(),
             size_at_open: 4096,
             forced_short_read_limit: None,

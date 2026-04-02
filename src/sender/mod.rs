@@ -20,4 +20,4 @@ pub(crate) use readers::{
     ReaderPool, SnapshotStorage,
 };
 pub use source::scan_source;
-pub(crate) use source::{InputFile, PendingFileWalker};
+pub(crate) use source::{InputFile, InputFileKind, PendingFileWalker};

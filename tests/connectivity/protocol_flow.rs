@@ -13,6 +13,11 @@ use fast_dump::receiver::{
 use fast_dump::role::Role;
 use fast_dump::sender::{OutboundFrame, prepare_dump, send_finish, send_frame};
 
+#[cfg(unix)]
+fn create_symlink(path: &std::path::Path, target: &std::path::Path) {
+    std::os::unix::fs::symlink(target, path).unwrap();
+}
+
 #[test]
 fn frame_protocol_commits_single_and_multi_frame_sequences() {
     {
@@ -215,6 +220,98 @@ fn sender_pipeline_roundtrips_into_valid_tar_zst_archive() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn sender_pipeline_roundtrips_symlink_entries_into_valid_tar_zst_archive() {
+    let source_dir = TestDir::new();
+    fs::write(source_dir.path().join("alpha.txt"), b"alpha").unwrap();
+    create_symlink(
+        &source_dir.path().join("alias.txt"),
+        std::path::Path::new("alpha.txt"),
+    );
+
+    let prepared = prepare_dump(
+        source_dir.path().to_path_buf(),
+        &ResumeState {
+            last_committed_frame: 0,
+            last_committed_file_index: 0,
+            last_committed_file_path: String::new(),
+            archive_len: 0,
+        },
+        3,
+        1,
+        1,
+    )
+    .unwrap();
+
+    let listener = BoundListener::bind("127.0.0.1:0".parse().unwrap()).unwrap();
+    let addr = listener.local_addr();
+    let receiver_dir = TestDir::new();
+    let receiver_path = receiver_dir.path().to_path_buf();
+    let expected_frame_count = prepared.frames.len();
+
+    let receiver = thread::spawn(move || {
+        let mut session = listener.accept(Role::Receiver, None, None).unwrap();
+        let mut state = respond_resume_query(&mut session.stream, receiver_path).unwrap();
+        for _ in 0..expected_frame_count {
+            receive_frame(&mut session.stream, &mut state).unwrap();
+        }
+        let finish = receive_finish(&mut session.stream, &state).unwrap();
+        (finish, state.paths.final_archive_path().to_path_buf())
+    });
+
+    let dump_id = "dump-07-symlink";
+    let mut sender_session = connect_once(Role::Sender, addr, Some(dump_id), None).unwrap();
+    let resume_state = request_resume_state(&mut sender_session.stream, dump_id).unwrap();
+    assert_eq!(resume_state.archive_len, 0);
+
+    for frame in &prepared.frames {
+        let chunk_refs: Vec<&[u8]> = frame.chunks.iter().map(Vec::as_slice).collect();
+        send_frame(&mut sender_session.stream, &frame.outbound, chunk_refs).unwrap();
+    }
+    let finish = send_finish(
+        &mut sender_session.stream,
+        prepared.final_frame_no,
+        prepared.final_file_index,
+        &prepared.final_file_path,
+    )
+    .unwrap();
+
+    let (receiver_finish, archive_path) = receiver.join().unwrap();
+    assert_eq!(receiver_finish, finish);
+    assert!(archive_path.exists());
+
+    let file = fs::File::open(&archive_path).unwrap();
+    let decoder = zstd::stream::read::Decoder::new(file).unwrap();
+    let mut archive = tar::Archive::new(decoder);
+    let mut entries = Vec::new();
+    for entry in archive.entries().unwrap() {
+        let mut entry = entry.unwrap();
+        let path = entry.path().unwrap().to_string_lossy().into_owned();
+        let is_symlink = entry.header().entry_type().is_symlink();
+        let link_name = entry
+            .link_name()
+            .unwrap()
+            .map(|path| path.to_string_lossy().into_owned());
+        let mut bytes = Vec::new();
+        std::io::copy(&mut entry, &mut bytes).unwrap();
+        entries.push((path, is_symlink, link_name, bytes));
+    }
+
+    assert_eq!(
+        entries,
+        vec![
+            (
+                "alias.txt".to_owned(),
+                true,
+                Some("alpha.txt".to_owned()),
+                Vec::new(),
+            ),
+            ("alpha.txt".to_owned(), false, None, b"alpha".to_vec()),
+        ]
+    );
+}
+
 #[test]
 fn frame_protocol_aborts_uncommitted_frame_and_keeps_committed_archive_len() {
     let listener = BoundListener::bind("127.0.0.1:0".parse().unwrap()).unwrap();
@@ -313,6 +410,141 @@ fn frame_protocol_aborts_uncommitted_frame_and_keeps_committed_archive_len() {
     assert_eq!(receiver_ack2, ack2);
     assert_eq!(receiver_finish, finish);
     assert_eq!(archive_len, 7);
+}
+
+#[test]
+fn frame_protocol_rebuilds_after_aborting_shared_frame_attempt() {
+    let listener = BoundListener::bind("127.0.0.1:0".parse().unwrap()).unwrap();
+    let addr = listener.local_addr();
+    let data_dir = TestDir::new();
+    let receiver_dir = data_dir.path().to_path_buf();
+    let alpha_frame = OutboundFrame {
+        frame_no: 1,
+        first_file_index: 1,
+        first_file_path: "alpha.txt".to_owned(),
+        last_file_index: 1,
+        last_file_path: "alpha.txt".to_owned(),
+        level: 3,
+        threads: 1,
+    };
+    let payload_frame = OutboundFrame {
+        frame_no: 2,
+        first_file_index: 2,
+        first_file_path: "payload.bin".to_owned(),
+        last_file_index: 2,
+        last_file_path: "payload.bin".to_owned(),
+        level: 3,
+        threads: 1,
+    };
+    let tail_frame = OutboundFrame {
+        frame_no: 3,
+        first_file_index: 3,
+        first_file_path: "zeta.txt".to_owned(),
+        last_file_index: 3,
+        last_file_path: "zeta.txt".to_owned(),
+        level: 3,
+        threads: 1,
+    };
+
+    let receiver = thread::spawn(move || {
+        let mut session = listener.accept(Role::Receiver, None, None).unwrap();
+        let mut state = respond_resume_query(&mut session.stream, receiver_dir).unwrap();
+        let abort_ack = receive_frame_abort(&mut session.stream, &mut state).unwrap();
+        let ack1 = receive_frame(&mut session.stream, &mut state).unwrap();
+        let ack2 = receive_frame(&mut session.stream, &mut state).unwrap();
+        let ack3 = receive_frame(&mut session.stream, &mut state).unwrap();
+        let finish = receive_finish(&mut session.stream, &state).unwrap();
+        (
+            abort_ack,
+            ack1,
+            ack2,
+            ack3,
+            finish,
+            state.journal.archive_len,
+        )
+    });
+
+    let mut sender_session = connect_once(Role::Sender, addr, Some("dump-08b"), None).unwrap();
+    let resume_state = request_resume_state(&mut sender_session.stream, "dump-08b").unwrap();
+    assert_eq!(resume_state.archive_len, 0);
+
+    write_message(
+        &mut sender_session.stream,
+        &Message::FrameStart(FrameStart {
+            frame_no: alpha_frame.frame_no,
+            first_file_index: alpha_frame.first_file_index,
+            first_file_path: alpha_frame.first_file_path.clone(),
+            level: alpha_frame.level,
+            threads: alpha_frame.threads,
+        }),
+    )
+    .unwrap();
+    write_message(
+        &mut sender_session.stream,
+        &Message::FrameChunk(FrameChunk {
+            bytes: b"alpha+payload-partial".to_vec(),
+        }),
+    )
+    .unwrap();
+    write_message(
+        &mut sender_session.stream,
+        &Message::FrameAbort(FrameAbort {
+            frame_no: alpha_frame.frame_no,
+        }),
+    )
+    .unwrap();
+
+    let abort_ack = match read_message(&mut sender_session.stream).unwrap() {
+        Message::AbortAck(ack) => ack,
+        unexpected => panic!("expected AbortAck, got {:?}", unexpected.kind()),
+    };
+
+    let ack1 = send_frame(
+        &mut sender_session.stream,
+        &alpha_frame,
+        [b"aaa".as_slice()],
+    )
+    .unwrap();
+    let ack2 = send_frame(
+        &mut sender_session.stream,
+        &payload_frame,
+        [b"bbbb".as_slice()],
+    )
+    .unwrap();
+    let ack3 = send_frame(&mut sender_session.stream, &tail_frame, [b"cc".as_slice()]).unwrap();
+    let finish = send_finish(
+        &mut sender_session.stream,
+        tail_frame.frame_no,
+        tail_frame.last_file_index,
+        &tail_frame.last_file_path,
+    )
+    .unwrap();
+
+    let (
+        receiver_abort_ack,
+        receiver_ack1,
+        receiver_ack2,
+        receiver_ack3,
+        receiver_finish,
+        archive_len,
+    ) = receiver.join().unwrap();
+
+    assert_eq!(
+        abort_ack,
+        AbortAck {
+            frame_no: 1,
+            archive_len: 0,
+        }
+    );
+    assert_eq!(ack1.archive_len, 3);
+    assert_eq!(ack2.archive_len, 7);
+    assert_eq!(ack3.archive_len, 9);
+    assert_eq!(receiver_abort_ack, abort_ack);
+    assert_eq!(receiver_ack1, ack1);
+    assert_eq!(receiver_ack2, ack2);
+    assert_eq!(receiver_ack3, ack3);
+    assert_eq!(receiver_finish, finish);
+    assert_eq!(archive_len, 9);
 }
 
 #[test]

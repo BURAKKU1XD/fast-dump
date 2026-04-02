@@ -13,8 +13,7 @@ use crate::network::protocol::{
 };
 
 use super::frame::{
-    FramePolicy, FrameProgress, RetryableStreamFailure, append_tar_header, append_tar_padding,
-    stream_direct_file, stream_staged_snapshot,
+    FramePolicy, FrameProgress, RetryableStreamFailure, stream_direct_file, stream_staged_snapshot,
 };
 use super::readers::{FileDisposition, FileSkipReason, MAX_SNAPSHOT_ATTEMPTS};
 use super::{
@@ -381,6 +380,9 @@ fn prefetch_streaming_files(
     retry_journal: &StreamRetryJournal,
 ) -> Result<(usize, bool)> {
     pending.prefetch_with(readers, |pool, file| {
+        if !file.is_regular() {
+            return Ok(());
+        }
         let attempts = retry_journal.attempts_for(file.index);
         if attempts >= MAX_SNAPSHOT_ATTEMPTS {
             return Ok(());
@@ -505,19 +507,22 @@ where
                     }),
             });
             retry_journal.take_attempts(file.index);
-        } else {
+        } else if file.is_regular() {
             match readers.next_for_with_scheduler(file.index, |pool| {
                 prefetch_streaming_files(pending, pool, retry_journal)
             })? {
                 super::ReadEvent::Ready(super::FileReadOutcome::Snapshot(snapshot)) => {
                     let header_started = Instant::now();
-                    append_tar_header(
+                    super::frame::append_tar_file_header(
                         &mut encoder,
-                        &snapshot.file.rel_path,
+                        &snapshot.file,
                         snapshot.size_at_open,
                     )?;
                     if let Some(profile) = profile {
-                        profile.record_compress(512, header_started.elapsed());
+                        profile.record_compress(
+                            super::frame::tar_header_bytes_for_file(&snapshot.file),
+                            header_started.elapsed(),
+                        );
                     }
                     if let Err(error) = stream_staged_snapshot(&mut encoder, &snapshot, profile) {
                         if error.downcast_ref::<RetryableStreamFailure>().is_some() {
@@ -528,13 +533,12 @@ where
                         }
                         return Err(error);
                     }
-                    let padding_bytes = super::frame::tar_entry_bytes(snapshot.size_at_open)
-                        - 512
-                        - snapshot.size_at_open;
+                    let padding_bytes =
+                        super::frame::tar_padding_bytes(snapshot.size_at_open) as u64;
                     let padding_started = Instant::now();
-                    append_tar_padding(
+                    super::frame::append_tar_file_padding(
                         &mut encoder,
-                        &snapshot.file.rel_path,
+                        &snapshot.file,
                         snapshot.size_at_open,
                     )?;
                     if let Some(profile) = profile {
@@ -547,14 +551,26 @@ where
                         snapshot.retries,
                         extra_stream_retries,
                     );
-                    stats.note_snapshot(disposition, snapshot.size_at_open, retries);
+                    stats.note_snapshot(
+                        &snapshot.file,
+                        disposition,
+                        snapshot.size_at_open,
+                        retries,
+                    );
                     completed_payload = Some((snapshot.size_at_open, retries));
                 }
                 super::ReadEvent::Ready(super::FileReadOutcome::Direct(mut direct)) => {
                     let header_started = Instant::now();
-                    append_tar_header(&mut encoder, &direct.file.rel_path, direct.size_at_open)?;
+                    super::frame::append_tar_file_header(
+                        &mut encoder,
+                        &direct.file,
+                        direct.size_at_open,
+                    )?;
                     if let Some(profile) = profile {
-                        profile.record_compress(512, header_started.elapsed());
+                        profile.record_compress(
+                            super::frame::tar_header_bytes_for_file(&direct.file),
+                            header_started.elapsed(),
+                        );
                     }
                     if let Err(error) = stream_direct_file(&mut encoder, &mut direct, profile) {
                         if error.downcast_ref::<RetryableStreamFailure>().is_some() {
@@ -565,11 +581,13 @@ where
                         }
                         return Err(error);
                     }
-                    let padding_bytes = super::frame::tar_entry_bytes(direct.size_at_open)
-                        - 512
-                        - direct.size_at_open;
+                    let padding_bytes = super::frame::tar_padding_bytes(direct.size_at_open) as u64;
                     let padding_started = Instant::now();
-                    append_tar_padding(&mut encoder, &direct.file.rel_path, direct.size_at_open)?;
+                    super::frame::append_tar_file_padding(
+                        &mut encoder,
+                        &direct.file,
+                        direct.size_at_open,
+                    )?;
                     if let Some(profile) = profile {
                         profile.record_compress(padding_bytes, padding_started.elapsed());
                     }
@@ -580,7 +598,7 @@ where
                         direct.retries,
                         extra_stream_retries,
                     );
-                    stats.note_snapshot(disposition, direct.size_at_open, retries);
+                    stats.note_snapshot(&direct.file, disposition, direct.size_at_open, retries);
                     completed_payload = Some((direct.size_at_open, retries));
                 }
                 super::ReadEvent::Ready(super::FileReadOutcome::Skip(skipped)) => {
@@ -608,12 +626,23 @@ where
                 }
                 super::ReadEvent::Fatal { message, .. } => anyhow::bail!("{message}"),
             }
+        } else {
+            let header_started = Instant::now();
+            super::frame::append_tar_file_header(&mut encoder, &file, 0)?;
+            if let Some(profile) = profile {
+                profile.record_compress(
+                    super::frame::tar_header_bytes_for_file(&file),
+                    header_started.elapsed(),
+                );
+            }
+            stats.note_snapshot(&file, FileDisposition::Clean, 0, 0);
+            completed_payload = Some((0, 0));
         }
         let last = consume_streaming_file(pending)?;
         last_completed = Some(last.clone());
         let _ = prefetch_streaming_files(pending, readers, retry_journal)?;
         if let Some((size_at_open, retries)) = completed_payload {
-            progress.note_payload_file(size_at_open);
+            progress.note_payload_file(&last, size_at_open);
             if policy.should_close_after_current(
                 progress,
                 size_at_open,
@@ -1050,7 +1079,7 @@ where
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
+    use std::fs::{self, File};
     use std::io::{self, Cursor, Read, Write};
     use std::path::{Path, PathBuf};
     use std::sync::{Arc, Mutex, MutexGuard};
@@ -1230,6 +1259,14 @@ mod tests {
             *byte = (state >> 32) as u8;
         }
         fs::write(path, bytes).unwrap();
+    }
+
+    fn write_sized_file(path: &Path, size: u64) {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        let file = File::create(path).unwrap();
+        file.set_len(size).unwrap();
     }
 
     #[test]
@@ -1901,10 +1938,9 @@ mod tests {
         let payload_path = temp.path().join("payload.bin");
         let tail_path = temp.path().join("zeta.txt");
         fs::write(&alpha_path, b"alpha").unwrap();
-        write_deterministic_file(
+        write_sized_file(
             &payload_path,
-            crate::sender::readers::IN_MEMORY_SNAPSHOT_THRESHOLD_BYTES as usize + 4096,
-            23,
+            crate::sender::frame::DEFAULT_LARGE_FILE_SINGLE_FRAME_THRESHOLD_BYTES + 4096,
         );
         fs::write(&tail_path, b"tail").unwrap();
 
@@ -1985,14 +2021,89 @@ mod tests {
     }
 
     #[test]
+    fn send_dump_keeps_medium_direct_stream_file_in_shared_frame() {
+        let temp = TestDir::new();
+        let alpha_path = temp.path().join("alpha.txt");
+        let payload_path = temp.path().join("payload.bin");
+        let tail_path = temp.path().join("zeta.txt");
+        fs::write(&alpha_path, b"alpha").unwrap();
+        write_sized_file(
+            &payload_path,
+            crate::sender::readers::IN_MEMORY_SNAPSHOT_THRESHOLD_BYTES + 4096,
+        );
+        fs::write(&tail_path, b"tail").unwrap();
+
+        let mut responses = Vec::new();
+        protocol::write_message(
+            &mut responses,
+            &Message::ResumeState(ResumeState {
+                last_committed_frame: 0,
+                last_committed_file_index: 0,
+                last_committed_file_path: String::new(),
+                archive_len: 0,
+            }),
+        )
+        .unwrap();
+        protocol::write_message(
+            &mut responses,
+            &Message::Ack(Ack {
+                frame_no: 1,
+                last_file_index: 3,
+                last_file_path: "zeta.txt".to_owned(),
+                archive_len: 192,
+            }),
+        )
+        .unwrap();
+        protocol::write_message(&mut responses, &Message::FinishAck).unwrap();
+
+        let mut stream = ScriptedStream::new(responses);
+        let options = SendOptions {
+            level: 3,
+            threads: 1,
+            frame_target_bytes: 16 * 1024 * 1024,
+            min_readers: 1,
+            max_readers: 1,
+            read_buffer_bytes: 32 * 1024,
+        };
+
+        let report = send_dump(
+            &mut stream,
+            temp.path().to_path_buf(),
+            "dump-medium-shared",
+            &options,
+        )
+        .unwrap();
+
+        assert_eq!(report.sent_frames, 1);
+        let messages = decode_messages(&stream.written);
+        let frame_starts: Vec<_> = messages
+            .iter()
+            .filter_map(|message| match message {
+                Message::FrameStart(frame_start) => Some(frame_start),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(frame_starts.len(), 1);
+        assert_eq!(frame_starts[0].first_file_path, "alpha.txt");
+        let frame_ends: Vec<_> = messages
+            .iter()
+            .filter_map(|message| match message {
+                Message::FrameEnd(frame_end) => Some(frame_end),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(frame_ends.len(), 1);
+        assert_eq!(frame_ends[0].last_file_path, "zeta.txt");
+    }
+
+    #[test]
     fn send_dump_aborts_and_rebuilds_large_direct_stream_after_retryable_stream_failure() {
         let _guard = ReadHookGuard::new();
         let temp = TestDir::new();
         let payload_path = temp.path().join("payload.bin");
-        write_deterministic_file(
+        write_sized_file(
             &payload_path,
-            crate::sender::readers::IN_MEMORY_SNAPSHOT_THRESHOLD_BYTES as usize + 4096,
-            11,
+            crate::sender::frame::DEFAULT_LARGE_FILE_SINGLE_FRAME_THRESHOLD_BYTES + 4096,
         );
 
         crate::sender::frame::test_hooks::fail_stream_after_next_write(&payload_path, 1024);
@@ -2069,6 +2180,125 @@ mod tests {
                 .count(),
             2
         );
+    }
+
+    #[test]
+    fn send_dump_aborts_and_rebuilds_shared_frame_after_medium_direct_stream_failure() {
+        let _guard = ReadHookGuard::new();
+        let temp = TestDir::new();
+        let alpha_path = temp.path().join("alpha.txt");
+        let payload_path = temp.path().join("payload.bin");
+        let tail_path = temp.path().join("zeta.txt");
+        fs::write(&alpha_path, b"alpha").unwrap();
+        write_sized_file(
+            &payload_path,
+            crate::sender::readers::IN_MEMORY_SNAPSHOT_THRESHOLD_BYTES + 4096,
+        );
+        fs::write(&tail_path, b"tail").unwrap();
+
+        crate::sender::frame::test_hooks::fail_stream_after_next_write(&payload_path, 1024);
+
+        let mut responses = Vec::new();
+        protocol::write_message(
+            &mut responses,
+            &Message::ResumeState(ResumeState {
+                last_committed_frame: 0,
+                last_committed_file_index: 0,
+                last_committed_file_path: String::new(),
+                archive_len: 0,
+            }),
+        )
+        .unwrap();
+        protocol::write_message(
+            &mut responses,
+            &Message::AbortAck(protocol::AbortAck {
+                frame_no: 1,
+                archive_len: 0,
+            }),
+        )
+        .unwrap();
+        protocol::write_message(
+            &mut responses,
+            &Message::Ack(Ack {
+                frame_no: 1,
+                last_file_index: 1,
+                last_file_path: "alpha.txt".to_owned(),
+                archive_len: 64,
+            }),
+        )
+        .unwrap();
+        protocol::write_message(
+            &mut responses,
+            &Message::Ack(Ack {
+                frame_no: 2,
+                last_file_index: 2,
+                last_file_path: "payload.bin".to_owned(),
+                archive_len: 128,
+            }),
+        )
+        .unwrap();
+        protocol::write_message(
+            &mut responses,
+            &Message::Ack(Ack {
+                frame_no: 3,
+                last_file_index: 3,
+                last_file_path: "zeta.txt".to_owned(),
+                archive_len: 192,
+            }),
+        )
+        .unwrap();
+        protocol::write_message(&mut responses, &Message::FinishAck).unwrap();
+
+        let mut stream = ScriptedStream::new(responses);
+        let options = SendOptions {
+            level: 3,
+            threads: 1,
+            frame_target_bytes: 16 * 1024 * 1024,
+            min_readers: 1,
+            max_readers: 1,
+            read_buffer_bytes: 32 * 1024,
+        };
+
+        let report = send_dump(
+            &mut stream,
+            temp.path().to_path_buf(),
+            "dump-medium-direct-abort",
+            &options,
+        )
+        .unwrap();
+
+        assert_eq!(report.sent_frames, 3);
+        assert_eq!(report.files_sent_clean, 2);
+        assert_eq!(report.files_sent_best_effort, 1);
+        assert_eq!(report.files_skipped_unstable_after_retries, 0);
+        assert_eq!(report.retries_total, 1);
+        assert_eq!(report.frame_aborts, 1);
+        assert_eq!(report.frame_rebuilds, 1);
+
+        let messages = decode_messages(&stream.written);
+        assert_eq!(
+            messages
+                .iter()
+                .filter(|message| matches!(message, Message::FrameAbort(_)))
+                .count(),
+            1
+        );
+        let frame_starts: Vec<_> = messages
+            .iter()
+            .filter_map(|message| match message {
+                Message::FrameStart(frame_start) => Some(frame_start),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(frame_starts.len(), 4);
+        assert_eq!(frame_starts[0].frame_no, 1);
+        assert_eq!(frame_starts[0].first_file_path, "alpha.txt");
+        assert_eq!(frame_starts[1].frame_no, 1);
+        assert_eq!(frame_starts[1].first_file_path, "alpha.txt");
+        assert_eq!(frame_starts[2].frame_no, 2);
+        assert_eq!(frame_starts[2].first_file_path, "payload.bin");
+        assert_eq!(frame_starts[3].frame_no, 3);
+        assert_eq!(frame_starts[3].first_file_path, "zeta.txt");
     }
 
     #[test]

@@ -11,19 +11,44 @@
     </cargoProject>
   </component>
   <component name="ChangeListManager">
-    <list default="true" id="838aea6f-508f-4b9f-9916-c609e71e874d" name="Changes" comment="stable x30 perf">
-      <change afterPath="$PROJECT_DIR$/PERFOMANCE_UPDATE.md" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/TASKS.json" afterDir="false" />
+    <list default="true" id="838aea6f-508f-4b9f-9916-c609e71e874d" name="Changes" comment="fix symlink">
+      <change afterPath="$PROJECT_DIR$/ ; readlink -f ; done" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/ ; stat -Lc %F" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/BOTTLENECK.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/SAFETY.md" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/dist/fast-dump-linux-x86_64-musl" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/dist/fast-dump-windows-x86_64.exe" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/missingn ; fi; done" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/scripts/p8_confirm_8_vs_16.ps1" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/scripts/p8_followup_8mib.ps1" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/scripts/p8_rebuild_confirm_100_summary.ps1" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/scripts/p8_rebuild_summary.ps1" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/scripts/p8_run_threshold.ps1" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/scripts/p8_threshold_sweep.ps1" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.gitignore" beforeDir="false" afterPath="$PROJECT_DIR$/.gitignore" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/AGENTS.md" beforeDir="false" afterPath="$PROJECT_DIR$/AGENTS.md" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/network/protocol.md" beforeDir="false" afterPath="$PROJECT_DIR$/src/network/protocol.md" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/network/protocol.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/network/protocol.rs" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/receiver/frame.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/receiver/frame.rs" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/src/receiver/journal.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/receiver/journal.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/BENCH.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/PERFOMANCE_UPDATE.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/README.md" beforeDir="false" afterPath="$PROJECT_DIR$/README.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/REFACTORING.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/REFACTORING2.MD" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/REFACTORING3.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/TASKS.json" beforeDir="false" afterPath="$PROJECT_DIR$/TASKS.json" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/audits/2026-03-31_findings.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/audits/2026-03-31_overview.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/audits/2026-03-31_system_audit.md" beforeDir="false" />
+      <change beforePath="$PROJECT_DIR$/benches/pipeline/loopback.rs" beforeDir="false" afterPath="$PROJECT_DIR$/benches/pipeline/loopback.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/benches/pipeline/results.rs" beforeDir="false" afterPath="$PROJECT_DIR$/benches/pipeline/results.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/benches/pipeline/shared.rs" beforeDir="false" afterPath="$PROJECT_DIR$/benches/pipeline/shared.rs" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/sender/frame.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/sender/frame.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/sender/mod.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/sender/mod.rs" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/src/sender/readers.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/sender/readers.rs" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/tests/connectivity/roundtrip_fast.rs" beforeDir="false" afterPath="$PROJECT_DIR$/tests/connectivity/roundtrip_fast.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/sender/session.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/sender/session.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/src/sender/source.rs" beforeDir="false" afterPath="$PROJECT_DIR$/src/sender/source.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/tests/bench_matrix.rs" beforeDir="false" afterPath="$PROJECT_DIR$/tests/bench_matrix.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/tests/connectivity/protocol_flow.rs" beforeDir="false" afterPath="$PROJECT_DIR$/tests/connectivity/protocol_flow.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/tests/connectivity/resume.rs" beforeDir="false" afterPath="$PROJECT_DIR$/tests/connectivity/resume.rs" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -31,7 +56,7 @@
     <option name="LAST_RESOLUTION" value="IGNORE" />
   </component>
   <component name="EmbeddingIndexingInfo">
-    <option name="cachedIndexableFilesCount" value="77" />
+    <option name="cachedIndexableFilesCount" value="88" />
   </component>
   <component name="ExecutionTargetManager" SELECTED_TARGET="RsBuildProfile:dev" />
   <component name="Git.Settings">
@@ -52,30 +77,30 @@
     <option name="hideEmptyMiddlePackages" value="true" />
     <option name="showLibraryContents" value="true" />
   </component>
-  <component name="PropertiesComponent">{
-  &quot;keyToString&quot;: {
-    &quot;Cargo.Run fast-dump.executor&quot;: &quot;Run&quot;,
-    &quot;ModuleVcsDetector.initialDetectionPerformed&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.MCP Project settings loaded&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.ShowReadmeOnStart&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.git.unshallow&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.rust.reset.selective.auto.import&quot;: &quot;true&quot;,
-    &quot;RunOnceActivity.typescript.service.memoryLimit.init&quot;: &quot;true&quot;,
-    &quot;git-widget-placeholder&quot;: &quot;master&quot;,
-    &quot;ignore.virus.scanning.warn.message&quot;: &quot;true&quot;,
-    &quot;last_opened_file_path&quot;: &quot;D:/rep/cool_project/fast-dump&quot;,
-    &quot;node.js.detected.package.eslint&quot;: &quot;true&quot;,
-    &quot;node.js.detected.package.tslint&quot;: &quot;true&quot;,
-    &quot;node.js.selected.package.eslint&quot;: &quot;(autodetect)&quot;,
-    &quot;node.js.selected.package.tslint&quot;: &quot;(autodetect)&quot;,
-    &quot;nodejs_package_manager_path&quot;: &quot;npm&quot;,
-    &quot;org.rust.cargo.project.model.PROJECT_DISCOVERY&quot;: &quot;true&quot;,
-    &quot;org.rust.cargo.project.model.impl.CargoExternalSystemProjectAware.subscribe.first.balloon&quot;: &quot;&quot;,
-    &quot;org.rust.first.attach.projects&quot;: &quot;true&quot;,
-    &quot;settings.editor.selected.configurable&quot;: &quot;ml.llm.LLMConfigurable&quot;,
-    &quot;vue.rearranger.settings.migration&quot;: &quot;true&quot;
+  <component name="PropertiesComponent"><![CDATA[{
+  "keyToString": {
+    "Cargo.Run fast-dump.executor": "Run",
+    "ModuleVcsDetector.initialDetectionPerformed": "true",
+    "RunOnceActivity.MCP Project settings loaded": "true",
+    "RunOnceActivity.ShowReadmeOnStart": "true",
+    "RunOnceActivity.git.unshallow": "true",
+    "RunOnceActivity.rust.reset.selective.auto.import": "true",
+    "RunOnceActivity.typescript.service.memoryLimit.init": "true",
+    "git-widget-placeholder": "master",
+    "ignore.virus.scanning.warn.message": "true",
+    "last_opened_file_path": "D:/rep/cool_project/fast-dump",
+    "node.js.detected.package.eslint": "true",
+    "node.js.detected.package.tslint": "true",
+    "node.js.selected.package.eslint": "(autodetect)",
+    "node.js.selected.package.tslint": "(autodetect)",
+    "nodejs_package_manager_path": "npm",
+    "org.rust.cargo.project.model.PROJECT_DISCOVERY": "true",
+    "org.rust.cargo.project.model.impl.CargoExternalSystemProjectAware.subscribe.first.balloon": "",
+    "org.rust.first.attach.projects": "true",
+    "settings.editor.selected.configurable": "preferences.pluginManager",
+    "vue.rearranger.settings.migration": "true"
   }
-}</component>
+}]]></component>
   <component name="RunManager" selected="Cargo.Run fast-dump">
     <configuration name="Run fast-dump" type="CargoCommandRunConfiguration" factoryName="Cargo Command" temporary="true">
       <option name="command" value="run --package fast-dump --bin fast-dump" />
@@ -130,7 +155,9 @@
       <workItem from="1774725668138" duration="65061000" />
       <workItem from="1774906383017" duration="26000" />
       <workItem from="1774936079181" duration="32917000" />
-      <workItem from="1774997622837" duration="1462000" />
+      <workItem from="1774997622837" duration="22208000" />
+      <workItem from="1775085251281" duration="1248000" />
+      <workItem from="1775086543604" duration="8106000" />
     </task>
     <task id="LOCAL-00001" summary="init">
       <option name="closed" value="true" />
@@ -164,7 +191,15 @@
       <option name="project" value="LOCAL" />
       <updated>1774987766455</updated>
     </task>
-    <option name="localTasksCounter" value="5" />
+    <task id="LOCAL-00005" summary="feat: tests">
+      <option name="closed" value="true" />
+      <created>1774999492321</created>
+      <option name="number" value="00005" />
+      <option name="presentableId" value="LOCAL-00005" />
+      <option name="project" value="LOCAL" />
+      <updated>1774999492321</updated>
+    </task>
+    <option name="localTasksCounter" value="6" />
     <servers />
   </component>
   <component name="TypeScriptGeneratedFilesManager">
@@ -175,7 +210,9 @@
     <MESSAGE value="init connect logic" />
     <MESSAGE value="stable low perf" />
     <MESSAGE value="stable x30 perf" />
-    <option name="LAST_COMMIT_MESSAGE" value="stable x30 perf" />
+    <MESSAGE value="feat: tests" />
+    <MESSAGE value="fix symlink" />
+    <option name="LAST_COMMIT_MESSAGE" value="fix symlink" />
   </component>
   <component name="XSLT-Support.FileAssociations.UIState">
     <expand />

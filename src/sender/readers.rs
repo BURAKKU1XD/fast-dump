@@ -881,11 +881,7 @@ mod tests {
             fs::create_dir_all(parent).unwrap();
         }
         fs::write(&path, bytes).unwrap();
-        InputFile {
-            index,
-            abs_path: path,
-            rel_path: rel_path.replace('\\', "/"),
-        }
+        InputFile::regular(index, path, rel_path.replace('\\', "/"))
     }
 
     #[test]
@@ -1004,11 +1000,11 @@ mod tests {
 
     fn skipped_event(file_index: u64) -> ReadEvent {
         ReadEvent::Ready(FileReadOutcome::Skip(SkippedFile {
-            file: InputFile {
-                index: file_index,
-                abs_path: PathBuf::from(format!("file-{file_index}.bin")),
-                rel_path: format!("file-{file_index}.bin"),
-            },
+            file: InputFile::regular(
+                file_index,
+                PathBuf::from(format!("file-{file_index}.bin")),
+                format!("file-{file_index}.bin"),
+            ),
             reason: FileSkipReason::OpenFailed,
             retries: 2,
             last_error: "failed to open sender file".to_owned(),
@@ -1222,11 +1218,11 @@ mod tests {
 
         let result = read_file_into_events(
             ReaderTask {
-                file: InputFile {
-                    index: 3,
-                    abs_path: temp.path().join("missing.bin"),
-                    rel_path: "missing.bin".to_owned(),
-                },
+                file: InputFile::regular(
+                    3,
+                    temp.path().join("missing.bin"),
+                    "missing.bin".to_owned(),
+                ),
                 read_buffer_bytes: 8,
                 max_attempts: MAX_SNAPSHOT_ATTEMPTS,
                 profile: None,

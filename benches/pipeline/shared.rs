@@ -52,7 +52,11 @@ impl BenchDir {
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_nanos();
-        let path = std::env::temp_dir().join(format!(
+        // Для тяжёлых bench-прогонов разрешаем увести временные каталоги с системного диска.
+        let temp_root = std::env::var_os("FAST_DUMP_BENCH_TEMP_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(std::env::temp_dir);
+        let path = temp_root.join(format!(
             "fast-dump-bench-{prefix}-{}-{}",
             std::process::id(),
             unique

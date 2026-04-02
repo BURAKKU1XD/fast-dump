@@ -3,7 +3,10 @@ use std::fs;
 use std::time::Duration;
 
 use crate::support::*;
-use fast_dump::network::protocol::{Message, read_message, request_resume_state};
+use fast_dump::network::protocol::{
+    AbortAck, FrameAbort, FrameChunk, FrameStart, Message, read_message, request_resume_state,
+    write_message,
+};
 use fast_dump::network::transport::connect_once;
 use fast_dump::receiver::{ReceiverJournal, ReceiverPaths};
 use fast_dump::role::Role;
@@ -91,6 +94,101 @@ fn push_mode_rolls_back_unacked_frame_on_disconnect_and_resumes_from_last_commit
     assert_eq!(report.sent_frames, 2);
     assert_eq!(report.final_frame_no, 3);
     assert_eq!(receive_report.finish.final_frame_no, 3);
+    assert_archive_hashes(&receive_report.final_archive_path, &expected);
+}
+
+#[test]
+fn push_mode_resumes_cleanly_after_aborting_shared_frame_attempt() {
+    let source_dir = TestDir::new();
+    let mut expected = BTreeMap::new();
+    insert_expected_file(&mut expected, source_dir.path(), "alpha.txt", b"alpha");
+    insert_expected_random_file(
+        &mut expected,
+        source_dir.path(),
+        "payload.bin",
+        256 * 1024,
+        41,
+    );
+    insert_expected_file(&mut expected, source_dir.path(), "zeta.txt", b"tail");
+
+    let dump_id = "dump-aborted-shared-frame";
+    let options = default_send_options(16 * 1024 * 1024);
+    let receiver_dir = TestDir::new();
+    let paths = ReceiverPaths::new(receiver_dir.path().to_path_buf(), dump_id).unwrap();
+
+    let (addr1, receiver1) = spawn_receiver_dump_once(receiver_dir.path());
+    let mut sender1 = connect_once(Role::Sender, addr1, Some(dump_id), None).unwrap();
+    assert_eq!(
+        request_resume_state(&mut sender1.stream, dump_id).unwrap(),
+        empty_resume_state()
+    );
+
+    write_message(
+        &mut sender1.stream,
+        &Message::FrameStart(FrameStart {
+            frame_no: 1,
+            first_file_index: 1,
+            first_file_path: "alpha.txt".to_owned(),
+            level: 3,
+            threads: 1,
+        }),
+    )
+    .unwrap();
+    write_message(
+        &mut sender1.stream,
+        &Message::FrameChunk(FrameChunk {
+            bytes: b"alpha+payload-partial".to_vec(),
+        }),
+    )
+    .unwrap();
+    write_message(
+        &mut sender1.stream,
+        &Message::FrameAbort(FrameAbort { frame_no: 1 }),
+    )
+    .unwrap();
+
+    let abort_ack = match read_message(&mut sender1.stream).unwrap() {
+        Message::AbortAck(ack) => ack,
+        unexpected => panic!("expected AbortAck, got {:?}", unexpected.kind()),
+    };
+    assert_eq!(
+        abort_ack,
+        AbortAck {
+            frame_no: 1,
+            archive_len: 0,
+        }
+    );
+
+    drop(sender1);
+    assert!(receiver1.join().unwrap().is_err());
+
+    let (addr2, receiver2) = spawn_receiver_dump_once(receiver_dir.path());
+    let mut sender2 = connect_once(Role::Sender, addr2, Some(dump_id), None).unwrap();
+    assert_eq!(
+        request_resume_state(&mut sender2.stream, dump_id).unwrap(),
+        empty_resume_state()
+    );
+    drop(sender2);
+    assert!(receiver2.join().unwrap().is_err());
+
+    if paths.partial_archive_path().exists() {
+        assert_eq!(fs::metadata(paths.partial_archive_path()).unwrap().len(), 0);
+    }
+
+    let (addr3, receiver3) = spawn_receiver_dump_once(receiver_dir.path());
+    let mut sender3 = connect_once(Role::Sender, addr3, Some(dump_id), None).unwrap();
+    let report = send_dump(
+        &mut sender3.stream,
+        source_dir.path().to_path_buf(),
+        dump_id,
+        &options,
+    )
+    .unwrap();
+    let receive_report = receiver3.join().unwrap().unwrap();
+
+    assert_eq!(report.resume_state, empty_resume_state());
+    assert_eq!(report.sent_frames, 1);
+    assert_eq!(report.final_frame_no, 1);
     assert_archive_hashes(&receive_report.final_archive_path, &expected);
 }
 
