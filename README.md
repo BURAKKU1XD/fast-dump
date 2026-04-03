@@ -168,6 +168,7 @@ At most one unacknowledged frame is lost on disconnect.
   - exhausted files are skipped and counted in aggregate stats
 - Symlinks are stored as tar symlink entries and keep their original link target when the sender can read that target.
 - Symlinks whose link targets become unreadable during source traversal are skipped with a warning.
+- On Linux, entries on virtual filesystems such as `procfs`, `sysfs`, `cgroup2`, `debugfs`, and `tracefs` are skipped with a warning based on a cached `/proc/self/mountinfo` filesystem-type lookup.
 - Unsupported special entries such as sockets, devices, and FIFOs are skipped with a kind-specific warning.
 - Frame boundaries stay on completed files, but `frame_target` is treated as a
   soft target rather than a mandatory per-file flush boundary.

@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-04-02",
+  "updated_at": "2026-04-03",
   "tracks": [
     {
       "id": "safety",
@@ -358,6 +358,972 @@
           "acceptance_criteria": [
             "The repository has a single visible safety definition of done.",
             "README, AGENTS, and protocol documentation remain aligned with implementation and test strategy."
+          ]
+        }
+      ]
+    },
+    {
+      "id": "performance-v3",
+      "title": "Performance v3 Tasks Derived from PERFOMANCE_V3.md",
+      "source": "PERFOMANCE_V3.md",
+      "status": "planned",
+      "goals": [
+        "Replace live path based resume with a manifest-backed sender and receiver model while preserving whole-file semantics.",
+        "Maximize transfer throughput without turning RAM usage, sender spool growth, receiver manifest growth, or issue-tail persistence into unbounded resource consumers.",
+        "Deliver a Unix openat or dirfd fast path, a correct fallback executor, and a benchmark-driven protocol v3 cutover grounded in measured data."
+      ],
+      "tasks": [
+        {
+          "id": "perf-v3-01",
+          "title": "Freeze the benchmark matrix, datasets, network profiles, and success gates",
+          "priority": "highest",
+          "status": "todo",
+          "depends_on": [],
+          "files": [
+            "PERFOMANCE_V3.md",
+            "TASKS.json",
+            "benches/pipeline/shared.rs",
+            "benches/pipeline/results.rs",
+            "benches/pipeline/stats.rs"
+          ],
+          "problem": [
+            "The v3 plan is explicitly performance-driven, but there is no frozen benchmark matrix that captures throughput, latency, RAM, disk, and recovery costs together.",
+            "Without fixed datasets and network profiles, the team can optimize for localhost happy paths and miss regressions on tiny-file, deep-tree, RTT-heavy, or reconnect-heavy workloads."
+          ],
+          "deliverables": [
+            "A named benchmark matrix covering million-file, deep-tree, mixed, unstable-subtree, mount-backed, and fallback-vs-Unix datasets.",
+            "A named network-profile matrix covering low-latency LAN, moderate WAN RTT, high RTT, bandwidth-limited, and lossy or reconnect-prone links.",
+            "A written set of success gates tied to the v3 goals: whole-file correctness, bounded RAM, bounded disk, no full live rescan on reconnect, and no throughput regression in target scenarios."
+          ],
+          "subtasks": [
+            "Define the canonical datasets that every major v3 change must be measured against.",
+            "Define the network profiles that matter for manifest ack cadence and overlap behavior.",
+            "List the required metrics for each run, including throughput, RSS, spool bytes, manifest bytes, issue-tail cost, replay latency, and overlap efficiency.",
+            "Define how v2 and v3 results will be compared so that the cutover decision is reproducible."
+          ],
+          "acceptance_criteria": [
+            "The repository has a single visible benchmark matrix for v3 work.",
+            "The benchmark matrix covers both filesystem shape and network behavior.",
+            "Success is defined in measurable terms instead of by architecture alone."
+          ]
+        },
+        {
+          "id": "perf-v3-02",
+          "title": "Expand the benchmark and observability harness for v3-specific metrics",
+          "priority": "highest",
+          "status": "todo",
+          "depends_on": [
+            "perf-v3-01"
+          ],
+          "files": [
+            "benches/loopback_send_dump.rs",
+            "benches/receive_frame_commit.rs",
+            "benches/scan_source.rs",
+            "benches/pipeline/loopback.rs",
+            "benches/pipeline/prepare_dump.rs",
+            "benches/pipeline/receive_frame.rs",
+            "benches/pipeline/results.rs",
+            "benches/pipeline/shared.rs",
+            "benches/pipeline/stats.rs",
+            "tests/connectivity/observability.rs",
+            "src/telemetry.rs"
+          ],
+          "problem": [
+            "Existing benchmark entrypoints do not yet expose all v3 costs, especially manifest build and transfer phases, issue-tail persistence, replay latency, or overlap efficiency.",
+            "If the harness only reports end-to-end throughput, v3 can accidentally regress time-to-first-frame, manifest fsync overhead, or receiver-side disk behavior without being noticed."
+          ],
+          "deliverables": [
+            "Benchmark output that includes sender and receiver CPU, sender and receiver RSS, sender spool bytes written and read, receiver manifest bytes persisted, issue-tail persistence cost, and overlap efficiency.",
+            "Support for running the matrix under the required network profiles or an equivalent reproducible shaping mechanism.",
+            "Result artifacts that are easy to diff across v2 and v3 runs."
+          ],
+          "subtasks": [
+            "Add metric fields for manifest build latency, manifest transfer latency, archive transfer latency, checkpoint replay latency, and manifest ack cadence.",
+            "Add sender and receiver disk-budget metrics that expose spool and manifest storage growth explicitly.",
+            "Add support for latency, bandwidth, and lossy-link shaping or equivalent deterministic network emulation in the bench harness.",
+            "Make sure the benchmark result schema can be consumed repeatedly without manual parsing."
+          ],
+          "acceptance_criteria": [
+            "Benchmark output exposes the full v3 metric set from PERFOMANCE_V3.md.",
+            "The matrix can be run on more than one network profile without custom ad hoc commands.",
+            "Comparing v2 and v3 no longer requires hand-built scripts or manual stopwatch work."
+          ]
+        },
+        {
+          "id": "perf-v3-03",
+          "title": "Define the canonical manifest record grammar and local spool format",
+          "priority": "highest",
+          "status": "todo",
+          "depends_on": [
+            "perf-v3-01"
+          ],
+          "files": [
+            "PERFOMANCE_V3.md",
+            "src/sender/source.rs",
+            "src/sender/mod.rs"
+          ],
+          "problem": [
+            "The current sender model is built around live traversal and file_index assignment, not around a canonical discovery log.",
+            "Without a hard local grammar for records, checkpoint replay, path reconstruction, and future protocol design will stay ambiguous and expensive."
+          ],
+          "deliverables": [
+            "A canonical set of local record kinds for DirectoryEnter, DirectoryLeave, File, Symlink, DiscoverySkip, and SubtreeSkip.",
+            "A binary local spool format that stores record_seq, kind, depth, name, and optional payload without storing full relative paths as the base format.",
+            "A documented rule set for deterministic DFS ordering and legal record transitions."
+          ],
+          "subtasks": [
+            "Define the binary layout for each local record and the minimum payload needed for replay and diagnostics.",
+            "Define how record_seq and work_ordinal relate to each record kind.",
+            "Define how symlink targets, discovery skip reasons, and subtree skip reasons are encoded.",
+            "Define which record sequences are legal and which are invalid by construction."
+          ],
+          "acceptance_criteria": [
+            "The local manifest grammar is explicit enough to implement without guessing.",
+            "The grammar preserves deterministic DFS ordering and whole-file semantics.",
+            "The local format does not require a full rel_path String per entry in RAM."
+          ]
+        },
+        {
+          "id": "perf-v3-04",
+          "title": "Define source identity and manifest.meta state transitions",
+          "priority": "highest",
+          "status": "todo",
+          "depends_on": [
+            "perf-v3-03"
+          ],
+          "files": [
+            "PERFOMANCE_V3.md",
+            "src/sender/source.rs",
+            "src/sender/session.rs"
+          ],
+          "problem": [
+            "Spool reuse is dangerous unless the sender can prove that the spool belongs to the same source and the same builder semantics.",
+            "The v3 plan depends on clean or dirty and sealed or unsealed state transitions, but those transitions are not yet represented in runtime state."
+          ],
+          "deliverables": [
+            "A manifest.meta model that records dump_id, spool format version, source identity, root source path, build state, last_record_seq, last_work_ordinal, last_checkpoint_seq, clean or dirty state, and sealed or unsealed state.",
+            "A validation path that rejects reuse when root identity or builder identity does not match.",
+            "An explicit state-transition map for meta updates during build, recovery, finalize, and invalidation."
+          ],
+          "subtasks": [
+            "Define the minimum source identity payload required for safe reuse decisions.",
+            "Define when clean changes to dirty and when unsealed changes to sealed.",
+            "Define how invalidation reasons are represented in sender state.",
+            "Define how the meta file is updated without advertising progress that is not durably committed."
+          ],
+          "acceptance_criteria": [
+            "The sender never reuses a spool from a different source or incompatible builder version.",
+            "Meta state transitions are explicit and testable.",
+            "The implementation has a single source of truth for sender spool state instead of scattered booleans."
+          ]
+        },
+        {
+          "id": "perf-v3-05",
+          "title": "Implement sender spool append framing, checksums, and atomic checkpoint writes",
+          "priority": "highest",
+          "status": "todo",
+          "depends_on": [
+            "perf-v3-03",
+            "perf-v3-04"
+          ],
+          "files": [
+            "src/sender/source.rs",
+            "src/sender/session.rs"
+          ],
+          "problem": [
+            "An append-only manifest without strong framing and checkpoint atomics will fail exactly when v3 most needs recovery, after restarts, partial writes, or disk faults.",
+            "The v3 plan requires detection of torn tails and corruption in the middle of the spool, not just that the file still opens."
+          ],
+          "deliverables": [
+            "A sender spool writer that emits per-record length prefixes plus per-record checksums or CRC.",
+            "Checkpoint files with checksums and atomic replacement semantics.",
+            "Recovery logic that can trim torn tails and reject corrupted segments deterministically."
+          ],
+          "subtasks": [
+            "Implement write-side framing for manifest.log.part.",
+            "Implement read-side validation for per-record integrity and checkpoint integrity.",
+            "Implement atomic checkpoint update logic instead of in-place mutation.",
+            "Add unit coverage for torn tails, mid-file corruption, and mismatched checkpoint content."
+          ],
+          "acceptance_criteria": [
+            "The sender can detect and reject corrupted spool state deterministically.",
+            "Checkpoint writes are atomic from the point of view of recovery.",
+            "A restart never silently trusts an incomplete or corrupted local spool tail."
+          ]
+        },
+        {
+          "id": "perf-v3-06",
+          "title": "Implement sender recovery, invalidation, and cleanup policy for sealed and unsealed spools",
+          "priority": "highest",
+          "status": "todo",
+          "depends_on": [
+            "perf-v3-04",
+            "perf-v3-05"
+          ],
+          "files": [
+            "src/sender/source.rs",
+            "src/sender/session.rs",
+            "src/telemetry.rs"
+          ],
+          "problem": [
+            "The most dangerous correctness trap in v3 is silent continuation of an unsealed live-path spool after restart.",
+            "The spool lifecycle also needs deterministic cleanup and observability, otherwise disk use and recovery behavior will become operationally opaque."
+          ],
+          "deliverables": [
+            "A restart path that invalidates unsealed live-path spools and only allows continuation for explicitly eligible pinned or snapshotted sources.",
+            "Discovery issue events for spool invalidated, spool corrupted, and spool rebuilt.",
+            "Cleanup logic for successful finish and GC hooks for old sender-side state."
+          ],
+          "subtasks": [
+            "Load manifest.meta and the last valid checkpoint on startup.",
+            "Invalidate and rebuild when a live path source restarts with an unsealed spool.",
+            "Permit continuation only for the allowed source kinds.",
+            "Emit invalidation or corruption events into the discovery issue path.",
+            "Delete sender spool state on successful FinishAck and define preservation or GC behavior after failure."
+          ],
+          "acceptance_criteria": [
+            "An unsealed live-path spool is never silently extended after restart.",
+            "Recovery decisions are visible in sender diagnostics and issue reporting.",
+            "Successful runs clean up sender-side spool state deterministically."
+          ]
+        },
+        {
+          "id": "perf-v3-07",
+          "title": "Implement sender spool quota, disk budget enforcement, and discovery backpressure",
+          "priority": "high",
+          "status": "todo",
+          "depends_on": [
+            "perf-v3-05"
+          ],
+          "files": [
+            "src/sender/source.rs",
+            "src/sender/session.rs",
+            "src/sender/profile.rs",
+            "src/telemetry.rs"
+          ],
+          "problem": [
+            "A disk-backed manifest solves RAM pressure only if the spool itself does not grow without limit.",
+            "Discovery can outrun frame production and manifest upload unless sender-side backpressure is explicit."
+          ],
+          "deliverables": [
+            "A sender-side spool quota or upper bound with explicit behavior on exhaustion.",
+            "Backpressure between discovery, spool append, and downstream consumers.",
+            "Metrics that expose spool bytes written, spool bytes read, and time spent blocked by disk budget."
+          ],
+          "subtasks": [
+            "Define how sender behaves when spool quota is reached: block, slow down, or fail loudly by design.",
+            "Implement producer-consumer backpressure between the manifest builder and frame builder.",
+            "Expose spool quota and budget pressure in telemetry or observability surfaces.",
+            "Make sure quota logic does not violate deterministic ordering or whole-file semantics."
+          ],
+          "acceptance_criteria": [
+            "Sender spool growth is bounded by an explicit policy.",
+            "Discovery cannot outrun downstream stages indefinitely.",
+            "Quota-related behavior is measurable instead of inferred from disk usage after the fact."
+          ]
+        },
+        {
+          "id": "perf-v3-08",
+          "title": "Implement sparse checkpoints and checkpointed replay state",
+          "priority": "highest",
+          "status": "todo",
+          "depends_on": [
+            "perf-v3-05"
+          ],
+          "files": [
+            "src/sender/source.rs",
+            "src/sender/session.rs"
+          ],
+          "problem": [
+            "A disk-backed manifest only helps throughput and reconnect latency if the sender can seek quickly to the relevant point instead of replaying the entire log.",
+            "Replay needs enough saved state to rebuild the path stack and execution state without allocation-heavy full-path reconstruction."
+          ],
+          "deliverables": [
+            "Sparse checkpoints that store record_seq, work_ordinal, spool offset, path stack snapshot, and enough execution state for fast replay.",
+            "A replay path that seeks to the nearest checkpoint and replays only the small tail after it.",
+            "Replay latency metrics suitable for the benchmark matrix."
+          ],
+          "subtasks": [
+            "Define checkpoint payload structure and stride.",
+            "Store and load path stack snapshots as part of checkpoint data.",
+            "Implement seek plus tail replay logic for reconnect and restart.",
+            "Measure and expose checkpoint replay latency."
+          ],
+          "acceptance_criteria": [
+            "Reconnect and restart do not require rereading the full manifest.",
+            "Replay latency is bounded by the configured checkpoint stride plus a small tail.",
+            "Checkpointed replay can restore both path stack and ordinal progress."
+          ]
+        },
+        {
+          "id": "perf-v3-09",
+          "title": "Refactor sender discovery into a streaming manifest builder",
+          "priority": "highest",
+          "status": "todo",
+          "depends_on": [
+            "perf-v3-03",
+            "perf-v3-05"
+          ],
+          "files": [
+            "src/sender/source.rs",
+            "src/sender/session.rs",
+            "src/sender/frame.rs"
+          ],
+          "problem": [
+            "Current sender discovery is still tied to the live tree and file_index assignment, which is exactly the dependency v3 is trying to remove.",
+            "Without a streaming manifest builder, the sender will either keep rescanning or accidentally build a large in-memory manifest."
+          ],
+          "deliverables": [
+            "A discovery pipeline that appends canonical records incrementally to the spool.",
+            "Leaf-only work_ordinal assignment for File and Symlink records.",
+            "A manifest builder that preserves deterministic DFS plus sorted-entry ordering while keeping memory bounded."
+          ],
+          "subtasks": [
+            "Replace file_index-centric discovery with record_seq plus work_ordinal generation.",
+            "Emit DirectoryEnter and DirectoryLeave records explicitly.",
+            "Emit DiscoverySkip and SubtreeSkip records instead of collapsing them into path-only side effects.",
+            "Make sure the builder does not require a full manifest Vec or a full rel_path String per entry in RAM."
+          ],
+          "acceptance_criteria": [
+            "Sender discovery produces a canonical on-disk discovery log incrementally.",
+            "Deterministic traversal order is preserved exactly.",
+            "Memory usage stays bounded independently from total source entry count."
+          ]
+        },
+        {
+          "id": "perf-v3-10",
+          "title": "Implement discovery-time file type policy and skip reasons in the manifest builder",
+          "priority": "high",
+          "status": "todo",
+          "depends_on": [
+            "perf-v3-09"
+          ],
+          "files": [
+            "src/sender/source.rs",
+            "tests/connectivity/roundtrip_fast.rs",
+            "tests/connectivity/support.rs"
+          ],
+          "problem": [
+            "The current project contract includes virtual-filesystem skips, unsupported special-entry skips, and symlink-target handling, but v3 has not yet moved those rules into manifest semantics.",
+            "If discovery-time file type policy is not explicit in the manifest builder, unsupported entries can leak into execution or trigger expensive repeated checks."
+          ],
+          "deliverables": [
+            "Cached Linux mountinfo or equivalent discovery state for virtual-filesystem detection.",
+            "Kind-specific DiscoverySkip reasons for procfs or sysfs style filesystems, sockets, devices, FIFOs, and unreadable symlink targets.",
+            "A rule that only symlinks with readable targets become sendable work items."
+          ],
+          "subtasks": [
+            "Preserve cached virtual filesystem detection rather than probing mounts per entry.",
+            "Emit DiscoverySkip records with explicit reasons for unsupported filesystem types and special entry kinds.",
+            "Record symlink targets in the manifest only when they were read successfully.",
+            "Verify that unsupported discovery entries never receive a work_ordinal."
+          ],
+          "acceptance_criteria": [
+            "Virtual filesystems and unsupported special entries never become file work items.",
+            "Unreadable symlink targets are represented honestly as discovery skips.",
+            "File-type policy remains aligned with the project contract while using the v3 manifest model."
+          ]
+        },
+        {
+          "id": "perf-v3-11",
+          "title": "Implement manifest-driven sender replay and resume without full live rescan",
+          "priority": "highest",
+          "status": "todo",
+          "depends_on": [
+            "perf-v3-06",
+            "perf-v3-08",
+            "perf-v3-09"
+          ],
+          "files": [
+            "src/sender/source.rs",
+            "src/sender/readers.rs",
+            "src/sender/session.rs",
+            "src/sender/frame.rs"
+          ],
+          "problem": [
+            "The primary correctness and performance goal of v3 is to stop depending on a full live rescan after reconnect.",
+            "Resume also needs to preserve progress across terminal file skips even when no tar payload was emitted."
+          ],
+          "deliverables": [
+            "A sender replay path that resumes from spool plus checkpoint state instead of rescanning the full live tree.",
+            "Committed progress keyed by work_ordinal for sendable leaf items, including terminal skips.",
+            "Correct handling of root-source failure versus subtree-level discovery failure."
+          ],
+          "subtasks": [
+            "Seek to the correct checkpoint based on committed progress and rebuild the execution state from it.",
+            "Replay only the required tail and resume leaf processing in deterministic order.",
+            "Carry committed work_ordinal across terminal regular-file and symlink skips even when tar payload is absent.",
+            "Preserve fatal behavior when the root source disappears before enough manifest state exists."
+          ],
+          "acceptance_criteria": [
+            "Reconnect no longer requires a full live rescan for ordinary v3 sessions.",
+            "Sender progress across skips remains monotonic and deterministic.",
+            "Root-source failure and subtree discovery failure remain semantically distinct."
+          ]
+        },
+        {
+          "id": "perf-v3-12",
+          "title": "Implement reusable path materialization for diagnostics, tar headers, and fallback execution",
+          "priority": "high",
+          "status": "todo",
+          "depends_on": [
+            "perf-v3-08",
+            "perf-v3-09"
+          ],
+          "files": [
+            "src/sender/source.rs",
+            "src/sender/readers.rs",
+            "src/sender/session.rs",
+            "benches/pipeline/stats.rs"
+          ],
+          "problem": [
+            "Depth plus name only helps if the hot path does not reconstruct a brand-new full relative path String for every file work item.",
+            "Diagnostics, tar headers, and fallback execution still need path materialization, so the cost must be amortized rather than ignored."
+          ],
+          "deliverables": [
+            "A reusable path buffer, segment arena, or equivalent mechanism for manifest-driven execution.",
+            "A clear API boundary between leaf-name access, occasional full-path rendering, and diagnostic formatting.",
+            "Metrics or proxies that expose path materialization allocation cost in benchmarks."
+          ],
+          "subtasks": [
+            "Define a path stack representation that can feed both diagnostics and execution paths.",
+            "Implement amortized full-path rendering for the places where it is still needed.",
+            "Remove avoidable per-item String allocations from the sender hot path.",
+            "Add a measurable signal for path materialization cost in the benchmark harness."
+          ],
+          "acceptance_criteria": [
+            "Path materialization is not allocation-heavy in the sender hot path.",
+            "The fallback executor can use the same path infrastructure as the fast path.",
+            "Path materialization cost is visible in benchmarks instead of hidden in allocator noise."
+          ]
+        },
+        {
+          "id": "perf-v3-13",
+          "title": "Implement the Unix openat or dirfd executor as the preferred fast path",
+          "priority": "highest",
+          "status": "todo",
+          "depends_on": [
+            "perf-v3-11",
+            "perf-v3-12"
+          ],
+          "files": [
+            "src/sender/readers.rs",
+            "src/sender/source.rs",
+            "src/sender/session.rs",
+            "src/sender/frame.rs",
+            "benches/pipeline/scan_source.rs",
+            "benches/pipeline/loopback.rs"
+          ],
+          "problem": [
+            "The current absolute-path reopen model pays repeated path-resolution costs and loses locality on deep tiny-file workloads.",
+            "V3 explicitly targets a Unix fast path through openat or dirfd, but the sender still needs to preserve whole-file semantics and live-file policy."
+          ],
+          "deliverables": [
+            "A Unix executor that opens regular files through parent dirfd plus leaf name, reads symlink targets through readlinkat, and derives authoritative metadata from opened handles.",
+            "A directory-handle stack by manifest depth with bounded FD usage.",
+            "Benchmarks that compare the Unix fast path to the old absolute-path behavior and the fallback executor."
+          ],
+          "subtasks": [
+            "Add dirfd stack management tied to the manifest depth and DirectoryEnter or DirectoryLeave replay.",
+            "Implement regular-file open through openat and symlink target reads through readlinkat.",
+            "Preserve the existing live-file retry policy based on authoritative opened-handle metadata.",
+            "Integrate the fast path with frame production and direct-stream readers."
+          ],
+          "acceptance_criteria": [
+            "Unix execution no longer depends on absolute paths as the primary hot path.",
+            "Whole-file semantics and live-file retry behavior remain unchanged.",
+            "The implementation measures and enforces its FD budget instead of assuming it will stay safe."
+          ]
+        },
+        {
+          "id": "perf-v3-14",
+          "title": "Implement the cross-platform fallback executor on the same manifest model",
+          "priority": "high",
+          "status": "todo",
+          "depends_on": [
+            "perf-v3-11",
+            "perf-v3-12"
+          ],
+          "files": [
+            "src/sender/readers.rs",
+            "src/sender/source.rs",
+            "src/sender/session.rs",
+            "benches/pipeline/scan_source.rs",
+            "benches/pipeline/loopback.rs"
+          ],
+          "problem": [
+            "V3 must not become Unix-only by accident or by hidden assumptions in the sender execution model.",
+            "A fallback executor that requires separate discovery logic would fracture correctness and benchmarking."
+          ],
+          "deliverables": [
+            "A fallback executor that consumes the same manifest spool, the same record_seq and work_ordinal model, and the same replay state as the Unix fast path.",
+            "Lazy full-path reconstruction built on the shared path materialization layer.",
+            "Benchmark hooks that compare fallback cost against the Unix fast path."
+          ],
+          "subtasks": [
+            "Define a shared executor interface that both the Unix path and fallback path can implement.",
+            "Build lazy path reconstruction for platforms without openat or dirfd style operations.",
+            "Make sure the fallback path preserves deterministic ordering and whole-file semantics without a separate discovery code path.",
+            "Benchmark fallback execution explicitly instead of treating it as an invisible legacy path."
+          ],
+          "acceptance_criteria": [
+            "The fallback path uses the same manifest model and replay state as the Unix path.",
+            "There is no second discovery implementation for non-Unix platforms.",
+            "Fallback behavior is benchmarked and observable rather than left as a correctness afterthought."
+          ]
+        },
+        {
+          "id": "perf-v3-15",
+          "title": "Introduce a source backend boundary for pinned, snapshotted, and ordinary path sources",
+          "priority": "medium",
+          "status": "todo",
+          "depends_on": [
+            "perf-v3-11"
+          ],
+          "files": [
+            "src/app.rs",
+            "src/cli/mod.rs",
+            "src/sender/session.rs",
+            "src/sender/source.rs"
+          ],
+          "problem": [
+            "The v3 recovery rules already distinguish pinned or snapshotted sources from ordinary live paths, but the sender runtime does not yet encode that distinction cleanly.",
+            "Without a source backend boundary, spool continuation and invalidation logic will remain ad hoc and spread across unrelated code paths."
+          ],
+          "deliverables": [
+            "An internal source backend abstraction that can distinguish ordinary path sources from pinned or snapshotted sources.",
+            "Spool metadata and recovery decisions that incorporate source backend kind explicitly.",
+            "A clear extension point for future snapshot or pin fast paths without rewriting the manifest model."
+          ],
+          "subtasks": [
+            "Add a source backend kind to sender runtime state.",
+            "Plumb the backend kind into manifest.meta and recovery decisions.",
+            "Keep ordinary path sources as the default behavior while making eligibility for spool continuation explicit.",
+            "Avoid making source backend wiring a hidden protocol concern at this stage."
+          ],
+          "acceptance_criteria": [
+            "Pinned, snapshotted, and ordinary path sources are distinguishable in runtime state.",
+            "Spool continuation eligibility is driven by explicit backend kind rather than by path heuristics alone.",
+            "The source backend boundary does not require a second manifest model."
+          ]
+        },
+        {
+          "id": "perf-v3-16",
+          "title": "Split sender reporting into file issues and discovery issues with a typed issue model",
+          "priority": "high",
+          "status": "todo",
+          "depends_on": [
+            "perf-v3-11"
+          ],
+          "files": [
+            "src/sender/session.rs",
+            "src/sender/source.rs",
+            "src/app.rs",
+            "tests/connectivity/observability.rs"
+          ],
+          "problem": [
+            "The current issue model is file-centric and cannot represent subtree skips, spool invalidation, or spool corruption honestly.",
+            "If v3 tries to force discovery issues into file skip counters, it will either lie about behavior or reintroduce expensive rescans just to count skipped files."
+          ],
+          "deliverables": [
+            "Separate sender-side accumulation for file terminal issues and discovery issues.",
+            "A typed issue model with explicit scope, such as file or discovery, and enough data to reconstruct final reporting.",
+            "A candidate aggregate set that can replace or augment old counters without hiding discovery semantics."
+          ],
+          "subtasks": [
+            "Define the data model for file terminal issues keyed by work_ordinal.",
+            "Define the data model for discovery issues keyed by record_seq.",
+            "Introduce aggregate counters such as subtrees_skipped, discovery_issues_total, and manifest_resets_total where appropriate.",
+            "Update session status semantics so discovery warnings do not pretend to be file skips."
+          ],
+          "acceptance_criteria": [
+            "File issues and discovery issues are no longer conflated in sender reporting.",
+            "Sender can report spool invalidation and subtree-level problems honestly.",
+            "Aggregate reporting no longer depends on fake rescans or guessed subtree sizes."
+          ]
+        },
+        {
+          "id": "perf-v3-17",
+          "title": "Implement receiver-side manifest store, boundary journaling, and integrity framing",
+          "priority": "highest",
+          "status": "todo",
+          "depends_on": [
+            "perf-v3-11"
+          ],
+          "files": [
+            "src/receiver/journal.rs",
+            "src/receiver/resume.rs",
+            "src/receiver/session.rs",
+            "src/receiver/shared.rs",
+            "src/receiver/test_support.rs"
+          ],
+          "problem": [
+            "Protocol v3 needs receiver-side manifest durability that is independent from archive_len and frame commit state.",
+            "Without a durable manifest boundary on the receiver, sender-side manifest truth cannot become distributed source truth."
+          ],
+          "deliverables": [
+            "A disk-backed receiver manifest file such as <dump_id>.manifest.part.",
+            "Receiver journal fields for manifest_bytes_persisted, last_manifest_record_seq, last_manifest_work_ordinal, and manifest_sealed.",
+            "Integrity framing and truncation logic for receiver-side manifest storage."
+          ],
+          "subtasks": [
+            "Add receiver-side manifest files and state wiring alongside the existing archive journal.",
+            "Persist committed manifest boundaries independently from committed archive boundaries.",
+            "Implement truncation of manifest tails beyond the last durable committed boundary.",
+            "Detect receiver-side manifest corruption and surface it as a discovery issue event."
+          ],
+          "acceptance_criteria": [
+            "Receiver can recover its committed manifest boundary independently from archive_len.",
+            "Partial or corrupted manifest tails are truncated back to the last valid boundary.",
+            "Manifest state and archive state remain consistent across restart and reconnect."
+          ]
+        },
+        {
+          "id": "perf-v3-18",
+          "title": "Implement receiver-side quota, ENOSPC behavior, and cleanup for manifest and issue temp files",
+          "priority": "high",
+          "status": "todo",
+          "depends_on": [
+            "perf-v3-17"
+          ],
+          "files": [
+            "src/receiver/journal.rs",
+            "src/receiver/session.rs",
+            "src/receiver/finish.rs",
+            "src/receiver/shared.rs",
+            "tests/connectivity/resume.rs",
+            "tests/connectivity/protocol_flow.rs"
+          ],
+          "problem": [
+            "A bounded sender spool is not enough if receiver-side manifest storage and issue-tail files can still consume disk without limit.",
+            "Disk exhaustion on the receiver must never create a half-committed manifest boundary or a corrupted archive boundary."
+          ],
+          "deliverables": [
+            "Receiver-side upper bounds or quotas for manifest storage and issue-tail temp storage.",
+            "Error behavior for ENOSPC or quota exhaustion that preserves the last durable manifest and archive boundary.",
+            "Cleanup or GC rules for abandoned .manifest.part and .issues.part artifacts."
+          ],
+          "subtasks": [
+            "Define how receiver enforces disk budgets for manifest and issue-tail temp files.",
+            "Return explicit protocol errors when receiver disk budget is exhausted.",
+            "Guarantee that committed archive and manifest boundaries do not advance after ENOSPC.",
+            "Clean up or mark abandoned temp files after aborts and restarts."
+          ],
+          "acceptance_criteria": [
+            "Receiver disk exhaustion does not corrupt committed state.",
+            "Receiver temp files are bounded by policy instead of by operator luck.",
+            "Abandoned receiver temp files do not accumulate forever."
+          ]
+        },
+        {
+          "id": "perf-v3-19",
+          "title": "Define the protocol v3 message model and documentation",
+          "priority": "highest",
+          "status": "todo",
+          "depends_on": [
+            "perf-v3-16",
+            "perf-v3-17"
+          ],
+          "files": [
+            "src/network/protocol.rs",
+            "src/network/protocol.md",
+            "AGENTS.md"
+          ],
+          "problem": [
+            "The current wire protocol is built around file_index and path-based resume, which is incompatible with the v3 manifest model.",
+            "Protocol v3 cannot be implemented safely until the exact message set, body layouts, ordering rules, and finish semantics are defined."
+          ],
+          "deliverables": [
+            "A protocol v3 message model for ManifestStart, ManifestChunk, ManifestAck or barrier flow, ManifestSeal, ResumeStateV3, work_ordinal-based frame messages, and typed issue chunks.",
+            "Updated protocol documentation that matches code-level message definitions exactly.",
+            "Updated AGENTS protocol and resume documentation where the public runtime contract changes."
+          ],
+          "subtasks": [
+            "Define packet kinds and body layouts for manifest transfer and v3 resume state.",
+            "Define message-ordering rules between manifest transfer, frame loop, issue tail, and finish.",
+            "Define error behavior and rollback behavior for protocol-level manifest failures.",
+            "Document every new v3 message and validation rule in src/network/protocol.md."
+          ],
+          "acceptance_criteria": [
+            "Protocol v3 message definitions and protocol documentation are in sync.",
+            "Manifest transfer, frame transfer, and issue-tail ordering are explicit rather than inferred.",
+            "Protocol v3 no longer uses file_index plus path as its primary resume boundary."
+          ]
+        },
+        {
+          "id": "perf-v3-20",
+          "title": "Implement manifest transfer commit flow, hard caps, and sender tuning knobs",
+          "priority": "highest",
+          "status": "todo",
+          "depends_on": [
+            "perf-v3-19"
+          ],
+          "files": [
+            "src/cli/mod.rs",
+            "src/app.rs",
+            "src/network/protocol.rs",
+            "src/sender/session.rs",
+            "src/receiver/session.rs"
+          ],
+          "problem": [
+            "Manifest transfer needs runtime-tunable chunk and ack cadence, but v3 also requires protocol-level safety limits so tuning cannot create RAM spikes or giant unacked windows.",
+            "Without a durable manifest ack flow, sender cannot know how far it is allowed to pipeline archive data."
+          ],
+          "deliverables": [
+            "Sender CLI flags for manifest-chunk-kb, manifest-ack-records, and manifest-ack-kb.",
+            "Runtime validation that enforces protocol-level hard caps such as a 1 MiB ManifestChunk and bounded control message sizes.",
+            "A durable manifest ack or barrier flow that advances receiver-side committed manifest boundary explicitly."
+          ],
+          "subtasks": [
+            "Add CLI flags and validation helpers for manifest transfer tuning.",
+            "Implement protocol-level caps for ManifestChunk, ManifestAck, and the total unacked manifest window.",
+            "Implement batch or barrier ack flow on sender and receiver.",
+            "Expose selected chunk and ack settings in telemetry or diagnostics so benchmarks can interpret results."
+          ],
+          "acceptance_criteria": [
+            "Manifest tuning is configurable without permitting unsafe protocol envelopes.",
+            "Sender never treats a manifest prefix as committed without receiver-side durable ack.",
+            "Protocol caps remain effective even if the CLI asks for larger values."
+          ]
+        },
+        {
+          "id": "perf-v3-21",
+          "title": "Implement pipelined manifest transfer overlapped with archive transfer",
+          "priority": "highest",
+          "status": "todo",
+          "depends_on": [
+            "perf-v3-13",
+            "perf-v3-14",
+            "perf-v3-20"
+          ],
+          "files": [
+            "src/sender/session.rs",
+            "src/sender/frame.rs",
+            "src/receiver/session.rs",
+            "src/receiver/frame.rs",
+            "benches/pipeline/loopback.rs",
+            "benches/pipeline/stats.rs"
+          ],
+          "problem": [
+            "A v3 implementation that performs full manifest build, then full manifest upload, then archive transfer would lose exactly the throughput and time-to-first-frame goal that motivated the redesign.",
+            "Pipelining is also correctness-sensitive because sender must not stream archive data beyond the manifest boundary durably accepted by the receiver."
+          ],
+          "deliverables": [
+            "A session pipeline where discovery, local spool append, manifest transfer, and archive transfer overlap.",
+            "Boundary checks that prevent sender from producing frames above the receiver's durable manifest boundary.",
+            "Metrics that expose actual overlap efficiency instead of assuming it."
+          ],
+          "subtasks": [
+            "Coordinate sender-side local durable prefix, receiver-side durable manifest boundary, and archive frame production.",
+            "Allow sender to start data transfer before full ManifestSeal while staying behind the committed manifest boundary.",
+            "Backpressure manifest and archive stages when receiver falls behind on durable manifest ack.",
+            "Measure time-to-first-frame and overlap efficiency in the benchmark harness."
+          ],
+          "acceptance_criteria": [
+            "Manifest transfer and archive transfer overlap in real runs.",
+            "Sender never emits archive frames for leaf work beyond the receiver's durable manifest boundary.",
+            "Time-to-first-frame does not regress into a fully sequential multi-phase transfer."
+          ]
+        },
+        {
+          "id": "perf-v3-22",
+          "title": "Move resume, frame, ack, and finish semantics to work_ordinal",
+          "priority": "highest",
+          "status": "todo",
+          "depends_on": [
+            "perf-v3-19",
+            "perf-v3-20"
+          ],
+          "files": [
+            "src/network/protocol.rs",
+            "src/sender/frame.rs",
+            "src/sender/session.rs",
+            "src/receiver/frame.rs",
+            "src/receiver/resume.rs",
+            "src/receiver/finish.rs",
+            "src/receiver/journal.rs"
+          ],
+          "problem": [
+            "V3 cannot use last_file_path plus file_index as the primary boundary once manifest truth and discovery issues are separated from file work items.",
+            "Frame and finish validation also need to account for terminal file skips that advance progress without tar payload."
+          ],
+          "deliverables": [
+            "ResumeStateV3 with committed manifest boundary and committed archive boundary fields based on work_ordinal.",
+            "FrameStart, FrameEnd, Ack, and Finish semantics based on first_work_ordinal and last_work_ordinal.",
+            "Receiver validation that treats file terminal skips as progress without confusing them with discovery-only records."
+          ],
+          "subtasks": [
+            "Move sender frame metadata from file_index-centric fields to work_ordinal-centric fields.",
+            "Move receiver commit validation from path-based checks to committed work_ordinal checks.",
+            "Make sure discovery-only records do not participate in frame boundaries.",
+            "Preserve the rule that frame boundaries remain on completed file work items only."
+          ],
+          "acceptance_criteria": [
+            "Protocol progress is driven by work_ordinal instead of by last file path.",
+            "Terminal file skips can advance committed progress without fake tar payload.",
+            "Frame and finish validation remain deterministic and whole-file safe."
+          ]
+        },
+        {
+          "id": "perf-v3-23",
+          "title": "Implement typed issue-tail streaming and receiver persistence without full in-memory buffering",
+          "priority": "high",
+          "status": "todo",
+          "depends_on": [
+            "perf-v3-16",
+            "perf-v3-17",
+            "perf-v3-19"
+          ],
+          "files": [
+            "src/network/protocol.rs",
+            "src/sender/session.rs",
+            "src/receiver/session.rs",
+            "src/receiver/finish.rs",
+            "src/receiver/journal.rs"
+          ],
+          "problem": [
+            "The v3 plan requires a typed final issue journal that includes both file and discovery issues, but keeping the entire tail in memory would violate the resource goals.",
+            "Issue-tail persistence also needs a clear recovery story so reconnect or abort does not leak or corrupt final reporting."
+          ],
+          "deliverables": [
+            "A typed issue stream with explicit scope for file and discovery issues.",
+            "Receiver-side incremental persistence to a temporary issues file rather than full in-memory buffering.",
+            "A rule that issue-tail state does not affect resume boundaries and can be safely dropped or restarted after disconnect."
+          ],
+          "subtasks": [
+            "Define the typed issue chunk encoding for protocol v3.",
+            "Stream issues after the frame loop and before Finish using the new typed model.",
+            "Persist typed issue chunks incrementally into a temporary .issues.part file on the receiver.",
+            "Rename or finalize the issue file only after successful finish, and discard partial issue state safely otherwise."
+          ],
+          "acceptance_criteria": [
+            "Receiver does not need to buffer the entire issue tail in RAM.",
+            "The final issue journal contains both file-scope and discovery-scope entries.",
+            "Issue-tail failures never mutate committed manifest or archive state."
+          ]
+        },
+        {
+          "id": "perf-v3-24",
+          "title": "Add local and integration coverage for manifest grammar, spool recovery, and sender replay",
+          "priority": "high",
+          "status": "todo",
+          "depends_on": [
+            "perf-v3-06",
+            "perf-v3-08",
+            "perf-v3-10",
+            "perf-v3-11"
+          ],
+          "files": [
+            "src/sender/source.rs",
+            "src/sender/session.rs",
+            "tests/connectivity/support.rs",
+            "tests/connectivity/resume.rs",
+            "tests/connectivity/observability.rs"
+          ],
+          "problem": [
+            "The local manifest model is the foundation of v3, but without explicit coverage the team can accidentally reintroduce path-based assumptions or invalid record sequences.",
+            "Recovery and replay bugs are particularly likely around torn tails, invalidation, checkpoint replay, and subtree failure handling."
+          ],
+          "deliverables": [
+            "Tests for canonical DFS ordering, required DirectoryEnter and DirectoryLeave structure, and legal SubtreeSkip sequences.",
+            "Tests for spool corruption detection, torn-tail trimming, invalidation after restart, and replay from sparse checkpoints.",
+            "Tests that reconnect and restart do not trigger a full live rescan in the ordinary v3 path."
+          ],
+          "subtasks": [
+            "Add unit coverage for manifest grammar and illegal transitions.",
+            "Add recovery tests for corrupted or truncated sender spools.",
+            "Add replay tests that rebuild state from checkpoints and tail replay.",
+            "Verify that ordinary reconnect no longer depends on a full live rescan."
+          ],
+          "acceptance_criteria": [
+            "The sender-side manifest model is covered by explicit correctness tests.",
+            "Recovery and replay behavior are tested instead of inferred from happy paths.",
+            "Illegal grammar or silent live-rescan fallback causes test failures."
+          ]
+        },
+        {
+          "id": "perf-v3-25",
+          "title": "Add end-to-end protocol v3 coverage for quotas, ENOSPC, overlap, and typed issues",
+          "priority": "high",
+          "status": "todo",
+          "depends_on": [
+            "perf-v3-18",
+            "perf-v3-20",
+            "perf-v3-21",
+            "perf-v3-22",
+            "perf-v3-23"
+          ],
+          "files": [
+            "tests/connectivity/protocol_flow.rs",
+            "tests/connectivity/resume.rs",
+            "tests/connectivity/observability.rs",
+            "tests/connectivity/support.rs",
+            "tests/connectivity/transport.rs"
+          ],
+          "problem": [
+            "Protocol v3 changes the meaning of resume, frame commit, and issue-tail persistence, so v2 end-to-end coverage is not enough.",
+            "The most expensive regressions will likely come from RTT-sensitive ack cadence, ENOSPC paths, overlap bugs, and invalid message ordering around manifest transfer and issue tails."
+          ],
+          "deliverables": [
+            "End-to-end tests for manifest ack or barrier flow, work_ordinal-based resume, and pipelined manifest plus archive transfer.",
+            "Failure-path coverage for sender spool quota, receiver manifest ENOSPC, invalid message ordering, and typed issue-tail rollback or discard.",
+            "Observability assertions that confirm overlap and durable-boundary behavior."
+          ],
+          "subtasks": [
+            "Cover manifest transfer followed by archive transfer with overlap instead of a fully sequential path.",
+            "Cover receiver-side ENOSPC and verify that committed boundaries do not advance.",
+            "Cover typed issue-tail persistence and safe discard on failure before FinishAck.",
+            "Add protocol negative tests for invalid manifest or issue-tail ordering."
+          ],
+          "acceptance_criteria": [
+            "Protocol v3 error paths are covered explicitly, not only by happy-path tests.",
+            "Receiver ENOSPC and sender quota behavior preserve committed state correctly.",
+            "Overlap and issue-tail behavior are validated by tests instead of by hope."
+          ]
+        },
+        {
+          "id": "perf-v3-26",
+          "title": "Run the comparative benchmark campaign, choose defaults, and document cutover",
+          "priority": "highest",
+          "status": "todo",
+          "depends_on": [
+            "perf-v3-02",
+            "perf-v3-13",
+            "perf-v3-14",
+            "perf-v3-21",
+            "perf-v3-22",
+            "perf-v3-23",
+            "perf-v3-24",
+            "perf-v3-25"
+          ],
+          "files": [
+            "PERFOMANCE_V3.md",
+            "README.md",
+            "AGENTS.md",
+            "src/network/protocol.md",
+            "TASKS.json",
+            "benches/pipeline/results.rs"
+          ],
+          "problem": [
+            "The v3 design explicitly rejects architecture-by-assertion; it must ship only after measured comparison against v2 on the agreed matrix.",
+            "Default tuning values, fallback expectations, and the need for any dual-stack period must come from benchmark data and validated behavior, not from intuition."
+          ],
+          "deliverables": [
+            "A comparative v2 versus v3 benchmark report across the full matrix, including Unix fast path versus fallback executor results.",
+            "Chosen default values for manifest chunk size and ack cadence, justified by measurement.",
+            "A documented cutover decision, including whether a dual-stack period is needed and what documentation changes become part of the release."
+          ],
+          "subtasks": [
+            "Run the frozen benchmark matrix for both v2 and v3.",
+            "Compare time-to-first-frame, throughput, RAM, disk growth, overlap efficiency, and replay latency.",
+            "Choose default CLI tuning values that balance throughput, RTT cost, and disk safety.",
+            "Decide whether protocol v3 needs a staged rollout or can replace v2 directly.",
+            "Update README, AGENTS, protocol documentation, and TASKS backlog status to match the final cutover decision."
+          ],
+          "acceptance_criteria": [
+            "V3 defaults are chosen from benchmark data rather than guesswork.",
+            "The cutover decision is backed by the agreed success gates from PERFOMANCE_V3.md.",
+            "Repository documentation matches the final runtime contract and rollout decision."
           ]
         }
       ]
