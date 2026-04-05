@@ -240,7 +240,9 @@ Field encoding for `v3`:
 
 V3 size limits:
 
-- `ManifestChunk`: maximum `1 MiB`
+- `ManifestChunk` packet body: maximum `1 MiB`
+- `ManifestChunk.bytes` payload: maximum `1048556` bytes (`1 MiB - 20 B`);
+  practical CLI ceiling for `manifest_chunk_kb` is `1023`
 - `FrameChunk`: maximum `1 MiB`
 - every other v3 control body: maximum `64 KiB`
 - total unacked manifest window: maximum `8 MiB` and `65536` records

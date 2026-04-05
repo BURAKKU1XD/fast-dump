@@ -1,137 +1,92 @@
 # fast-dump
 
-This file is the short operational contract for contributors and agents.
-Keep it focused on current behavior, hard constraints, and navigation.
+Operational contract for contributors and agents. Keep this file about current behavior, hard constraints, and navigation.
 
 ## Goal
 
 - Maintain a sender/receiver pair that streams a resumable dump to a remote host.
-- The final receiver artifact must be a valid `.tar.zst` file.
+- Receiver output must be a valid `.tar.zst`.
 - `sender` and `receiver` are named by data flow, not by who opened TCP.
 
-## Performance Priority
+## Priorities
 
-- The project bias is maximum performance: `BLAZING FAST`.
-- Prefer the fastest correct design, even if it is harder to implement or less pretty internally.
-- In hot paths, avoid unnecessary copies, allocations, buffering, syscalls, temp files, and abstraction layers unless they are clearly justified.
-- When choosing between multiple correct approaches, prefer higher throughput, lower latency, and lower RAM/disk overhead.
-- Do not break the external contract, correctness, or resumability for speed unless the task explicitly changes that contract.
+- `BLAZING FAST`: prefer the fastest correct design.
+- In hot paths, avoid unnecessary copies, allocations, buffering, syscalls, temp files, and abstraction unless clearly justified.
+- Do not trade away external contract, correctness, or resumability for speed unless the task explicitly changes that contract.
 
-## Current Runtime Status
+## Current Status
 
-- The repository already contains a working implementation.
-- `fast-dump sender` and `fast-dump receiver` are both exercised by integration tests.
-- Both transport pairings work:
+- The implementation already works and is covered by integration tests.
+- Supported transport pairings:
   - `push`: `sender --connect` with `receiver --listen`
   - `pull`: `sender --listen` with `receiver --connect`
-- The active CLI/runtime contract is still packet version `2`.
-- Frozen `v3` protocol and library-level session helpers exist in code, tests, and benches, but CLI transport has not switched to `v3` by default.
+- The active CLI/runtime contract is packet version `2`.
+- Frozen `v3` protocol and library-level session helpers exist in code, tests, and benches, but CLI transport still defaults to `v2`.
 
-## Non-Negotiable Contract
+## Hard Contract
 
 - Preserve wire compatibility unless the task explicitly changes protocol versioning.
-- Preserve runtime compatibility between Linux and Windows unless the task explicitly scopes behavior to one platform.
-- Use one binary with two subcommands:
-  - `fast-dump sender`
-  - `fast-dump receiver`
-- Each subcommand accepts exactly one transport selector:
-  - `--listen <ADDR>`
-  - `--connect <ADDR>`
-- Cross-process role/pairing errors are rejected during transport establishment and handshake, not by local CLI parsing alone.
-- Sender requires `--source <DIR>`; receiver requires `--data-dir <DIR>`.
-- If `--dump-id` is omitted, sender falls back to the last path component of `--source`.
-- `--threads auto` resolves to `available_parallelism() - 1`, minimum `1`.
-- Runtime validation rejects zero threads, zero reader counts, `min_readers > max_readers`, and `max_sessions < 1`.
-- Archive contents:
-  - regular files that were successfully sent
-  - symlink entries whose targets are preserved without dereferencing when readable
-  - empty directories and directory metadata are ignored
-- Tar paths are relative to the selected root and normalized to `/`.
-- Traversal order is deterministic: depth-first with entries inside each directory sorted by normalized relative path.
-- Source discovery is only for deterministic ordering, filtering, normalization, and stable `file_index` assignment. Scan-time metadata is not the source of truth for tar sizing or live-file validation.
+- Preserve Linux/Windows runtime compatibility unless the task is explicitly platform-scoped.
+- Ship one binary with two subcommands: `fast-dump sender`, `fast-dump receiver`.
+- Each subcommand accepts exactly one transport selector: `--listen <ADDR>` or `--connect <ADDR>`.
+- Reject cross-process role/pairing mismatches during transport establishment and handshake, not only in local CLI parsing.
+- Required args: sender `--source <DIR>`, receiver `--data-dir <DIR>`.
+- Default `--dump-id` to the last path component of `--source`.
+- `--threads auto` = `available_parallelism() - 1`, minimum `1`.
+- Reject invalid runtime settings: zero threads, zero readers, `min_readers > max_readers`, `max_sessions < 1`.
+- Archive rules:
+  - include successfully sent regular files
+  - include readable symlinks without dereferencing
+  - ignore empty directories and directory metadata
+  - use relative tar paths normalized to `/`
+- Keep traversal deterministic: depth-first, with each directory sorted by normalized relative path.
+- Source discovery is only for ordering, filtering, normalization, and stable `file_index`; scan-time metadata is not authoritative for tar sizing or live-file validation.
 - Live-file policy for regular files:
-  - open the file immediately before an attempt
-  - take `size_at_open` from the opened handle
-  - read exactly `size_at_open` bytes for that attempt
-  - if the file grows after `open`, ignore the appended tail for the current dump
-  - if `open` fails or a short read happens, restart the file from scratch
-  - allow at most `3` immediate attempts
-  - if all attempts fail, skip the file and continue
-- The output `.tar.zst` is a concatenation of zstd frames, not one endless zstd stream.
-- Sender-side zstd frames close only on completed file boundaries.
-- Receiver commits whole frames only. On disconnect, at most the current unacked frame may be lost.
-- Active `v2` resume progress is based on deterministic `file_index` plus diagnostic path; skipped files are terminal for the current dump.
-- Sender CLI output is aggregate-only. Do not silently change stable stdout fields or counters.
+  - open immediately before each attempt
+  - use `size_at_open` from the opened handle
+  - read exactly `size_at_open` bytes
+  - ignore appended tail after `open`
+  - on `open` failure or short read, restart the file from scratch
+  - allow at most `3` immediate attempts, then skip the file
+- Output `.tar.zst` is a concatenation of zstd frames, not one endless stream.
+- Sender closes zstd frames only at completed file boundaries.
+- Receiver commits only whole frames; after disconnect, at most the current unacked frame may be lost.
+- Active `v2` resume state is based on deterministic `file_index` plus diagnostic path; skipped files are terminal for the current dump.
+- Sender CLI stdout stays aggregate-only; do not silently change stable fields or counters.
 - Keep `src/network/protocol.rs` and `src/network/protocol.md` synchronized.
 
-## Route Through Docs
+## Read First
 
-Read these in order when you need orientation:
+- `README.md`: user overview, CLI examples, runtime summary.
+- `AGENTS.md`: contributor contract and navigation.
+- `src/network/protocol.md`: wire format, message flow, frozen `v3` notes.
 
-- `README.md`: user-facing overview, CLI examples, runtime summary.
-- `AGENTS.md`: short contributor contract and navigation.
-- `src/network/protocol.md`: wire format, message flow, and frozen `v3` notes.
+## More Context
 
-Use these for deeper context:
-
-- `docs/SAFETY.md`: reliability and test strategy. This is a plan document, not the active runtime contract.
-- `docs/PERFOMANCE_V3.md`: `v3` performance plan, benchmark gates, and current cutover status.
+- `docs/SAFETY.md`: reliability and test strategy; planning doc, not runtime contract.
+- `docs/PERFOMANCE_V3.md`: `v3` performance plan, benchmark gates, and cutover status.
 - `docs/V3_BOTTLENECK.md`: current `v3` bottleneck analysis.
-- `docs/TASKS.json`: machine-readable tracker derived from planning docs.
+- `docs/TASKS.json`: machine-readable tracker.
+- Runtime truth lives in code, `README.md`, and `src/network/protocol.md`. Planning docs explain pending work; do not present frozen or planned behavior as active.
 
-Rule of thumb:
+## Code Map
 
-- Runtime truth lives in code, `README.md`, and `src/network/protocol.md`.
-- Planning docs in `docs/` explain why work exists and what is still pending.
-- Do not describe frozen or planned behavior as if it were already active.
-
-## Route Through The Project
-
-Start here for top-level flow:
-
-- `src/main.rs`: binary entrypoint.
-- `src/app.rs`: CLI dispatch and runtime orchestration.
-- `src/cli/mod.rs`: clap model and argument validation.
-- `src/network/transport.rs`: TCP setup and handshake bootstrap.
-- `src/network/protocol.rs`: packet codec, message definitions, and protocol validation.
-
-Go here for sender work:
-
-- `src/sender/source.rs`: deterministic source discovery and resume validation helpers.
-- `src/sender/readers.rs`: snapshot attempts, retries, buffering, and large-file direct handles.
-- `src/sender/frame.rs`: tar and zstd frame assembly helpers.
-- `src/sender/session.rs`: production streaming send loop.
-- `src/sender/profile.rs`: sender-side pipeline observability.
-
-Go here for receiver work:
-
-- `src/receiver/journal.rs`: persisted receiver state and recovery.
-- `src/receiver/resume.rs`: resume bootstrap and reconciliation.
-- `src/receiver/frame.rs`: frame commit path.
-- `src/receiver/finish.rs`: finalization into the completed archive.
-- `src/receiver/session.rs`: receiver session loop.
-- `src/receiver/listener.rs`: listen-mode accept loop and session limits.
-- `src/receiver/shared.rs`: shared receiver helpers and types.
-
-Go here for validation:
-
-- `tests/connectivity/`: end-to-end transport, protocol flow, resume, roundtrip, and observability regressions.
-- `benches/`: benchmark entrypoints, including the loopback matrix runner.
+- Top-level flow: `src/main.rs`, `src/app.rs`, `src/cli/mod.rs`, `src/network/transport.rs`, `src/network/protocol.rs`.
+- Sender: `src/sender/source.rs`, `src/sender/readers.rs`, `src/sender/frame.rs`, `src/sender/session.rs`, `src/sender/profile.rs`.
+- Receiver: `src/receiver/journal.rs`, `src/receiver/resume.rs`, `src/receiver/frame.rs`, `src/receiver/finish.rs`, `src/receiver/session.rs`, `src/receiver/listener.rs`, `src/receiver/shared.rs`.
+- Validation: `tests/connectivity/`, `benches/`.
 
 ## Working Rules
 
-- Leave explanatory comments in code in Russian.
-- Prefer comments that explain purpose, data flow, and non-obvious Rust details.
-- Keep fast paths and optimizations compatible with both Linux and Windows, or provide a correct fallback with the same external behavior.
-- Keep `src/sender/mod.rs` and `src/receiver/mod.rs` as thin facades with re-exports only.
-- Prefer `pub(crate)` over `pub` where possible.
+- Write explanatory code comments in Russian; prefer comments about purpose, data flow, and non-obvious Rust details.
+- Keep fast paths compatible with Linux and Windows, or provide a correct fallback with the same external behavior.
+- Keep `src/sender/mod.rs` and `src/receiver/mod.rs` as thin re-export facades.
+- Prefer `pub(crate)` over `pub`.
 - Keep tests close to the sender module they exercise when practical.
 - Keep `README.md`, `AGENTS.md`, and `src/network/protocol.md` aligned with actual runtime behavior.
-- When CLI flags, protocol fields, session flow, or resume semantics change, update docs in the same task.
+- If CLI flags, protocol fields, session flow, or resume semantics change, update docs in the same task.
 
 ## Verification
-
-Before landing behavior changes, run:
 
 - `cargo test --quiet`
 - `cargo clippy --all-targets --all-features`
