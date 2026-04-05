@@ -13,6 +13,12 @@ pub(crate) const MANY_SMALL_FILES_DATASET: &str = "manySmallFiles";
 pub(crate) const BIG_FILES_DATASET: &str = "bigFiles";
 pub(crate) const MIXED_DATASET: &str = "mixed";
 pub(crate) const DEFAULT_MEMORY_BUDGET_MIB: u64 = 512;
+pub(crate) const LOOPBACK_LOCALHOST_PROFILE: &str = "loopback-localhost";
+pub(crate) const LAN_LOW_RTT_PROFILE: &str = "lan-low-rtt";
+pub(crate) const WAN_MODERATE_RTT_PROFILE: &str = "wan-moderate-rtt";
+pub(crate) const WAN_HIGH_RTT_PROFILE: &str = "wan-high-rtt";
+pub(crate) const BANDWIDTH_LIMITED_PROFILE: &str = "bandwidth-limited";
+pub(crate) const LOSSY_RECONNECT_PRONE_PROFILE: &str = "lossy-reconnect-prone";
 pub(crate) const PREPARE_SMALL_FILE_COUNT: usize = 40_000;
 pub(crate) const MAX_SMALL_FILE_DEPTH: usize = 7;
 pub(crate) const PREPARE_FRAME_TARGET_BYTES: u64 = 64 * 1024 * 1024;
@@ -45,6 +51,256 @@ pub(crate) struct MatrixDataset {
     pub(crate) name: &'static str,
     pub(crate) path: PathBuf,
 }
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(crate) enum BenchmarkProtocolRuntime {
+    V2,
+    V3,
+}
+
+impl BenchmarkProtocolRuntime {
+    pub(crate) const fn id(self) -> &'static str {
+        match self {
+            Self::V2 => "v2",
+            Self::V3 => "v3",
+        }
+    }
+}
+
+impl std::fmt::Display for BenchmarkProtocolRuntime {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.id())
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BenchmarkCoverage {
+    Implemented,
+    Partial,
+    Planned,
+}
+
+impl BenchmarkCoverage {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Implemented => "implemented",
+            Self::Partial => "partial",
+            Self::Planned => "planned",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct BenchmarkDatasetPlan {
+    pub(crate) id: &'static str,
+    pub(crate) title: &'static str,
+    pub(crate) coverage: BenchmarkCoverage,
+    pub(crate) current_fixture: &'static str,
+    pub(crate) primary_goal: &'static str,
+    pub(crate) notes: &'static str,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct BenchmarkNetworkProfile {
+    pub(crate) id: &'static str,
+    pub(crate) title: &'static str,
+    pub(crate) coverage: BenchmarkCoverage,
+    pub(crate) rtt_ms: &'static str,
+    pub(crate) bandwidth_limit: &'static str,
+    pub(crate) loss_or_disconnects: &'static str,
+    pub(crate) primary_goal: &'static str,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct BenchmarkNetworkShape {
+    pub(crate) rtt_ms: u64,
+    pub(crate) bandwidth_mib_per_sec: Option<u64>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct BenchmarkComparisonRule {
+    pub(crate) id: &'static str,
+    pub(crate) rule: &'static str,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct BenchmarkSuccessGate {
+    pub(crate) id: &'static str,
+    pub(crate) title: &'static str,
+    pub(crate) rule: &'static str,
+    pub(crate) evidence: &'static str,
+}
+
+const BENCHMARK_DATASET_PLAN: &[BenchmarkDatasetPlan] = &[
+    BenchmarkDatasetPlan {
+        id: "million-tiny-files",
+        title: "Million tiny files",
+        coverage: BenchmarkCoverage::Planned,
+        current_fixture: "planned dedicated dataset; current manySmallFiles is only a developer-scale proxy",
+        primary_goal: "Stress deterministic traversal, manifest size, replay cost, and RAM growth on extreme file counts.",
+        notes: "Required for cutover because v3 must not regress on tiny-file trees or grow RAM linearly with entry count.",
+    },
+    BenchmarkDatasetPlan {
+        id: "deep-tree",
+        title: "Deep tree tiny files",
+        coverage: BenchmarkCoverage::Partial,
+        current_fixture: "manySmallFiles depth=7, files=40000",
+        primary_goal: "Measure path-stack, directory enter/leave churn, and replay cost on nested trees.",
+        notes: "Current synthetic dataset exercises nesting, but not the target v3 depth 9-12 or million-entry scale.",
+    },
+    BenchmarkDatasetPlan {
+        id: "mixed-working-set",
+        title: "Mixed working set",
+        coverage: BenchmarkCoverage::Implemented,
+        current_fixture: "mixed",
+        primary_goal: "Track general-purpose throughput, compression ratio, and stage balance on realistic size and entropy mixes.",
+        notes: "This is the main baseline for comparing default knobs before adding manifest-specific metrics.",
+    },
+    BenchmarkDatasetPlan {
+        id: "unstable-subtree",
+        title: "Unstable subtree",
+        coverage: BenchmarkCoverage::Planned,
+        current_fixture: "planned fault-style dataset with live churn and subtree skips",
+        primary_goal: "Measure replay, retry, discovery issue volume, and overlap behavior under partial subtree instability.",
+        notes: "Needed to prove v3 replay and discovery journaling do not fall back to full live rescans.",
+    },
+    BenchmarkDatasetPlan {
+        id: "mount-backed-source",
+        title: "Mount-backed source",
+        coverage: BenchmarkCoverage::Planned,
+        current_fixture: "planned external corpus or snapshot-backed source adapter run",
+        primary_goal: "Validate source-backend boundaries, mount-aware fast paths, and realistic storage latency effects.",
+        notes: "This remains outside committed synthetic fixtures but is part of the frozen acceptance matrix.",
+    },
+    BenchmarkDatasetPlan {
+        id: "fallback-vs-unix",
+        title: "Fallback vs Unix executor",
+        coverage: BenchmarkCoverage::Planned,
+        current_fixture: "planned paired corpus executed once via Unix fast path and once via fallback executor",
+        primary_goal: "Compare correctness and throughput without allowing the fallback executor to become an unmeasured legacy path.",
+        notes: "The same corpus and network profile must be used for both execution layers.",
+    },
+    BenchmarkDatasetPlan {
+        id: "large-payload-baseline",
+        title: "Large payload baseline",
+        coverage: BenchmarkCoverage::Implemented,
+        current_fixture: "bigFiles",
+        primary_goal: "Keep a control case for compression throughput, frame isolation, and receiver fsync costs on large files.",
+        notes: "This is auxiliary and does not replace the required tiny-file and replay-heavy matrix cases.",
+    },
+];
+
+const BENCHMARK_NETWORK_PROFILES: &[BenchmarkNetworkProfile] = &[
+    BenchmarkNetworkProfile {
+        id: LOOPBACK_LOCALHOST_PROFILE,
+        title: "Loopback localhost baseline",
+        coverage: BenchmarkCoverage::Implemented,
+        rtt_ms: "<1",
+        bandwidth_limit: "host-limited",
+        loss_or_disconnects: "none",
+        primary_goal: "Fast developer-local signal for stage balance before shaped-network validation.",
+    },
+    BenchmarkNetworkProfile {
+        id: LAN_LOW_RTT_PROFILE,
+        title: "Low-latency LAN",
+        coverage: BenchmarkCoverage::Implemented,
+        rtt_ms: "1",
+        bandwidth_limit: ">= 250 MiB/s",
+        loss_or_disconnects: "none",
+        primary_goal: "Measure throughput without letting durable ack cadence disappear into loopback noise.",
+    },
+    BenchmarkNetworkProfile {
+        id: WAN_MODERATE_RTT_PROFILE,
+        title: "Moderate WAN RTT",
+        coverage: BenchmarkCoverage::Implemented,
+        rtt_ms: "30",
+        bandwidth_limit: ">= 125 MiB/s",
+        loss_or_disconnects: "none",
+        primary_goal: "Expose manifest ack cadence and overlap costs under realistic WAN latency.",
+    },
+    BenchmarkNetworkProfile {
+        id: WAN_HIGH_RTT_PROFILE,
+        title: "High RTT durable-ack cost",
+        coverage: BenchmarkCoverage::Implemented,
+        rtt_ms: "100",
+        bandwidth_limit: ">= 125 MiB/s",
+        loss_or_disconnects: "none",
+        primary_goal: "Stress the cost of every durable manifest or frame boundary acknowledgment.",
+    },
+    BenchmarkNetworkProfile {
+        id: BANDWIDTH_LIMITED_PROFILE,
+        title: "Bandwidth-limited link",
+        coverage: BenchmarkCoverage::Implemented,
+        rtt_ms: "30",
+        bandwidth_limit: "25 MiB/s",
+        loss_or_disconnects: "none",
+        primary_goal: "Measure overlap and chunk-size choices when bandwidth, not CPU, is the hard limit.",
+    },
+    BenchmarkNetworkProfile {
+        id: LOSSY_RECONNECT_PRONE_PROFILE,
+        title: "Lossy or reconnect-prone link",
+        coverage: BenchmarkCoverage::Planned,
+        rtt_ms: "60",
+        bandwidth_limit: "25 MiB/s",
+        loss_or_disconnects: "0.5% loss or forced disconnect every 256 MiB",
+        primary_goal: "Measure replay latency, durable resume boundaries, and issue-tail restart behavior.",
+    },
+];
+
+const BENCHMARK_COMPARISON_RULES: &[BenchmarkComparisonRule] = &[
+    BenchmarkComparisonRule {
+        id: "compare-like-for-like",
+        rule: "Compare v2 and v3 only on the same machine, dataset, network profile, sender knobs, and warm/cold cache mode.",
+    },
+    BenchmarkComparisonRule {
+        id: "median-and-tail",
+        rule: "Use repeats >= 5, report median as the default comparison number, and keep p90 alongside it for instability detection.",
+    },
+    BenchmarkComparisonRule {
+        id: "loopback-is-not-cutover",
+        rule: "Loopback localhost is a developer baseline only; it cannot by itself justify a v3 cutover or default tuning choice.",
+    },
+    BenchmarkComparisonRule {
+        id: "full-matrix-before-cutover",
+        rule: "Cutover requires the full required dataset and network-profile matrix, not isolated wins on a single workload.",
+    },
+];
+
+const BENCHMARK_SUCCESS_GATES: &[BenchmarkSuccessGate] = &[
+    BenchmarkSuccessGate {
+        id: "whole-file-correctness",
+        title: "Whole-file correctness remains non-negotiable",
+        rule: "Every compared run must pass the relevant safety and archive-integrity suites before any performance number counts.",
+        evidence: "Connectivity and archive-correctness tests stay green on the same revision that produced the benchmark artifact.",
+    },
+    BenchmarkSuccessGate {
+        id: "bounded-ram",
+        title: "RAM stays explicitly bounded",
+        rule: "Peak sender and receiver RSS must stay within the declared benchmark budget for every required dataset/profile run.",
+        evidence: "Peak RSS metrics are recorded per run; million-file and deep-tree runs must not require relaxed budgets to complete.",
+    },
+    BenchmarkSuccessGate {
+        id: "bounded-disk",
+        title: "Disk growth stays explicitly bounded",
+        rule: "Sender spool bytes, receiver manifest bytes, and issue-tail temp bytes must stay within declared quotas and clean up after abort paths.",
+        evidence: "Benchmark artifacts record spool, manifest, and issue-tail growth together with abort or reconnect scenarios.",
+    },
+    BenchmarkSuccessGate {
+        id: "resume-without-full-live-rescan",
+        title: "Reconnect does not trigger a full live rescan",
+        rule: "Ordinary reconnect and restart flows must resume from durable manifest or checkpoint state instead of rescanning the full live tree.",
+        evidence: "Replay latency and checkpoint-replay metrics are present, and the ordinary v3 path reports no fallback full-rescan event.",
+    },
+    BenchmarkSuccessGate {
+        id: "target-throughput-non-regression",
+        title: "Target scenarios do not regress throughput",
+        rule: "v3 must match or improve v2 median throughput on the required target scenarios after accounting for the same correctness and resource budgets.",
+        evidence: "Per-scenario median throughput for the agreed matrix is stored and compared directly between v2 and v3 artifacts.",
+    },
+];
+
+const BENCHMARK_PROTOCOL_RUNTIMES: &[BenchmarkProtocolRuntime] =
+    &[BenchmarkProtocolRuntime::V2, BenchmarkProtocolRuntime::V3];
 
 impl BenchDir {
     pub(crate) fn new(prefix: &str) -> Self {
@@ -384,11 +640,80 @@ fn sample_send_options() -> SendOptions {
         min_readers: 2,
         max_readers: 8,
         read_buffer_bytes: 1024 * 1024,
+        manifest_chunk_bytes: 256 * 1024,
+        manifest_ack_records: 4096,
+        manifest_ack_bytes: 1024 * 1024,
     }
 }
 
 pub(crate) fn default_matrix_send_options() -> SendOptions {
     sample_send_options()
+}
+
+pub(crate) fn benchmark_dataset_plan() -> &'static [BenchmarkDatasetPlan] {
+    BENCHMARK_DATASET_PLAN
+}
+
+pub(crate) fn benchmark_network_profiles() -> &'static [BenchmarkNetworkProfile] {
+    BENCHMARK_NETWORK_PROFILES
+}
+
+pub(crate) fn benchmark_network_profile(
+    profile_id: &str,
+) -> Option<&'static BenchmarkNetworkProfile> {
+    BENCHMARK_NETWORK_PROFILES
+        .iter()
+        .find(|profile| profile.id == profile_id)
+}
+
+pub(crate) fn benchmark_network_shape(profile_id: &str) -> Option<BenchmarkNetworkShape> {
+    match profile_id {
+        LOOPBACK_LOCALHOST_PROFILE => Some(BenchmarkNetworkShape {
+            rtt_ms: 0,
+            bandwidth_mib_per_sec: None,
+        }),
+        LAN_LOW_RTT_PROFILE => Some(BenchmarkNetworkShape {
+            rtt_ms: 1,
+            bandwidth_mib_per_sec: Some(250),
+        }),
+        WAN_MODERATE_RTT_PROFILE => Some(BenchmarkNetworkShape {
+            rtt_ms: 30,
+            bandwidth_mib_per_sec: Some(125),
+        }),
+        WAN_HIGH_RTT_PROFILE => Some(BenchmarkNetworkShape {
+            rtt_ms: 100,
+            bandwidth_mib_per_sec: Some(125),
+        }),
+        BANDWIDTH_LIMITED_PROFILE => Some(BenchmarkNetworkShape {
+            rtt_ms: 30,
+            bandwidth_mib_per_sec: Some(25),
+        }),
+        LOSSY_RECONNECT_PRONE_PROFILE => None,
+        _ => None,
+    }
+}
+
+pub(crate) fn benchmark_protocol_runtimes() -> &'static [BenchmarkProtocolRuntime] {
+    BENCHMARK_PROTOCOL_RUNTIMES
+}
+
+pub(crate) fn default_matrix_network_profiles() -> Vec<&'static str> {
+    BENCHMARK_NETWORK_PROFILES
+        .iter()
+        .filter(|profile| {
+            profile.coverage == BenchmarkCoverage::Implemented
+                && benchmark_network_shape(profile.id).is_some()
+        })
+        .map(|profile| profile.id)
+        .collect()
+}
+
+pub(crate) fn benchmark_comparison_rules() -> &'static [BenchmarkComparisonRule] {
+    BENCHMARK_COMPARISON_RULES
+}
+
+pub(crate) fn benchmark_success_gates() -> &'static [BenchmarkSuccessGate] {
+    BENCHMARK_SUCCESS_GATES
 }
 
 pub(crate) fn matrix_thread_counts() -> Vec<u32> {

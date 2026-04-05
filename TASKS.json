@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-04-03",
+  "updated_at": "2026-04-04",
   "tracks": [
     {
       "id": "safety",
@@ -17,7 +17,7 @@
           "id": "safety-01",
           "title": "Stabilize the test harness and remove critical dependence on fixed sleeps",
           "priority": "highest",
-          "status": "todo",
+          "status": "done",
           "depends_on": [],
           "files": [
             "tests/connectivity/support.rs",
@@ -48,7 +48,7 @@
           "id": "safety-02",
           "title": "Create and lock down a matrix of critical failure points",
           "priority": "highest",
-          "status": "todo",
+          "status": "done",
           "depends_on": [
             "safety-01"
           ],
@@ -81,7 +81,7 @@
           "id": "safety-03",
           "title": "Expand protocol negative coverage for invalid message ordering and invalid states",
           "priority": "high",
-          "status": "todo",
+          "status": "done",
           "depends_on": [
             "safety-02"
           ],
@@ -114,7 +114,7 @@
           "id": "safety-04",
           "title": "Strengthen receiver state integrity coverage for journal, truncate, and rollback",
           "priority": "high",
-          "status": "todo",
+          "status": "done",
           "depends_on": [
             "safety-02"
           ],
@@ -377,7 +377,7 @@
           "id": "perf-v3-01",
           "title": "Freeze the benchmark matrix, datasets, network profiles, and success gates",
           "priority": "highest",
-          "status": "todo",
+          "status": "done",
           "depends_on": [],
           "files": [
             "PERFOMANCE_V3.md",
@@ -411,7 +411,7 @@
           "id": "perf-v3-02",
           "title": "Expand the benchmark and observability harness for v3-specific metrics",
           "priority": "highest",
-          "status": "todo",
+          "status": "done",
           "depends_on": [
             "perf-v3-01"
           ],
@@ -453,7 +453,7 @@
           "id": "perf-v3-03",
           "title": "Define the canonical manifest record grammar and local spool format",
           "priority": "highest",
-          "status": "todo",
+          "status": "done",
           "depends_on": [
             "perf-v3-01"
           ],
@@ -487,7 +487,7 @@
           "id": "perf-v3-04",
           "title": "Define source identity and manifest.meta state transitions",
           "priority": "highest",
-          "status": "todo",
+          "status": "done",
           "depends_on": [
             "perf-v3-03"
           ],
@@ -521,7 +521,7 @@
           "id": "perf-v3-05",
           "title": "Implement sender spool append framing, checksums, and atomic checkpoint writes",
           "priority": "highest",
-          "status": "todo",
+          "status": "done",
           "depends_on": [
             "perf-v3-03",
             "perf-v3-04"
@@ -555,7 +555,7 @@
           "id": "perf-v3-06",
           "title": "Implement sender recovery, invalidation, and cleanup policy for sealed and unsealed spools",
           "priority": "highest",
-          "status": "todo",
+          "status": "done",
           "depends_on": [
             "perf-v3-04",
             "perf-v3-05"
@@ -591,7 +591,7 @@
           "id": "perf-v3-07",
           "title": "Implement sender spool quota, disk budget enforcement, and discovery backpressure",
           "priority": "high",
-          "status": "todo",
+          "status": "done",
           "depends_on": [
             "perf-v3-05"
           ],
@@ -626,7 +626,7 @@
           "id": "perf-v3-08",
           "title": "Implement sparse checkpoints and checkpointed replay state",
           "priority": "highest",
-          "status": "todo",
+          "status": "done",
           "depends_on": [
             "perf-v3-05"
           ],
@@ -659,7 +659,7 @@
           "id": "perf-v3-09",
           "title": "Refactor sender discovery into a streaming manifest builder",
           "priority": "highest",
-          "status": "todo",
+          "status": "done",
           "depends_on": [
             "perf-v3-03",
             "perf-v3-05"
@@ -694,7 +694,7 @@
           "id": "perf-v3-10",
           "title": "Implement discovery-time file type policy and skip reasons in the manifest builder",
           "priority": "high",
-          "status": "todo",
+          "status": "done",
           "depends_on": [
             "perf-v3-09"
           ],
@@ -728,7 +728,7 @@
           "id": "perf-v3-11",
           "title": "Implement manifest-driven sender replay and resume without full live rescan",
           "priority": "highest",
-          "status": "todo",
+          "status": "done",
           "depends_on": [
             "perf-v3-06",
             "perf-v3-08",
@@ -765,7 +765,7 @@
           "id": "perf-v3-12",
           "title": "Implement reusable path materialization for diagnostics, tar headers, and fallback execution",
           "priority": "high",
-          "status": "todo",
+          "status": "done",
           "depends_on": [
             "perf-v3-08",
             "perf-v3-09"
@@ -801,7 +801,7 @@
           "id": "perf-v3-13",
           "title": "Implement the Unix openat or dirfd executor as the preferred fast path",
           "priority": "highest",
-          "status": "todo",
+          "status": "done",
           "depends_on": [
             "perf-v3-11",
             "perf-v3-12"
@@ -839,7 +839,7 @@
           "id": "perf-v3-14",
           "title": "Implement the cross-platform fallback executor on the same manifest model",
           "priority": "high",
-          "status": "todo",
+          "status": "done",
           "depends_on": [
             "perf-v3-11",
             "perf-v3-12"
@@ -876,7 +876,7 @@
           "id": "perf-v3-15",
           "title": "Introduce a source backend boundary for pinned, snapshotted, and ordinary path sources",
           "priority": "medium",
-          "status": "todo",
+          "status": "done",
           "depends_on": [
             "perf-v3-11"
           ],
@@ -911,7 +911,7 @@
           "id": "perf-v3-16",
           "title": "Split sender reporting into file issues and discovery issues with a typed issue model",
           "priority": "high",
-          "status": "todo",
+          "status": "done",
           "depends_on": [
             "perf-v3-11"
           ],
@@ -946,7 +946,7 @@
           "id": "perf-v3-17",
           "title": "Implement receiver-side manifest store, boundary journaling, and integrity framing",
           "priority": "highest",
-          "status": "todo",
+          "status": "done",
           "depends_on": [
             "perf-v3-11"
           ],
@@ -982,7 +982,7 @@
           "id": "perf-v3-18",
           "title": "Implement receiver-side quota, ENOSPC behavior, and cleanup for manifest and issue temp files",
           "priority": "high",
-          "status": "todo",
+          "status": "done",
           "depends_on": [
             "perf-v3-17"
           ],
@@ -1019,7 +1019,7 @@
           "id": "perf-v3-19",
           "title": "Define the protocol v3 message model and documentation",
           "priority": "highest",
-          "status": "todo",
+          "status": "done",
           "depends_on": [
             "perf-v3-16",
             "perf-v3-17"
@@ -1054,7 +1054,7 @@
           "id": "perf-v3-20",
           "title": "Implement manifest transfer commit flow, hard caps, and sender tuning knobs",
           "priority": "highest",
-          "status": "todo",
+          "status": "done",
           "depends_on": [
             "perf-v3-19"
           ],
@@ -1090,7 +1090,7 @@
           "id": "perf-v3-21",
           "title": "Implement pipelined manifest transfer overlapped with archive transfer",
           "priority": "highest",
-          "status": "todo",
+          "status": "done",
           "depends_on": [
             "perf-v3-13",
             "perf-v3-14",
@@ -1129,7 +1129,7 @@
           "id": "perf-v3-22",
           "title": "Move resume, frame, ack, and finish semantics to work_ordinal",
           "priority": "highest",
-          "status": "todo",
+          "status": "done",
           "depends_on": [
             "perf-v3-19",
             "perf-v3-20"
@@ -1168,7 +1168,7 @@
           "id": "perf-v3-23",
           "title": "Implement typed issue-tail streaming and receiver persistence without full in-memory buffering",
           "priority": "high",
-          "status": "todo",
+          "status": "done",
           "depends_on": [
             "perf-v3-16",
             "perf-v3-17",
@@ -1206,7 +1206,7 @@
           "id": "perf-v3-24",
           "title": "Add local and integration coverage for manifest grammar, spool recovery, and sender replay",
           "priority": "high",
-          "status": "todo",
+          "status": "done",
           "depends_on": [
             "perf-v3-06",
             "perf-v3-08",
@@ -1245,7 +1245,7 @@
           "id": "perf-v3-25",
           "title": "Add end-to-end protocol v3 coverage for quotas, ENOSPC, overlap, and typed issues",
           "priority": "high",
-          "status": "todo",
+          "status": "done",
           "depends_on": [
             "perf-v3-18",
             "perf-v3-20",
@@ -1285,7 +1285,7 @@
           "id": "perf-v3-26",
           "title": "Run the comparative benchmark campaign, choose defaults, and document cutover",
           "priority": "highest",
-          "status": "todo",
+          "status": "done",
           "depends_on": [
             "perf-v3-02",
             "perf-v3-13",

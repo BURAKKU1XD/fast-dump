@@ -40,9 +40,15 @@ fn sample_row(repeat_index: u32, total_duration_ms: f64, sent_frames: u64) -> Ra
     RawResultRow {
         scenario: ScenarioKey {
             dataset: "mixed".to_owned(),
+            protocol_runtime: "v3".to_owned(),
+            network_profile: "wan-high-rtt".to_owned(),
+            executor: "default".to_owned(),
             threads: 4,
             frame_target_mb: 16,
             read_buffer_kb: 256,
+            manifest_chunk_kb: 256,
+            manifest_ack_records: 4096,
+            manifest_ack_kb: 1024,
             large_file_single_frame_threshold_mib: 16,
         },
         repeat_index,
@@ -65,6 +71,7 @@ fn sample_row(repeat_index: u32, total_duration_ms: f64, sent_frames: u64) -> Ra
         ack_wait_ms: 30.0 + repeat_index as f64,
         flush_count: 0,
         max_inflight_dirs: 6,
+        max_dirfd_depth: 4,
         read_mib_s: 12.5,
         compress_mib_s: 23.5,
         send_mib_s: 34.5,
@@ -78,6 +85,20 @@ fn sample_row(repeat_index: u32, total_duration_ms: f64, sent_frames: u64) -> Ra
         compression_ratio_pct: 30.0,
         wire_pct_of_read: 70.5,
         wire_overhead_pct: 0.5,
+        manifest_build_bytes: 120_000,
+        manifest_build_duration_ms: 41.0 + repeat_index as f64,
+        manifest_transfer_bytes: 98_000,
+        manifest_transfer_duration_ms: 51.0 + repeat_index as f64,
+        manifest_spool_read_bytes: 97_000,
+        manifest_spool_read_duration_ms: 61.0 + repeat_index as f64,
+        manifest_replay_bytes: 12_000,
+        manifest_replay_duration_ms: 71.0 + repeat_index as f64,
+        manifest_replay_records: 20 + repeat_index as u64,
+        receiver_manifest_bytes: 99_000,
+        receiver_issue_tail_bytes: 123,
+        disk_budget_wait_ms: 81.0 + repeat_index as f64,
+        time_to_first_frame_ms: 91.0 + repeat_index as f64,
+        overlap_efficiency_pct: 42.0 + repeat_index as f64,
     }
 }
 
@@ -111,6 +132,8 @@ fn raw_results_roundtrip_preserves_duration_and_wire_metrics() {
     assert_eq!(loaded.len(), 1);
 
     let parsed = &loaded[0];
+    assert_eq!(parsed.scenario.protocol_runtime, "v3");
+    assert_eq!(parsed.scenario.network_profile, "wan-high-rtt");
     assert_eq!(parsed.skipped_files, 3);
     assert_eq!(parsed.sent_frames, 9);
     assert_eq!(parsed.frame_aborts, 2);
@@ -125,7 +148,25 @@ fn raw_results_roundtrip_preserves_duration_and_wire_metrics() {
     assert_eq!(parsed.ack_wait_ms, 31.0);
     assert_eq!(parsed.flush_count, 0);
     assert_eq!(parsed.max_inflight_dirs, 6);
+    assert_eq!(parsed.max_dirfd_depth, 4);
     assert_eq!(parsed.wire_overhead_pct, 0.5);
+    assert_eq!(parsed.manifest_build_bytes, 120_000);
+    assert_eq!(parsed.manifest_build_duration_ms, 42.0);
+    assert_eq!(parsed.manifest_transfer_bytes, 98_000);
+    assert_eq!(parsed.manifest_transfer_duration_ms, 52.0);
+    assert_eq!(parsed.manifest_spool_read_bytes, 97_000);
+    assert_eq!(parsed.manifest_spool_read_duration_ms, 62.0);
+    assert_eq!(parsed.manifest_replay_bytes, 12_000);
+    assert_eq!(parsed.manifest_replay_duration_ms, 72.0);
+    assert_eq!(parsed.manifest_replay_records, 21);
+    assert_eq!(parsed.receiver_manifest_bytes, 99_000);
+    assert_eq!(parsed.receiver_issue_tail_bytes, 123);
+    assert_eq!(parsed.disk_budget_wait_ms, 82.0);
+    assert_eq!(parsed.time_to_first_frame_ms, 92.0);
+    assert_eq!(parsed.overlap_efficiency_pct, 43.0);
+    assert_eq!(parsed.scenario.manifest_chunk_kb, 256);
+    assert_eq!(parsed.scenario.manifest_ack_records, 4096);
+    assert_eq!(parsed.scenario.manifest_ack_kb, 1024);
 }
 
 #[test]
@@ -136,6 +177,8 @@ fn aggregate_summary_rows_averages_new_schema_fields() {
     assert_eq!(summaries.len(), 1);
 
     let summary = &summaries[0];
+    assert_eq!(summary.scenario.protocol_runtime, "v3");
+    assert_eq!(summary.scenario.network_profile, "wan-high-rtt");
     assert_eq!(summary.skipped_files, 3);
     assert_eq!(summary.sent_frames, 12);
     assert_eq!(summary.frame_aborts, 2);
@@ -150,5 +193,23 @@ fn aggregate_summary_rows_averages_new_schema_fields() {
     assert_eq!(summary.ack_wait_ms, 31.5);
     assert_eq!(summary.flush_count, 0);
     assert_eq!(summary.max_inflight_dirs, 6);
+    assert_eq!(summary.max_dirfd_depth, 4);
     assert_eq!(summary.wire_overhead_pct, 0.5);
+    assert_eq!(summary.manifest_build_bytes, 120_000);
+    assert_eq!(summary.manifest_build_duration_ms, 42.5);
+    assert_eq!(summary.manifest_transfer_bytes, 98_000);
+    assert_eq!(summary.manifest_transfer_duration_ms, 52.5);
+    assert_eq!(summary.manifest_spool_read_bytes, 97_000);
+    assert_eq!(summary.manifest_spool_read_duration_ms, 62.5);
+    assert_eq!(summary.manifest_replay_bytes, 12_000);
+    assert_eq!(summary.manifest_replay_duration_ms, 72.5);
+    assert_eq!(summary.manifest_replay_records, 21);
+    assert_eq!(summary.receiver_manifest_bytes, 99_000);
+    assert_eq!(summary.receiver_issue_tail_bytes, 123);
+    assert_eq!(summary.disk_budget_wait_ms, 82.5);
+    assert_eq!(summary.time_to_first_frame_ms, 92.5);
+    assert_eq!(summary.overlap_efficiency_pct, 43.5);
+    assert_eq!(summary.scenario.manifest_chunk_kb, 256);
+    assert_eq!(summary.scenario.manifest_ack_records, 4096);
+    assert_eq!(summary.scenario.manifest_ack_kb, 1024);
 }

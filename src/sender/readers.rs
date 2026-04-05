@@ -677,7 +677,7 @@ impl ReaderPool {
         file: InputFile,
         max_attempts: u32,
     ) -> Result<()> {
-        test_hooks::record_scheduled_reader_task(&file.abs_path);
+        test_hooks::record_scheduled_reader_task(file.abs_path());
         self.task_tx
             .send(ReaderCommand::Read(ReaderTask {
                 file,
@@ -877,7 +877,10 @@ fn read_file_outcome(task: ReaderTask) -> std::result::Result<FileReadOutcome, S
             Err(AttemptFailure::Open(message)) => {
                 debug!(
                     "sender snapshot open attempt failed: file_index={} path={} attempt={} message={}",
-                    file.index, file.rel_path, attempt, message
+                    file.index,
+                    file.rel_path(),
+                    attempt,
+                    message
                 );
                 if attempt == max_attempts.max(1) {
                     return Ok(FileReadOutcome::Skip(SkippedFile {
@@ -896,7 +899,10 @@ fn read_file_outcome(task: ReaderTask) -> std::result::Result<FileReadOutcome, S
                 saw_retryable_failure = true;
                 debug!(
                     "sender snapshot attempt will retry: file_index={} path={} attempt={} message={}",
-                    file.index, file.rel_path, attempt, message
+                    file.index,
+                    file.rel_path(),
+                    attempt,
+                    message
                 );
                 if attempt == max_attempts.max(1) {
                     return Ok(FileReadOutcome::Skip(SkippedFile {
@@ -923,36 +929,39 @@ fn capture_snapshot_attempt(
     let read_started = Instant::now();
     // Отдельный watchdog нужен, потому что blocking open/read может зависнуть
     // без ошибки и без возврата управления в reader worker.
-    let _watchdog = start_long_read_watchdog(&file.abs_path, "snapshot-capture", attempt);
-    test_hooks::before_open(&file.abs_path).map_err(|error| {
+    let _watchdog = start_long_read_watchdog(file.abs_path(), "snapshot-capture", attempt);
+    test_hooks::before_open(file.abs_path()).map_err(|error| {
         AttemptFailure::Open(format!(
             "failed to prepare sender file {} before open: {error}",
-            file.abs_path.display()
+            file.abs_path().display()
         ))
     })?;
 
-    let mut input = File::open(&file.abs_path).map_err(|error| {
+    let mut input = file.open_for_read().map_err(|error| {
         AttemptFailure::Open(format!(
             "failed to open sender file {}: {error}",
-            file.abs_path.display()
+            file.abs_path().display()
         ))
     })?;
+    if let Some(profile) = profile {
+        profile.record_dirfd_depth(file.dirfd_depth());
+    }
     let size_at_open = input
         .metadata()
         .map_err(|error| {
             AttemptFailure::Retryable(format!(
                 "failed to read sender file metadata from opened handle {}: {error}",
-                file.abs_path.display()
+                file.abs_path().display()
             ))
         })?
         .len();
-    test_hooks::after_open(&file.abs_path).map_err(|error| {
+    test_hooks::after_open(file.abs_path()).map_err(|error| {
         AttemptFailure::Fatal(format!(
             "failed to prepare sender file {} after open: {error}",
-            file.abs_path.display()
+            file.abs_path().display()
         ))
     })?;
-    let forced_short_read_limit = test_hooks::forced_short_read_after_open(&file.abs_path);
+    let forced_short_read_limit = test_hooks::forced_short_read_after_open(file.abs_path());
     if size_at_open > IN_MEMORY_SNAPSHOT_THRESHOLD_BYTES {
         return Ok(FileReadOutcome::Direct(DirectFileStream {
             file: file.clone(),
@@ -982,7 +991,7 @@ fn capture_snapshot_attempt(
         {
             return Err(AttemptFailure::Retryable(format!(
                 "sender file {} reached EOF before size_at_open {} bytes",
-                file.abs_path.display(),
+                file.abs_path().display(),
                 size_at_open
             )));
         }
@@ -993,13 +1002,13 @@ fn capture_snapshot_attempt(
         let read = input.read(&mut buffer[..read_limit]).map_err(|error| {
             AttemptFailure::Retryable(format!(
                 "failed to read sender file {}: {error}",
-                file.abs_path.display()
+                file.abs_path().display()
             ))
         })?;
         if read == 0 {
             return Err(AttemptFailure::Retryable(format!(
                 "sender file {} reached EOF before size_at_open {} bytes",
-                file.abs_path.display(),
+                file.abs_path().display(),
                 size_at_open
             )));
         }
@@ -1015,7 +1024,7 @@ fn capture_snapshot_attempt(
     debug!(
         "sender reader captured snapshot: file_index={} path={} size_at_open={} attempt={} elapsed_ms={}",
         file.index,
-        file.rel_path,
+        file.rel_path(),
         size_at_open,
         attempt,
         read_finished
@@ -1025,7 +1034,7 @@ fn capture_snapshot_attempt(
     if let Some(profile) = profile {
         profile.record_file_read(
             file.index,
-            &file.rel_path,
+            file.rel_path(),
             size_at_open,
             read_buffers,
             read_started,
@@ -1281,7 +1290,7 @@ mod tests {
         let temp = TestDir::new();
         let file = write_input_file(&temp, "missing.bin", b"payload", 4);
         for _ in 0..3 {
-            super::test_hooks::fail_next_open(&file.abs_path);
+            super::test_hooks::fail_next_open(file.abs_path());
         }
         let (event_tx, event_rx) = bounded::<ReadEvent>(1);
         let task = ReaderTask {
@@ -1307,7 +1316,7 @@ mod tests {
         let _guard = ReadHookGuard::new();
         let temp = TestDir::new();
         let file = write_input_file(&temp, "alpha.bin", b"abc", 1);
-        super::test_hooks::append_bytes_after_next_open(&file.abs_path, b"def".to_vec());
+        super::test_hooks::append_bytes_after_next_open(file.abs_path(), b"def".to_vec());
         let (event_tx, event_rx) = bounded::<ReadEvent>(1);
 
         let result = read_file_into_events(
@@ -1339,7 +1348,7 @@ mod tests {
         let _guard = ReadHookGuard::new();
         let temp = TestDir::new();
         let file = write_input_file(&temp, "alpha.bin", b"abcdef", 1);
-        super::test_hooks::force_short_read_after_next_open(&file.abs_path, 3);
+        super::test_hooks::force_short_read_after_next_open(file.abs_path(), 3);
         let (event_tx, event_rx) = bounded::<ReadEvent>(1);
 
         let result = read_file_into_events(
@@ -1376,7 +1385,7 @@ mod tests {
             repeat_warning_after: Duration::from_millis(20),
             poll_interval: Duration::from_millis(5),
         });
-        super::test_hooks::sleep_before_next_open(&file.abs_path, Duration::from_millis(60));
+        super::test_hooks::sleep_before_next_open(file.abs_path(), Duration::from_millis(60));
         let (event_tx, event_rx) = bounded::<ReadEvent>(1);
 
         let result = read_file_into_events(
@@ -1403,7 +1412,7 @@ mod tests {
             let warnings = super::test_hooks::recorded_long_read_warnings();
             if warnings.iter().any(|warning| {
                 warning.contains("stage=snapshot-capture")
-                    && warning.contains(&file.abs_path.display().to_string())
+                    && warning.contains(&file.abs_path().display().to_string())
             }) {
                 break;
             }
@@ -1451,7 +1460,7 @@ mod tests {
         let temp = TestDir::new();
         let file = write_input_file(&temp, "alpha.bin", b"abcdef", 1);
         for _ in 0..3 {
-            super::test_hooks::force_short_read_after_next_open(&file.abs_path, 3);
+            super::test_hooks::force_short_read_after_next_open(file.abs_path(), 3);
         }
         let (event_tx, event_rx) = bounded::<ReadEvent>(1);
 

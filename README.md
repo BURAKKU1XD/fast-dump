@@ -62,6 +62,9 @@ Optional:
 - `--max-readers <N>` default `8`
 - `--read-buffer-kb <N>` default `1024`
 - `--frame-target-mb <N>` default `64`
+- `--manifest-chunk-kb <N>` default `256`
+- `--manifest-ack-records <N>` default `4096`
+- `--manifest-ack-kb <N>` default `1024`
 
 Notes:
 
@@ -69,6 +72,16 @@ Notes:
   component of `--source`.
 - `--threads auto` resolves to `available_parallelism() - 1`, with a minimum of
   `1`.
+- Manifest tuning flags are validated against the frozen `v3` protocol hard caps:
+  `ManifestChunk <= 1 MiB`, total unacked manifest window `<= 8 MiB` and
+  `<= 65536` records.
+- Sender-side manifest spool is bounded internally to `512 MiB`. If that quota
+  is exceeded while sealing the durable spool, the sender fails loudly and
+  removes the partial spool plus stale checkpoint instead of leaving unbounded
+  disk growth behind.
+- The active end-to-end runtime still speaks packet version `2`; these manifest
+  tuning flags are already normalized and logged, but the full `v3`
+  manifest-plus-archive session loop is not enabled yet.
 
 ### Receiver
 
@@ -90,6 +103,10 @@ Notes:
 
 - `--max-sessions` is meaningful in `receiver --listen` mode. In
   `receiver --connect` mode the process handles a single session.
+- Receiver-side v3 temp stores are bounded internally: `<dump_id>.manifest.part`
+  is capped at `512 MiB`, `<dump_id>.tar.zst.issues.tsv.part` at `64 MiB`.
+  When quota or disk exhaustion is hit, the receiver keeps the last durable
+  manifest/archive boundary and removes stale partial issue tails on restart.
 
 ## Usage Examples
 
@@ -261,8 +278,14 @@ cargo bench
 Run only the loopback matrix runner:
 
 ```powershell
-cargo bench --bench loopback_send_dump -- --dataset manySmallFiles,bigFiles,mixed
+cargo bench --bench loopback_send_dump -- --dataset manySmallFiles,bigFiles,mixed --protocol-runtime v2,v3 --network-profile loopback-localhost,wan-high-rtt,bandwidth-limited
 ```
+
+The matrix runner now writes `benchmark_plan.md`, `results_raw.csv`,
+`results_summary.csv`, and `benchmark_report.md` under
+`target/bench-matrix` (or `FAST_DUMP_BENCH_MATRIX_DIR`). Synthetic datasets
+default to a short temp-root-backed cache so Windows path length does not skew
+benchmark behavior; override it with `FAST_DUMP_BENCH_DATASET_DIR` when needed.
 
 Related docs:
 

@@ -144,6 +144,30 @@ discovery log.
 - делают checkpoint replay однозначным;
 - готовят execution layer к `dirfd`-стеку.
 
+Минимальная локальная модель записи фиксируется явно:
+
+- `ManifestRecord`
+  - `record_seq`
+  - `kind`
+  - `depth`
+  - `name_component`
+  - `work_ordinal?`
+  - `payload`
+- `name_component` хранит только один path segment и не хранит full relative path как базовый runtime format
+- `payload` допустим только в трёх формах:
+  - `SymlinkTarget`
+  - `DiscoverySkip`
+  - `SubtreeSkip`
+
+Это означает:
+
+- `File` и `Symlink` обязаны нести `work_ordinal`;
+- `DirectoryEnter`, `DirectoryLeave`, `DiscoverySkip` и `SubtreeSkip` обязаны нести `work_ordinal = none`;
+- `DirectoryEnter` открывает directory frame на текущем `depth`;
+- `DirectoryLeave` закрывает последний открытый directory frame с тем же `name_component`;
+- `SubtreeSkip` допустим только для уже открытого directory frame и только до появления child-records внутри него;
+- `DiscoverySkip` относится к entry в parent directory и не открывает отдельный subtree frame.
+
 ### 5.3 `record_seq` и `work_ordinal`
 
 Нужно жёстко развести два счётчика.
@@ -168,6 +192,23 @@ discovery log.
 - terminal skip regular file или symlink продвигает committed
   `work_ordinal`, даже если tar payload не появился;
 - `SubtreeSkip` является discovery issue, а не file work item.
+
+Точный локальный builder surface фиксируется так:
+
+- `ManifestSpoolBuilder::new(source)`
+- `ManifestSpoolBuilder::build_into(writer)`
+- `ManifestSpoolBuilder::build_to_path(source, spool_path)`
+- `ManifestBuildReport`
+  - `records_written`
+  - `work_items_written`
+  - `discovery_issues_written`
+  - `subtree_issues_written`
+  - `final_record_seq?`
+  - `final_work_ordinal?`
+
+Локальный builder пишет spool инкрементально record-by-record и держит в RAM
+только текущий directory stack, очередь pending-records и entries активных
+directory frame, а не полный manifest.
 
 ### 5.4 Sender-side spool storage
 
@@ -201,6 +242,44 @@ Manifest spool должен быть полноценным sender-side persiste
 - platform-specific identity root directory;
 - версию manifest builder.
 
+Точная локальная модель `source identity` фиксируется так:
+
+- `ManifestSourceIdentity`
+  - `normalized_root_path`
+  - `identity_root`
+  - `builder_version`
+  - `source_kind = live_path | snapshot | pinned`
+
+Точная локальная модель `manifest.meta` фиксируется так:
+
+- `dump_id`
+- `spool_format_version`
+- `source_identity`
+- `root_source_path`
+- `build_state = clean | dirty`
+- `seal_state = unsealed | sealed`
+- `last_record_seq?`
+- `last_work_ordinal?`
+- `last_checkpoint_seq?`
+- `last_invalidation_reason?`
+
+Точный локальный layout sender-side state фиксируется так:
+
+- `ManifestSpoolPaths::for_dump(state_root, dump_id)`
+- per-dump state dir вычисляется из `dump_id` через безопасное ASCII-имя;
+- внутри него живут:
+  - `manifest.log.part`
+  - `manifest.ckpt.part`
+  - `manifest.meta`
+
+Минимальная reuse policy:
+
+- `dump_id`, `normalized_root_path`, `identity_root` и `builder_version` должны совпадать строго;
+- mismatch по identity или builder version запрещает reuse;
+- `sealed` spool при совпадающем identity может быть переиспользован как завершённое durable state;
+- `unsealed` spool можно продолжать только для `snapshot` или `pinned` source;
+- `unsealed` spool для обычного `live_path` не продолжается и должен инвалидироваться с явной причиной.
+
 ### 5.5 Durability и recovery sender spool
 
 Для spool нужна явная durability-модель.
@@ -219,6 +298,18 @@ Recovery после sender restart:
 - восстановить последний валидный checkpoint;
 - обрезать `manifest.log.part` до последней валидной записи.
 
+Точный локальный recovery API фиксируется так:
+
+- `ManifestSpoolState::open_or_recover(state_root, dump_id, source_identity, root_source_path)`
+- startup path обязан:
+  - создать per-dump state dir при его отсутствии;
+  - rebuild-ить spool, если `manifest.meta` повреждён;
+  - rebuild-ить spool, если `manifest.ckpt.part` повреждён;
+  - rebuild-ить spool, если `manifest.meta` advertises checkpoint progress, но checkpoint отсутствует;
+  - rebuild-ить spool, если checkpoint и `manifest.meta` расходятся по `last_record_seq`, `last_work_ordinal` или `last_checkpoint_seq`;
+  - rebuild-ить spool, если checkpoint ссылается за пределы recovered log prefix;
+  - trim-ить только torn tail, но fail loudly на mid-file corruption.
+
 Критически важное правило:
 
 - если spool был `unsealed`, продолжать его build после рестарта можно только
@@ -230,12 +321,34 @@ Recovery после sender restart:
 - при успешном завершении новой сессии это событие отправляется receiver-у в
   итоговый discovery journal.
 
+Минимальная transition map для `manifest.meta`:
+
+- `new` -> `clean + unsealed`
+- `record_uncommitted_append` -> `dirty + unsealed`
+- `commit_checkpoint` -> обновляет `last_record_seq`, `last_work_ordinal`, `last_checkpoint_seq` и переводит state в `clean`
+- `mark_sealed` -> `clean + sealed`
+- `invalidate(reason)` -> сбрасывает progress fields, переводит state в `clean + unsealed` и фиксирует `last_invalidation_reason`
+
+Recovery observability фиксируется так:
+
+- локальный restart path накапливает `recovery_events[]` как `ManifestRecoveryEvent { event, detail }`;
+- допустимые `event`:
+  - `Invalidated`
+  - `Corrupted`
+  - `Rebuilt`
+- эти события обязаны проецироваться в discovery issue path через `ManifestDiscoverySkipReason::SenderState`.
+
 Cleanup policy:
 
 - после успешного `FinishAck` spool удаляется;
 - после фатального отказа spool может быть сохранён до следующего запуска для
   диагностики или recovery decision;
 - нужна GC policy по возрасту и размеру sender-side state dir.
+
+Точные local hooks для cleanup и GC фиксируются так:
+
+- `ManifestSpoolState::cleanup_after_finish()` удаляет весь per-dump state dir;
+- `ManifestSpoolState::collect_gc_candidates(state_root, now, max_age)` возвращает отсортированный список старых state dir-кандидатов для внешнего GC pass.
 
 ### 5.6 Integrity framing для spool
 
@@ -248,6 +361,66 @@ Spool recovery не должен опираться только на "файл 
 - checkpoint checksum;
 - возможность обнаружить corruption не только в torn tail, но и в середине
   spool file.
+
+Минимальный binary header для `manifest.log.part` фиксируется так:
+
+- `record_body_len: u32`
+- `checksum_u32: u32`
+- `record_seq: u64`
+- `work_ordinal_or_zero: u64`
+- `kind: u8`
+- `depth: u16`
+- `flags: u16`
+- `name_len: u16`
+- `payload_len: u32`
+
+Где:
+
+- `flags` минимум содержит `HAS_WORK_ORDINAL` и `HAS_PAYLOAD`;
+- `work_ordinal_or_zero = 0` означает отсутствие `work_ordinal`;
+- `record_body_len = name_len + payload_len`;
+- `name_len` и `payload_len` относятся только к `name_component` и kind-specific payload, а не к full relative path.
+
+Минимальная checkpoint-модель фиксируется так:
+
+- `ManifestCheckpoint`
+  - `checkpoint_seq`
+  - `last_record_seq`
+  - `last_work_ordinal?`
+  - `log_offset`
+  - `path_stack[]`, где каждый frame хранит:
+    - `name_component`
+    - `child_emitted`
+
+Минимальный binary format для `manifest.ckpt.part`:
+
+- `spool_format_version: u32`
+- `checkpoint_checksum_u32: u32`
+- `checkpoint_seq: u64`
+- `last_record_seq: u64`
+- `last_work_ordinal_or_zero: u64`
+- `log_offset: u64`
+- `path_component_count: u32`
+- repeated:
+  - `path_component_len: u16 + utf-8 bytes`
+  - `child_emitted_flag: u8`
+
+Правила записи и recovery:
+
+- checkpoint пишется во временный файл и публикуется через atomic rename;
+- recovery читает checkpoint только после checksum verification;
+- если в `manifest.log.part` встречен torn tail, валидный prefix сохраняется, а tail подлежит truncate;
+- если checksum mismatch обнаружен в середине уже полностью читаемой записи, recovery должен fail loudly, а не делать вид, что tail просто укоротился.
+- replay выбирает nearest checkpoint с `last_record_seq <= target_record_seq` и читает только tail после `log_offset` этого checkpoint;
+- checkpoint snapshot обязан хранить достаточно directory-frame state, чтобы после restore корректно валидировать `SubtreeSkip` и `DirectoryLeave`, а не только reconstruct path string.
+
+Минимальная локальная replay-метрика фиксируется так:
+
+- `ManifestReplayMetrics`
+  - `checkpoint_seq?`
+  - `replayed_records`
+  - `replayed_bytes`
+  - `replay_duration`
 
 Если integrity check провалился:
 
@@ -321,6 +494,16 @@ Disk-backed manifest должен держать в RAM только:
 - нужен reusable path buffer, segment arena или эквивалентный механизм;
 - path materialization должна быть амортизированной, а не allocation-heavy.
 
+Текущий runtime-статус:
+
+- `InputFile` больше не требует обязательных materialized `PathBuf` и `String`
+  на каждый manifest leaf.
+- `InputPathPrefix` делит directory-level prefix между leaf items, а
+  `InputFile::rel_path()` и `InputFile::abs_path()` материализуют полный путь
+  лениво и кэшируют результат.
+- `send_dump`, tar header preparation, diagnostics и текущий fallback absolute
+  path executor уже используют этот общий accessor layer.
+
 ### 5.10 Subtree skip и root failure
 
 Нужно жёстко разделить:
@@ -376,6 +559,12 @@ Discovery issue log должен уметь хранить не только п�
 
 ### 6.1 Unix fast path: `openat/dirfd`
 
+Current status:
+
+- Unix `InputFile::open_for_read()` now prefers `openat(parent_dirfd, leaf_name)` on the manifest executor hot path.
+- Unix symlink target reads use `readlinkat` relative to the parent directory handle during discovery.
+- `FAST_DUMP_FORCE_ABS_PATH_EXECUTOR=1` forces the reusable absolute-path fallback so the loopback matrix can compare both executors on the same dataset.
+
 `openat/dirfd` не заменяет `P3`, а делает его быстрым на Unix-подобных
 системах.
 
@@ -399,6 +588,12 @@ Discovery issue log должен уметь хранить не только п�
 
 ### 6.2 Cross-platform fallback executor
 
+Current status:
+
+- `InputFileExecutorKind` is now the shared boundary between the Unix dirfd executor and the reusable absolute-path fallback executor.
+- The fallback path reuses the same manifest replay state and `InputPathPrefix` lazy path materialization; it does not introduce a second discovery implementation.
+- The loopback matrix now benchmarks the fallback path explicitly through the `executor` axis instead of treating it as an invisible legacy path.
+
 `v3` не должен стать "Unix-only by accident".
 
 Для платформ без `openat/dirfd` нужен fallback executor с той же manifest-моделью.
@@ -417,6 +612,11 @@ Fallback executor не должен становиться скрытым legacy
 
 ### 6.3 FD budget
 
+Current status:
+
+- Cached directory handles are capped by `MAX_CACHED_DIRFD_DEPTH = 64`; deeper paths reopen without extending the cached dirfd stack.
+- Sender profiling records `max_dirfd_depth`, and the matrix raw/summary CSV now also records `executor`, so FD pressure is measured rather than assumed.
+
 `openat/dirfd` полезен только при жёстком управлении файловыми дескрипторами.
 
 Нужна bounded policy:
@@ -428,6 +628,17 @@ Fallback executor не должен становиться скрытым legacy
 - стратегия eviction при росте FD usage.
 
 ### 6.4 Source adapter boundary
+
+Current status:
+
+- `SenderSource` and `SenderSourceKind` are now the explicit sender-side runtime
+  boundary for `ordinary_path`, `snapshot_path`, and `pinned_path`.
+- Ordinary path sources remain the default CLI/runtime behavior, but manifest
+  identity and spool recovery no longer infer continuation eligibility only from
+  raw paths.
+- Sender runtime now maps backend kind directly into `manifest.meta`
+  `source_kind`, so future snapshot or pin fast paths can reuse the same
+  manifest and replay model instead of introducing a second one.
 
 Даже при наличии fallback executor полезно держать отдельную границу
 `source backend`.
@@ -463,6 +674,18 @@ Discovery issues:
   неизвестен;
 - хранятся отдельно от file terminal issues на sender-side;
 - влияют на session status как warning.
+
+Current status:
+
+- `SendReport` уже хранит раздельно `issue_journal` для file terminal issues и
+  `discovery_issue_journal` для typed discovery issues с явным `scope` и
+  `reason`.
+- Sender aggregate reporting и CLI summary уже публикуют
+  `discovery_issues_total`, `subtrees_skipped` и `manifest_resets_total`, а
+  `completed_with_warnings` теперь срабатывает и на discovery warnings.
+- Текущий `v2` wire contract пока не менялся: `IssueJournalChunk` по сети всё
+  ещё содержит только file terminal issues, а discovery issues остаются
+  локальной sender-side reporting model до protocol `v3`.
 
 Дополнительные правила:
 
@@ -682,6 +905,177 @@ Data path после manifest transfer использует:
 - bandwidth-limited канал;
 - reconnect-prone или lossy сеть.
 
+### 9.1 Зафиксированная dataset matrix
+
+Эта matrix считается обязательной для `v3` и не должна пересобираться заново по ходу работы:
+
+- `million-tiny-files`
+  - статус: `planned`
+  - цель: доказать bounded RAM, bounded disk metadata state и приемлемый replay cost на экстремальном числе entry
+- `deep-tree`
+  - статус: `partial`
+  - текущий proxy: `manySmallFiles`
+  - цель: path stack, directory enter/leave churn, deterministic replay на глубине `9-12`
+- `mixed-working-set`
+  - статус: `implemented`
+  - текущий fixture: `mixed`
+  - цель: основной comparative baseline для throughput, compression ratio и stage balance
+- `unstable-subtree`
+  - статус: `planned`
+  - цель: replay latency, discovery issues, subtree skip semantics и отсутствие full live rescan после reconnect
+- `mount-backed-source`
+  - статус: `planned`
+  - цель: проверить source backend boundary и поведение на snapshot/mount-backed источниках
+- `fallback-vs-unix`
+  - статус: `planned`
+  - цель: сравнить Unix fast path и fallback executor на одном и том же corpus и network profile
+
+Дополнительный `bigFiles` baseline остаётся полезным для контроля compression/receiver costs, но не заменяет обязательные tiny-file и replay-heavy cases.
+
+### 9.2 Зафиксированная network-profile matrix
+
+`loopback-localhost` остаётся только developer-local baseline и не считается достаточным cutover signal.
+
+Обязательные network profiles для сравнения `v2` и `v3`:
+
+- `lan-low-rtt`
+  - RTT: `1 ms`
+  - bandwidth: `>= 250 MiB/s`
+  - loss: `none`
+- `wan-moderate-rtt`
+  - RTT: `30 ms`
+  - bandwidth: `>= 125 MiB/s`
+  - loss: `none`
+- `wan-high-rtt`
+  - RTT: `100 ms`
+  - bandwidth: `>= 125 MiB/s`
+  - loss: `none`
+  - смысл: сделать цену durable ack явно измеримой
+- `bandwidth-limited`
+  - RTT: `30 ms`
+  - bandwidth: `25 MiB/s`
+  - loss: `none`
+- `lossy-reconnect-prone`
+  - RTT: `60 ms`
+  - bandwidth: `25 MiB/s`
+  - fault mode: `0.5% loss` или принудительный disconnect каждые `256 MiB`
+
+### 9.3 Required metrics
+
+Каждый major `v3` change должен в итоге сравниваться по следующему набору метрик:
+
+- throughput total
+- read/compress/send duration и соответствующие stage speeds
+- traversal wait и ack wait
+- sender CPU и RSS
+- receiver CPU и RSS
+- sender spool bytes written/read
+- receiver manifest bytes persisted
+- issue-tail persistence cost
+- time-to-first-frame
+- manifest build latency
+- manifest transfer latency
+- archive transfer latency
+- reconnect-to-resume latency
+- checkpoint replay latency
+- overlap efficiency
+
+Текущее состояние harness нужно трактовать честно:
+
+- `implemented`: throughput, stage durations, traversal wait, ack wait, wire overhead
+- `partial`: sender CPU/RSS signal, потому что текущий loopback bench пока ещё не split-process
+- `planned`: receiver CPU/RSS, spool/manifest/issue-tail bytes, manifest-stage timings, replay latency, overlap efficiency, shaped-network runs
+
+### 9.4 Rules сравнения `v2` и `v3`
+
+- Сравнивать только одинаковые `machine + dataset + network profile + sender knobs + warm/cold mode`.
+- Для comparative decision использовать `repeats >= 5`, median как основную цифру и `p90` как индикатор нестабильности.
+- Не принимать loopback-only результат как основание для cutover или выбора defaults.
+- Не принимать частичную matrix вместо полного required набора dataset и network profiles.
+
+### 9.5 Success gates для cutover
+
+`v3` считается готовым к cutover только если одновременно выполняются все gates:
+
+- `whole-file-correctness`
+  - все relevant safety и archive-integrity tests зелёные на том же revision, где снят benchmark artifact
+- `bounded-ram`
+  - peak sender/receiver RSS укладываются в заявленный budget на всех обязательных dataset/profile runs
+- `bounded-disk`
+  - sender spool, receiver manifest storage и issue-tail temp files укладываются в declared quotas и не текут после abort/reconnect paths
+- `resume-without-full-live-rescan`
+  - ordinary reconnect/restart path возобновляется из durable manifest/checkpoint state без full live rescan
+- `target-throughput-non-regression`
+  - `v3` не хуже `v2` по median throughput на обязательных target scenarios при тех же correctness и resource budgets
+
+### 9.6 Текущий automated campaign snapshot (`2026-04-05`)
+
+Что уже автоматизировано в репозитории:
+
+- matrix runner теперь умеет гонять и `v2`, и library-level `v3`;
+- deterministic shaping уже реализован для
+  `loopback-localhost`, `lan-low-rtt`, `wan-moderate-rtt`,
+  `wan-high-rtt`, `bandwidth-limited`;
+- артефакты matrix-runner теперь включают не только raw/summary CSV, но и
+  `benchmark_report.md`, где лучшие строки `v2` и `v3` сводятся side-by-side;
+- synthetic dataset root вынесен в короткий temp-backed cache, чтобы длина
+  output-dir на Windows не меняла benchmark semantics.
+
+Снятый baseline на `manySmallFiles`, `threads=1`, `frame=16 MiB`,
+`buffer=256 KiB`, `repeats=1`:
+
+- `v2`, defaults, `loopback-localhost`
+  - `total_ms ~= 4820.50`
+  - `total_mib_s ~= 18.23`
+- `v3`, old defaults `manifest_chunk_kb=256`, `manifest_ack_records=4096`,
+  `manifest_ack_kb=1024`, `loopback-localhost`
+  - `total_ms ~= 3900.76`
+  - `total_mib_s ~= 22.53`
+- `v2`, defaults, `wan-high-rtt`
+  - `total_ms ~= 37411.22`
+  - `total_mib_s ~= 2.35`
+- `v3`, old defaults `256 / 4096 / 1024`, `wan-high-rtt`
+  - `total_ms ~= 72555.43`
+  - `total_mib_s ~= 1.21`
+- `v2`, defaults, `bandwidth-limited`
+  - `total_ms ~= 18886.96`
+  - `total_mib_s ~= 4.65`
+- `v3`, old defaults `256 / 4096 / 1024`, `bandwidth-limited`
+  - `total_ms ~= 28508.81`
+  - `total_mib_s ~= 3.08`
+
+Фокусный tuning прогон для `v3` на том же workload показал:
+
+- `manifest_chunk_kb=256`, `manifest_ack_records=65536`,
+  `manifest_ack_kb=8192`, `wan-high-rtt`
+  - `total_ms ~= 45442.99`
+  - `total_mib_s ~= 1.93`
+- `manifest_chunk_kb=512`, `manifest_ack_records=65536`,
+  `manifest_ack_kb=8192`, `wan-high-rtt`
+  - `total_ms ~= 43114.33`
+  - `total_mib_s ~= 2.04`
+- `manifest_chunk_kb=512`, `manifest_ack_records=65536`,
+  `manifest_ack_kb=8192`, `bandwidth-limited`
+  - `total_ms ~= 21556.48`
+  - `total_mib_s ~= 4.08`
+- `manifest_chunk_kb=512`, `manifest_ack_records=65536`,
+  `manifest_ack_kb=8192`, `loopback-localhost`
+  - `total_ms ~= 3716.90`
+  - `total_mib_s ~= 23.65`
+
+Из этого пока следует:
+
+- старые conservative defaults `256 / 4096 / 1024` для `v3` слишком дороги на
+  RTT-sensitive профилях;
+- текущий лучший automated tuning candidate для дальнейшей `v3` работы:
+  `manifest_chunk_kb=512`, `manifest_ack_records=65536`,
+  `manifest_ack_kb=8192`;
+- даже после этого tuning `v3` в текущем automated subset всё ещё проигрывает
+  `v2` на `wan-high-rtt` и `bandwidth-limited`;
+- cutover decision на текущем этапе: `no-go`;
+- dual-stack rollout пока не нужен, потому что CLI/runtime ещё не
+  переключались на `v3` и активный production contract остаётся `v2`.
+
 ## 10. Поэтапный roadmap
 
 ### Этап 0. Baseline и guardrails
@@ -723,8 +1117,21 @@ Data path после manifest transfer использует:
 - Убедиться, что replay не требует allocation-heavy path rebuild на каждый file
   work item.
 
+Текущий runtime-статус:
+
+- `send_dump` уже поднимает `PendingFileWalker::new_with_manifest(...)` вместо
+  live-only walker.
+- `ManifestPendingLeafWalker` читает `manifest.log.part` с checkpoint-aware
+  resume и переигрывает только leaf work items в детерминированном порядке.
+- Текущий wire contract не менялся: sender временно маппит `work_ordinal` на
+  существующий `file_index` в `InputFile`.
+- После успешного `FinishAck` sender вызывает
+  `ManifestSpoolState::cleanup_after_finish()` и удаляет per-dump spool state.
+
 ### Этап 4. Execution layer split
 
+- `perf-v3-13` is complete: the Unix `openat/dirfd` fast path, `readlinkat` symlink reads, and forced absolute-path A/B bench mode are wired into runtime and loopback benchmarks.
+- `perf-v3-14` is complete: the fallback executor now shares the same manifest replay state, path materialization layer, and benchmark surface as the Unix fast path.
 - Реализовать Unix fast path через `openat/dirfd`.
 - Реализовать cross-platform fallback executor.
 - Зафиксировать общий interface для обоих execution paths.
@@ -736,6 +1143,14 @@ Data path после manifest transfer использует:
 - Решить, какие новые aggregate counters нужны.
 - Обновить session status semantics для discovery issues.
 - Зафиксировать typed итоговый issue journal и export discovery issues в него.
+
+Текущий runtime-статус:
+
+- sender-side split между file terminal issues и discovery issues уже внедрён;
+- aggregate counters `discovery_issues_total`, `subtrees_skipped` и
+  `manifest_resets_total` уже живут в `SendReport` и CLI output;
+- protocol-level unified final issue stream ещё не делался и остаётся
+  отдельной задачей следующего этапа.
 
 ### Этап 6. Receiver-side manifest durability
 

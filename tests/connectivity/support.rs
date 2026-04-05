@@ -1,8 +1,10 @@
 use std::collections::BTreeMap;
+use std::ffi::OsString;
 use std::net::{SocketAddr, TcpListener};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, MutexGuard, OnceLock};
 use std::thread;
 use std::time::{Duration, Instant};
 use std::{
@@ -15,10 +17,14 @@ use anyhow::{Result, bail};
 use fast_dump::network::protocol::{
     FrameChunk, FrameEnd, FrameStart, Message, ResumeState, write_message,
 };
-use fast_dump::network::transport::{BoundListener, Session, TransportMode, establish_session};
-use fast_dump::receiver::{ReceiveReport, receive_dump};
+use fast_dump::network::transport::{
+    BoundListener, Session, TransportMode, connect_once, establish_session,
+};
+use fast_dump::receiver::{ReceiveReport, ReceiveReportV3, receive_dump, receive_dump_v3};
 use fast_dump::role::Role;
-use fast_dump::sender::{PreparedFrame, SendOptions};
+use fast_dump::sender::{
+    PipelineProfile, PreparedFrame, SendOptions, SendReport, send_dump_profile_v3,
+};
 use xxhash_rust::xxh3::Xxh3Default;
 
 // Параллельные интеграционные тесты могут стартовать в один и тот же тик системных часов,
@@ -27,6 +33,11 @@ static TEST_DIR_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 pub(crate) struct TestDir {
     path: PathBuf,
+}
+
+pub(crate) struct EnvVarGuard {
+    _lock: MutexGuard<'static, ()>,
+    previous: Vec<(String, Option<OsString>)>,
 }
 
 impl TestDir {
@@ -54,6 +65,42 @@ impl TestDir {
 impl Drop for TestDir {
     fn drop(&mut self) {
         let _ = fs::remove_dir_all(&self.path);
+    }
+}
+
+impl EnvVarGuard {
+    pub(crate) fn set(vars: &[(&str, &str)]) -> Self {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        let lock = LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let mut previous = Vec::with_capacity(vars.len());
+        for (name, value) in vars {
+            previous.push(((*name).to_owned(), std::env::var_os(name)));
+            unsafe {
+                std::env::set_var(name, value);
+            }
+        }
+        Self {
+            _lock: lock,
+            previous,
+        }
+    }
+}
+
+impl Drop for EnvVarGuard {
+    fn drop(&mut self) {
+        for (name, previous) in self.previous.drain(..).rev() {
+            match previous {
+                Some(value) => unsafe {
+                    std::env::set_var(&name, value);
+                },
+                None => unsafe {
+                    std::env::remove_var(&name);
+                },
+            }
+        }
     }
 }
 
@@ -253,6 +300,13 @@ pub(crate) struct BinaryRoundtripResult {
     pub(crate) receiver_output: Output,
 }
 
+pub(crate) struct V3RoundtripResult {
+    pub(crate) _receiver_dir: TestDir,
+    pub(crate) sender_report: SendReport,
+    pub(crate) sender_profile: PipelineProfile,
+    pub(crate) receive_report: ReceiveReportV3,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct SenderBinaryOptions {
     pub(crate) level: i32,
@@ -293,6 +347,9 @@ pub(crate) fn default_send_options(frame_target_bytes: u64) -> SendOptions {
         min_readers: 2,
         max_readers: 4,
         read_buffer_bytes: 1024 * 1024,
+        manifest_chunk_bytes: 256 * 1024,
+        manifest_ack_records: 4096,
+        manifest_ack_bytes: 1024 * 1024,
     }
 }
 
@@ -570,4 +627,55 @@ pub(crate) fn spawn_receiver_dump_once(
         receive_dump(&mut session.stream, receiver_path)
     });
     (addr, handle)
+}
+
+pub(crate) fn spawn_receiver_dump_once_v3(
+    data_dir: &Path,
+    manifest_ack_records: u64,
+    manifest_ack_bytes: usize,
+) -> (SocketAddr, thread::JoinHandle<Result<ReceiveReportV3>>) {
+    let listener = BoundListener::bind("127.0.0.1:0".parse().unwrap()).unwrap();
+    let addr = listener.local_addr();
+    let receiver_path = data_dir.to_path_buf();
+    let handle = thread::spawn(move || {
+        let mut session = listener.accept(Role::Receiver, None, None).unwrap();
+        receive_dump_v3(
+            &mut session.stream,
+            receiver_path,
+            manifest_ack_records,
+            manifest_ack_bytes,
+        )
+    });
+    (addr, handle)
+}
+
+pub(crate) fn run_push_roundtrip_v3_with_options(
+    source: &Path,
+    dump_id: &str,
+    options: SendOptions,
+) -> V3RoundtripResult {
+    let receiver_dir = TestDir::new();
+    let (addr, receiver) = spawn_receiver_dump_once_v3(
+        receiver_dir.path(),
+        options.manifest_ack_records,
+        options.manifest_ack_bytes,
+    );
+    let mut sender = connect_once(Role::Sender, addr, Some(dump_id), None).unwrap();
+    let sender_result =
+        send_dump_profile_v3(&mut sender.stream, source.to_path_buf(), dump_id, &options);
+    let (sender_report, sender_profile) = match sender_result {
+        Ok(result) => result,
+        Err(error) => {
+            drop(sender);
+            let receiver_result = receiver.join();
+            panic!("sender error: {error:#}; receiver_result={receiver_result:?}");
+        }
+    };
+    let receive_report = receiver.join().unwrap().unwrap();
+    V3RoundtripResult {
+        _receiver_dir: receiver_dir,
+        sender_report,
+        sender_profile,
+        receive_report,
+    }
 }

@@ -4,14 +4,18 @@ use std::path::PathBuf;
 use anyhow::{Context, Result, bail};
 use clap::{ArgGroup, Args, Parser, Subcommand, ValueHint};
 
-use crate::network::transport::TransportMode;
+use crate::network::{protocol, transport::TransportMode};
 use crate::role::Role;
+use crate::sender::SenderSource;
 
 const DEFAULT_LEVEL: i32 = 3;
 const DEFAULT_MIN_READERS: usize = 2;
 const DEFAULT_MAX_READERS: usize = 8;
 const DEFAULT_READ_BUFFER_KB: usize = 1024;
 const DEFAULT_FRAME_TARGET_MB: u64 = 64;
+const DEFAULT_MANIFEST_CHUNK_KB: usize = 256;
+const DEFAULT_MANIFEST_ACK_RECORDS: u64 = 4096;
+const DEFAULT_MANIFEST_ACK_KB: usize = 1024;
 const DEFAULT_MAX_SESSIONS: usize = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,6 +26,9 @@ pub struct SenderRuntimeOptions {
     pub max_readers: usize,
     pub read_buffer_bytes: usize,
     pub frame_target_bytes: u64,
+    pub manifest_chunk_bytes: usize,
+    pub manifest_ack_records: u64,
+    pub manifest_ack_bytes: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -128,6 +135,12 @@ pub struct SenderArgs {
     pub read_buffer_kb: usize,
     #[arg(long, default_value_t = DEFAULT_FRAME_TARGET_MB)]
     pub frame_target_mb: u64,
+    #[arg(long, default_value_t = DEFAULT_MANIFEST_CHUNK_KB)]
+    pub manifest_chunk_kb: usize,
+    #[arg(long, default_value_t = DEFAULT_MANIFEST_ACK_RECORDS)]
+    pub manifest_ack_records: u64,
+    #[arg(long, default_value_t = DEFAULT_MANIFEST_ACK_KB)]
+    pub manifest_ack_kb: usize,
 }
 
 // Параметры receiver.
@@ -218,6 +231,15 @@ impl SenderArgs {
         if self.frame_target_mb == 0 {
             bail!("frame_target_mb must be at least 1");
         }
+        if self.manifest_chunk_kb == 0 {
+            bail!("manifest_chunk_kb must be at least 1");
+        }
+        if self.manifest_ack_records == 0 {
+            bail!("manifest_ack_records must be at least 1");
+        }
+        if self.manifest_ack_kb == 0 {
+            bail!("manifest_ack_kb must be at least 1");
+        }
 
         let read_buffer_bytes = self
             .read_buffer_kb
@@ -227,6 +249,42 @@ impl SenderArgs {
             .frame_target_mb
             .checked_mul(1024 * 1024)
             .context("frame_target_mb is too large")?;
+        let manifest_chunk_bytes = self
+            .manifest_chunk_kb
+            .checked_mul(1024)
+            .context("manifest_chunk_kb is too large")?;
+        let manifest_ack_bytes = self
+            .manifest_ack_kb
+            .checked_mul(1024)
+            .context("manifest_ack_kb is too large")?;
+        if manifest_chunk_bytes > protocol::MAX_MANIFEST_CHUNK_BYTES {
+            bail!(
+                "manifest_chunk_kb exceeds protocol cap: {} > {} KiB",
+                self.manifest_chunk_kb,
+                protocol::MAX_MANIFEST_CHUNK_BYTES / 1024
+            );
+        }
+        if self.manifest_ack_records > protocol::MAX_UNACKED_MANIFEST_RECORDS {
+            bail!(
+                "manifest_ack_records exceeds protocol cap: {} > {}",
+                self.manifest_ack_records,
+                protocol::MAX_UNACKED_MANIFEST_RECORDS
+            );
+        }
+        if manifest_ack_bytes > protocol::MAX_UNACKED_MANIFEST_BYTES {
+            bail!(
+                "manifest_ack_kb exceeds protocol cap: {} > {} KiB",
+                self.manifest_ack_kb,
+                protocol::MAX_UNACKED_MANIFEST_BYTES / 1024
+            );
+        }
+        if manifest_ack_bytes < manifest_chunk_bytes {
+            bail!(
+                "manifest_ack_kb must not be smaller than manifest_chunk_kb: {} < {}",
+                self.manifest_ack_kb,
+                self.manifest_chunk_kb
+            );
+        }
 
         Ok(SenderRuntimeOptions {
             level: self.level,
@@ -235,7 +293,14 @@ impl SenderArgs {
             max_readers: self.max_readers,
             read_buffer_bytes,
             frame_target_bytes,
+            manifest_chunk_bytes,
+            manifest_ack_records: self.manifest_ack_records,
+            manifest_ack_bytes,
         })
+    }
+
+    pub fn sender_source(&self) -> SenderSource {
+        SenderSource::ordinary_path(self.source.clone())
     }
 }
 
@@ -259,6 +324,7 @@ mod tests {
     use super::{Cli, Command, TransportArgs};
     use crate::network::transport::TransportMode;
     use crate::role::Role;
+    use crate::sender::SenderSourceKind;
 
     #[test]
     fn sender_cli_parses_connect_mode() {
@@ -355,6 +421,30 @@ mod tests {
         assert_eq!(runtime.max_readers, 8);
         assert_eq!(runtime.read_buffer_bytes, 1024 * 1024);
         assert_eq!(runtime.frame_target_bytes, 64 * 1024 * 1024);
+        assert_eq!(runtime.manifest_chunk_bytes, 256 * 1024);
+        assert_eq!(runtime.manifest_ack_records, 4096);
+        assert_eq!(runtime.manifest_ack_bytes, 1024 * 1024);
+    }
+
+    #[test]
+    fn sender_cli_uses_ordinary_path_backend_by_default() {
+        let cli = Cli::try_parse_from([
+            "fast-dump",
+            "sender",
+            "--connect",
+            "127.0.0.1:7017",
+            "--source",
+            "input",
+        ])
+        .unwrap();
+
+        let Command::Sender(args) = cli.command else {
+            panic!("expected sender command");
+        };
+        let source = args.sender_source();
+
+        assert_eq!(source.kind(), SenderSourceKind::OrdinaryPath);
+        assert_eq!(source.path(), PathBuf::from("input").as_path());
     }
 
     #[test]
@@ -378,6 +468,12 @@ mod tests {
             "2048",
             "--frame-target-mb",
             "5",
+            "--manifest-chunk-kb",
+            "512",
+            "--manifest-ack-records",
+            "2048",
+            "--manifest-ack-kb",
+            "2048",
         ])
         .unwrap();
 
@@ -392,6 +488,9 @@ mod tests {
         assert_eq!(runtime.max_readers, 9);
         assert_eq!(runtime.read_buffer_bytes, 2 * 1024 * 1024);
         assert_eq!(runtime.frame_target_bytes, 5 * 1024 * 1024);
+        assert_eq!(runtime.manifest_chunk_bytes, 512 * 1024);
+        assert_eq!(runtime.manifest_ack_records, 2048);
+        assert_eq!(runtime.manifest_ack_bytes, 2 * 1024 * 1024);
     }
 
     #[test]
@@ -433,6 +532,52 @@ mod tests {
         };
         let error = args.runtime_options().unwrap_err();
         assert!(error.to_string().contains("min_readers"));
+
+        let cli = Cli::try_parse_from([
+            "fast-dump",
+            "sender",
+            "--connect",
+            "127.0.0.1:7015",
+            "--source",
+            "input",
+            "--manifest-chunk-kb",
+            "2048",
+        ])
+        .unwrap();
+
+        let Command::Sender(args) = cli.command else {
+            panic!("expected sender command");
+        };
+        let error = args.runtime_options().unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("manifest_chunk_kb exceeds protocol cap")
+        );
+
+        let cli = Cli::try_parse_from([
+            "fast-dump",
+            "sender",
+            "--connect",
+            "127.0.0.1:7016",
+            "--source",
+            "input",
+            "--manifest-chunk-kb",
+            "512",
+            "--manifest-ack-kb",
+            "256",
+        ])
+        .unwrap();
+
+        let Command::Sender(args) = cli.command else {
+            panic!("expected sender command");
+        };
+        let error = args.runtime_options().unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("manifest_ack_kb must not be smaller than manifest_chunk_kb")
+        );
     }
 
     #[test]

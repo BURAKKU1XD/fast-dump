@@ -1,14 +1,19 @@
 use std::fs;
+use std::io::Write;
 use std::thread;
 
-use crate::support::TestDir;
+use crate::support::{TestDir, spawn_receiver_dump_once_v3};
 use fast_dump::network::protocol::{
-    AbortAck, Ack, FrameAbort, FrameChunk, FrameStart, IssueJournalChunk, IssueJournalEntry,
-    IssueJournalReason, Message, ResumeState, read_message, request_resume_state, write_message,
+    AbortAck, Ack, FrameAbort, FrameChunk, FrameStart, IssueChunkV3, IssueCodeV3, IssueEntryV3,
+    IssueJournalChunk, IssueJournalEntry, IssueJournalReason, IssueScopeV3, ManifestBoundaryV3,
+    ManifestChunk, ManifestSeal, ManifestStart, Message, ResumeState, V3Message, read_message,
+    read_message_v3, request_resume_state, request_resume_state_v3, write_message,
+    write_message_v3,
 };
 use fast_dump::network::transport::{BoundListener, connect_once};
 use fast_dump::receiver::{
-    receive_dump, receive_finish, receive_frame, receive_frame_abort, respond_resume_query,
+    ReceiverPaths, receive_dump, receive_finish, receive_frame, receive_frame_abort,
+    respond_resume_query,
 };
 use fast_dump::role::Role;
 use fast_dump::sender::{OutboundFrame, prepare_dump, send_finish, send_frame};
@@ -16,6 +21,28 @@ use fast_dump::sender::{OutboundFrame, prepare_dump, send_finish, send_frame};
 #[cfg(unix)]
 fn create_symlink(path: &std::path::Path, target: &std::path::Path) {
     std::os::unix::fs::symlink(target, path).unwrap();
+}
+
+fn empty_manifest_boundary_v3() -> ManifestBoundaryV3 {
+    ManifestBoundaryV3 {
+        manifest_bytes_persisted: 0,
+        last_record_seq: None,
+        last_work_ordinal: None,
+        sealed: false,
+    }
+}
+
+fn sender_state_issue_v3(record_seq: u64, path: &str) -> IssueEntryV3 {
+    IssueEntryV3 {
+        scope: IssueScopeV3::SenderState,
+        record_seq: Some(record_seq),
+        work_ordinal: None,
+        path: path.to_owned(),
+        attempts: 0,
+        code: IssueCodeV3::SenderStateEvent,
+        detail: "state-transition".to_owned(),
+        context: "manifest recovery".to_owned(),
+    }
 }
 
 #[test]
@@ -139,6 +166,39 @@ fn frame_protocol_commits_single_and_multi_frame_sequences() {
         assert_eq!(receiver_finish, finish, "{label}");
         assert_eq!(archive_len, 9, "{label}");
     }
+}
+
+#[test]
+fn resume_query_discards_abandoned_v3_temp_artifacts_before_replying() {
+    let listener = BoundListener::bind("127.0.0.1:0".parse().unwrap()).unwrap();
+    let addr = listener.local_addr();
+    let data_dir = TestDir::new();
+    let dump_id = "dump-stale-v3-protocol";
+    let receiver_dir = data_dir.path().to_path_buf();
+    let paths = ReceiverPaths::new(receiver_dir.clone(), dump_id).unwrap();
+    fs::write(paths.manifest_path(), b"stale-manifest-tail").unwrap();
+    fs::write(paths.issue_journal_temp_path(), b"stale-issue-tail").unwrap();
+
+    let receiver = thread::spawn(move || {
+        let mut session = listener.accept(Role::Receiver, None, None).unwrap();
+        let state = respond_resume_query(&mut session.stream, receiver_dir).unwrap();
+        (
+            state.journal.manifest_bytes_persisted,
+            fs::metadata(state.paths.manifest_path()).unwrap().len(),
+            state.paths.issue_journal_temp_path().exists(),
+        )
+    });
+
+    let mut sender_session = connect_once(Role::Sender, addr, Some(dump_id), None).unwrap();
+    let resume_state = request_resume_state(&mut sender_session.stream, dump_id).unwrap();
+    let (manifest_boundary, manifest_len, issue_temp_exists) = receiver.join().unwrap();
+
+    assert_eq!(resume_state.archive_len, 0);
+    assert_eq!(resume_state.last_committed_frame, 0);
+    assert_eq!(resume_state.last_committed_file_index, 0);
+    assert_eq!(manifest_boundary, 0);
+    assert_eq!(manifest_len, 0);
+    assert!(!issue_temp_exists);
 }
 
 #[test]
@@ -586,4 +646,284 @@ fn protocol_tail_persists_issue_journal_before_finish() {
     assert!(report.final_archive_path.exists());
     assert!(issue_journal_path.exists());
     assert!(issue_journal.contains("4\t3\tunstable_after_retries\tbroken/file.bin\tshort read"));
+}
+
+#[test]
+fn protocol_v3_rejects_frame_before_manifest_start() {
+    let _env = crate::support::EnvVarGuard::set(&[]);
+    let receiver_dir = TestDir::new();
+    let (addr, receiver) = spawn_receiver_dump_once_v3(receiver_dir.path(), 1, 1);
+
+    let mut sender_session =
+        connect_once(Role::Sender, addr, Some("dump-v3-order-frame-first"), None).unwrap();
+    let resume_state =
+        request_resume_state_v3(&mut sender_session.stream, "dump-v3-order-frame-first").unwrap();
+    assert_eq!(resume_state.manifest, empty_manifest_boundary_v3());
+    assert_eq!(resume_state.archive.archive_len, 0);
+
+    write_message_v3(
+        &mut sender_session.stream,
+        &V3Message::FrameStart(fast_dump::network::protocol::FrameStartV3 {
+            frame_no: 1,
+            first_work_ordinal: 1,
+            level: 3,
+            threads: 1,
+        }),
+    )
+    .unwrap();
+    sender_session.stream.flush().unwrap();
+
+    let reply = read_message_v3(&mut sender_session.stream).unwrap();
+    let V3Message::Error(error) = reply else {
+        panic!("expected protocol error, got {reply:?}");
+    };
+    assert!(
+        error
+            .message
+            .contains("expected v3 manifest start before frame start")
+    );
+
+    drop(sender_session);
+    let error = receiver.join().unwrap().unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("unexpected v3 frame start before manifest start")
+    );
+}
+
+#[test]
+fn protocol_v3_rejects_issue_tail_before_manifest_seal() {
+    let _env = crate::support::EnvVarGuard::set(&[]);
+    let receiver_dir = TestDir::new();
+    let dump_id = "dump-v3-order-issue-before-seal";
+    let (addr, receiver) = spawn_receiver_dump_once_v3(receiver_dir.path(), 1, 1);
+
+    let mut sender_session = connect_once(Role::Sender, addr, Some(dump_id), None).unwrap();
+    let resume_state = request_resume_state_v3(&mut sender_session.stream, dump_id).unwrap();
+    assert_eq!(resume_state.manifest, empty_manifest_boundary_v3());
+
+    write_message_v3(
+        &mut sender_session.stream,
+        &V3Message::ManifestStart(ManifestStart {
+            base_manifest: empty_manifest_boundary_v3(),
+        }),
+    )
+    .unwrap();
+    write_message_v3(
+        &mut sender_session.stream,
+        &V3Message::ManifestChunk(ManifestChunk {
+            last_record_seq: Some(1),
+            last_work_ordinal: None,
+            bytes: b"manifest-record".to_vec(),
+        }),
+    )
+    .unwrap();
+    sender_session.stream.flush().unwrap();
+
+    let ack = read_message_v3(&mut sender_session.stream).unwrap();
+    assert!(matches!(ack, V3Message::ManifestAck(_)), "reply={ack:?}");
+
+    write_message_v3(
+        &mut sender_session.stream,
+        &V3Message::IssueChunk(IssueChunkV3 {
+            entries: vec![sender_state_issue_v3(1, "sender-state")],
+        }),
+    )
+    .unwrap();
+    sender_session.stream.flush().unwrap();
+
+    let reply = read_message_v3(&mut sender_session.stream).unwrap();
+    let V3Message::Error(error) = reply else {
+        panic!("expected protocol error, got {reply:?}");
+    };
+    assert!(
+        error
+            .message
+            .contains("v3 issue tail requires sealed manifest boundary")
+    );
+
+    drop(sender_session);
+    let error = receiver.join().unwrap().unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("unexpected v3 issue tail before manifest seal")
+    );
+    let paths = ReceiverPaths::new(receiver_dir.path().to_path_buf(), dump_id).unwrap();
+    assert!(!paths.issue_journal_temp_path().exists());
+    assert!(!paths.issue_journal_path().exists());
+}
+
+#[test]
+fn protocol_v3_persists_typed_issue_journal_before_finish() {
+    let _env = crate::support::EnvVarGuard::set(&[]);
+    let receiver_dir = TestDir::new();
+    let dump_id = "dump-v3-issues";
+    let (addr, receiver) = spawn_receiver_dump_once_v3(receiver_dir.path(), 1, 1);
+
+    let mut sender_session = connect_once(Role::Sender, addr, Some(dump_id), None).unwrap();
+    let resume_state = request_resume_state_v3(&mut sender_session.stream, dump_id).unwrap();
+    assert_eq!(resume_state.manifest, empty_manifest_boundary_v3());
+
+    write_message_v3(
+        &mut sender_session.stream,
+        &V3Message::ManifestStart(ManifestStart {
+            base_manifest: empty_manifest_boundary_v3(),
+        }),
+    )
+    .unwrap();
+    write_message_v3(
+        &mut sender_session.stream,
+        &V3Message::ManifestChunk(ManifestChunk {
+            last_record_seq: Some(1),
+            last_work_ordinal: None,
+            bytes: b"manifest-record".to_vec(),
+        }),
+    )
+    .unwrap();
+    sender_session.stream.flush().unwrap();
+    let reply = read_message_v3(&mut sender_session.stream).unwrap();
+    assert!(
+        matches!(reply, V3Message::ManifestAck(_)),
+        "reply={reply:?}"
+    );
+
+    write_message_v3(
+        &mut sender_session.stream,
+        &V3Message::ManifestSeal(ManifestSeal {
+            final_record_seq: Some(1),
+            final_work_ordinal: None,
+        }),
+    )
+    .unwrap();
+    sender_session.stream.flush().unwrap();
+    let reply = read_message_v3(&mut sender_session.stream).unwrap();
+    assert!(
+        matches!(reply, V3Message::ManifestAck(_)),
+        "reply={reply:?}"
+    );
+
+    write_message_v3(
+        &mut sender_session.stream,
+        &V3Message::IssueChunk(IssueChunkV3 {
+            entries: vec![sender_state_issue_v3(1, "sender-state")],
+        }),
+    )
+    .unwrap();
+    write_message_v3(
+        &mut sender_session.stream,
+        &V3Message::Finish(fast_dump::network::protocol::FinishV3 {
+            final_frame_no: 0,
+            final_work_ordinal: None,
+        }),
+    )
+    .unwrap();
+    sender_session.stream.flush().unwrap();
+
+    let reply = read_message_v3(&mut sender_session.stream).unwrap();
+    assert!(matches!(reply, V3Message::FinishAck));
+
+    let report = receiver.join().unwrap().unwrap();
+    let issue_journal_path = receiver_dir
+        .path()
+        .join(format!("{dump_id}.tar.zst.issues.tsv"));
+    let issue_journal = fs::read_to_string(&issue_journal_path).unwrap();
+    assert!(report.final_archive_path.exists());
+    assert!(issue_journal_path.exists());
+    assert!(issue_journal.contains("scope\trecord_seq\twork_ordinal\tattempts\tcode\tpath"));
+    assert!(issue_journal.contains(
+        "sender_state\t1\t\t0\tsender_state_event\tsender-state\tstate-transition\tmanifest recovery"
+    ));
+}
+
+#[test]
+fn protocol_v3_discards_typed_issue_temp_after_unexpected_message() {
+    let _env = crate::support::EnvVarGuard::set(&[]);
+    let receiver_dir = TestDir::new();
+    let dump_id = "dump-v3-issues-discard";
+    let (addr, receiver) = spawn_receiver_dump_once_v3(receiver_dir.path(), 1, 1);
+
+    let mut sender_session = connect_once(Role::Sender, addr, Some(dump_id), None).unwrap();
+    let resume_state = request_resume_state_v3(&mut sender_session.stream, dump_id).unwrap();
+    assert_eq!(resume_state.manifest, empty_manifest_boundary_v3());
+
+    write_message_v3(
+        &mut sender_session.stream,
+        &V3Message::ManifestStart(ManifestStart {
+            base_manifest: empty_manifest_boundary_v3(),
+        }),
+    )
+    .unwrap();
+    write_message_v3(
+        &mut sender_session.stream,
+        &V3Message::ManifestChunk(ManifestChunk {
+            last_record_seq: Some(1),
+            last_work_ordinal: None,
+            bytes: b"manifest-record".to_vec(),
+        }),
+    )
+    .unwrap();
+    sender_session.stream.flush().unwrap();
+    let reply = read_message_v3(&mut sender_session.stream).unwrap();
+    assert!(
+        matches!(reply, V3Message::ManifestAck(_)),
+        "reply={reply:?}"
+    );
+
+    write_message_v3(
+        &mut sender_session.stream,
+        &V3Message::ManifestSeal(ManifestSeal {
+            final_record_seq: Some(1),
+            final_work_ordinal: None,
+        }),
+    )
+    .unwrap();
+    sender_session.stream.flush().unwrap();
+    let reply = read_message_v3(&mut sender_session.stream).unwrap();
+    assert!(
+        matches!(reply, V3Message::ManifestAck(_)),
+        "reply={reply:?}"
+    );
+
+    write_message_v3(
+        &mut sender_session.stream,
+        &V3Message::IssueChunk(IssueChunkV3 {
+            entries: vec![sender_state_issue_v3(1, "sender-state")],
+        }),
+    )
+    .unwrap();
+    write_message_v3(
+        &mut sender_session.stream,
+        &V3Message::FrameStart(fast_dump::network::protocol::FrameStartV3 {
+            frame_no: 1,
+            first_work_ordinal: 1,
+            level: 3,
+            threads: 1,
+        }),
+    )
+    .unwrap();
+    sender_session.stream.flush().unwrap();
+
+    let reply = read_message_v3(&mut sender_session.stream).unwrap();
+    let V3Message::Error(error) = reply else {
+        panic!("expected protocol error, got {reply:?}");
+    };
+    assert!(
+        error
+            .message
+            .contains("expected v3 finish after typed issue tail")
+    );
+
+    drop(sender_session);
+    let error = receiver.join().unwrap().unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("unexpected v3 message after issue tail")
+    );
+
+    let paths = ReceiverPaths::new(receiver_dir.path().to_path_buf(), dump_id).unwrap();
+    assert!(!paths.issue_journal_temp_path().exists());
+    assert!(!paths.issue_journal_path().exists());
 }

@@ -13,5 +13,10 @@ pub use finish::receive_finish;
 pub use frame::{receive_frame, receive_frame_abort};
 pub use journal::{ReceiverJournal, ReceiverPaths, ReceiverState};
 pub use listener::serve_listener;
-pub use resume::{respond_resume_query, respond_resume_query_checked};
-pub use session::{ReceiveReport, receive_dump, receive_dump_checked};
+pub use resume::{
+    respond_resume_query, respond_resume_query_checked, respond_resume_query_v3_checked,
+};
+pub use session::{
+    ReceiveReport, ReceiveReportV3, receive_dump, receive_dump_checked, receive_dump_v3,
+    receive_dump_v3_checked,
+};

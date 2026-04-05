@@ -79,16 +79,21 @@ impl Runtime for RealRuntime {
         dump_id: String,
         runtime: SenderRuntimeOptions,
     ) -> Result<()> {
+        let source = args.sender_source();
         debug!(
-            "sender starting: mode={transport_mode:?} dump_id={} source={} level={} threads={} min_readers={} max_readers={} read_buffer_bytes={} frame_target_bytes={}",
+            "sender starting: mode={transport_mode:?} dump_id={} source={} source_backend={:?} level={} threads={} min_readers={} max_readers={} read_buffer_bytes={} frame_target_bytes={} manifest_chunk_bytes={} manifest_ack_records={} manifest_ack_bytes={}",
             dump_id,
-            args.source.display(),
+            source.path().display(),
+            source.kind(),
             runtime.level,
             runtime.threads,
             runtime.min_readers,
             runtime.max_readers,
             runtime.read_buffer_bytes,
-            runtime.frame_target_bytes
+            runtime.frame_target_bytes,
+            runtime.manifest_chunk_bytes,
+            runtime.manifest_ack_records,
+            runtime.manifest_ack_bytes
         );
         let mut session = establish_session(
             Role::Sender,
@@ -103,11 +108,14 @@ impl Runtime for RealRuntime {
             min_readers: runtime.min_readers,
             max_readers: runtime.max_readers,
             read_buffer_bytes: runtime.read_buffer_bytes,
+            manifest_chunk_bytes: runtime.manifest_chunk_bytes,
+            manifest_ack_records: runtime.manifest_ack_records,
+            manifest_ack_bytes: runtime.manifest_ack_bytes,
         };
-        let report = send_dump(&mut session.stream, args.source, &dump_id, &options)?;
+        let report = send_dump(&mut session.stream, source, &dump_id, &options)?;
 
         println!(
-            "{} connected to {} at {}; dump_id={}; resume frame={} file={} archive_len={}; status={}; files_total_discovered={}; files_sent_clean={}; files_sent_best_effort={}; files_skipped_open_failed={}; files_skipped_unstable_after_retries={}; retries_total={}; bytes_sent_raw={}; bytes_sent_best_effort_raw={}; frames_sent={}; final_archive_bytes={}; final frame={} file={}",
+            "{} connected to {} at {}; dump_id={}; resume frame={} file={} archive_len={}; status={}; files_total_discovered={}; files_sent_clean={}; files_sent_best_effort={}; files_skipped_open_failed={}; files_skipped_unstable_after_retries={}; discovery_issues_total={}; subtrees_skipped={}; manifest_resets_total={}; retries_total={}; bytes_sent_raw={}; bytes_sent_best_effort_raw={}; frames_sent={}; final_archive_bytes={}; final frame={} file={}",
             session.local_role,
             session.peer_role,
             session.peer_addr,
@@ -121,6 +129,9 @@ impl Runtime for RealRuntime {
             report.files_sent_best_effort,
             report.files_skipped_open_failed,
             report.files_skipped_unstable_after_retries,
+            report.discovery_issues_total,
+            report.subtrees_skipped,
+            report.manifest_resets_total,
             report.retries_total,
             report.bytes_sent_raw,
             report.bytes_sent_best_effort_raw,
@@ -320,6 +331,9 @@ mod tests {
                     max_readers: 5,
                     read_buffer_bytes: 2 * 1024,
                     frame_target_bytes: 3 * 1024 * 1024,
+                    manifest_chunk_bytes: 256 * 1024,
+                    manifest_ack_records: 4096,
+                    manifest_ack_bytes: 1024 * 1024,
                 },
                 source: PathBuf::from("input"),
                 token: Some("secret".to_owned()),

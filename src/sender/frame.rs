@@ -14,6 +14,7 @@ use tar::{EntryType, Header};
 use crate::network::protocol::{self, ResumeState};
 
 use super::readers::{IN_MEMORY_SNAPSHOT_THRESHOLD_BYTES, start_long_read_watchdog};
+use super::source::{SourceDiscoveryIssue, SourceDiscoveryIssueSummary};
 use super::{
     DirectFileStream, FileDisposition, FileReadOutcome, FileSkipReason, InputFile, InputFileKind,
     PendingFileWalker, PipelineProfile, PipelineProfileCollector, ReadEvent, ReaderPool,
@@ -38,7 +39,7 @@ impl std::fmt::Display for RetryableStreamFailure {
         write!(
             f,
             "retryable sender stream failure for {}",
-            self.file.abs_path.display()
+            self.file.abs_path().display()
         )
     }
 }
@@ -55,6 +56,15 @@ pub struct OutboundFrame {
     pub first_file_path: String,
     pub last_file_index: u64,
     pub last_file_path: String,
+    pub level: i32,
+    pub threads: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct OutboundFrameV3 {
+    pub frame_no: u64,
+    pub first_work_ordinal: u64,
+    pub last_work_ordinal: u64,
     pub level: i32,
     pub threads: u32,
 }
@@ -228,7 +238,7 @@ impl FramePolicy {
             return false;
         }
 
-        fs::metadata(&file.abs_path)
+        fs::metadata(file.abs_path())
             .map(|metadata| {
                 metadata.is_file() && metadata.len() >= self.large_file_single_frame_threshold
             })
@@ -380,8 +390,23 @@ impl PendingFrameFiles {
         self.walker.final_boundary()
     }
 
+    pub(crate) fn cleanup_after_finish(&self) -> Result<()> {
+        if !self.is_drained() {
+            anyhow::bail!("sender pending frame queue is not drained yet");
+        }
+        self.walker.cleanup_after_finish()
+    }
+
     pub(crate) fn last_discovered_boundary(&self) -> (u64, String) {
         self.walker.last_discovered_boundary()
+    }
+
+    pub(crate) fn discovery_issues(&self) -> Vec<SourceDiscoveryIssue> {
+        self.walker.discovery_issues()
+    }
+
+    pub(crate) fn discovery_issue_summary(&self) -> SourceDiscoveryIssueSummary {
+        self.walker.discovery_issue_summary()
     }
 }
 
@@ -678,8 +703,8 @@ fn prepare_buffered_frame(
     debug!(
         "sender prepare_frame completed: frame_no={} first_file={} last_file={} compressed_bytes={} chunks={} elapsed_ms={}",
         frame_no,
-        first.rel_path,
-        last.rel_path,
+        first.rel_path(),
+        last.rel_path(),
         compressed_bytes,
         chunks.len(),
         build_started.elapsed().as_millis()
@@ -689,9 +714,9 @@ fn prepare_buffered_frame(
             outbound: OutboundFrame {
                 frame_no,
                 first_file_index: first.index,
-                first_file_path: first.rel_path,
+                first_file_path: first.rel_path().to_owned(),
                 last_file_index: last.index,
-                last_file_path: last.rel_path,
+                last_file_path: last.rel_path().to_owned(),
                 level: config.level,
                 threads: config.threads,
             },
@@ -788,7 +813,7 @@ fn tar_long_link_entry_bytes_for_file(file: &InputFile) -> u64 {
 
 pub(crate) fn tar_entry_bytes_for_file(file: &InputFile, size_at_open: u64) -> u64 {
     match file.kind {
-        InputFileKind::Regular => tar_entry_bytes(&file.rel_path, size_at_open),
+        InputFileKind::Regular => tar_entry_bytes(file.rel_path(), size_at_open),
         InputFileKind::Symlink { .. } => {
             tar_header_bytes_for_file(file) + tar_entry_payload_bytes_for_file(file, size_at_open)
         }
@@ -797,10 +822,10 @@ pub(crate) fn tar_entry_bytes_for_file(file: &InputFile, size_at_open: u64) -> u
 
 pub(crate) fn tar_header_bytes_for_file(file: &InputFile) -> u64 {
     match file.kind {
-        InputFileKind::Regular => tar_header_bytes(&file.rel_path),
+        InputFileKind::Regular => tar_header_bytes(file.rel_path()),
         InputFileKind::Symlink { .. } => {
             TAR_HEADER_BYTES
-                + tar_long_path_entry_bytes(&file.rel_path)
+                + tar_long_path_entry_bytes(file.rel_path())
                 + tar_long_link_entry_bytes_for_file(file)
         }
     }
@@ -969,11 +994,11 @@ where
     W: Write,
 {
     if file.is_regular() {
-        return append_tar_header(writer, &file.rel_path, size_at_open);
+        return append_tar_header(writer, file.rel_path(), size_at_open);
     }
 
     let mut header = Header::new_gnu();
-    prepare_path_header_for_file(writer, &mut header, &file.rel_path)?;
+    prepare_path_header_for_file(writer, &mut header, file.rel_path())?;
 
     match &file.kind {
         InputFileKind::Regular => {
@@ -982,7 +1007,7 @@ where
             header.set_mode(0o644);
         }
         InputFileKind::Symlink { target } => {
-            prepare_link_name_for_file(writer, &mut header, target, &file.rel_path)?;
+            prepare_link_name_for_file(writer, &mut header, target, file.rel_path())?;
             header.set_entry_type(EntryType::new(b'2'));
             header.set_size(0);
             header.set_mode(0o777);
@@ -995,7 +1020,7 @@ where
     header.set_cksum();
     writer
         .write_all(header.as_bytes())
-        .with_context(|| format!("failed to write tar header for {}", file.rel_path))?;
+        .with_context(|| format!("failed to write tar header for {}", file.rel_path()))?;
 
     Ok(())
 }
@@ -1009,7 +1034,7 @@ where
     W: Write,
 {
     if file.is_regular() {
-        return append_tar_padding(writer, &file.rel_path, size_at_open);
+        return append_tar_padding(writer, file.rel_path(), size_at_open);
     }
 
     Ok(())
@@ -1029,11 +1054,11 @@ where
             writer.write_all(bytes).with_context(|| {
                 format!(
                     "failed to stream sender file {}",
-                    snapshot.file.abs_path.display()
+                    snapshot.file.abs_path().display()
                 )
             })?;
             #[cfg(test)]
-            if test_hooks::note_streamed_bytes(&snapshot.file.abs_path, bytes.len() as u64) {
+            if test_hooks::note_streamed_bytes(snapshot.file.abs_path(), bytes.len() as u64) {
                 return Err(RetryableStreamFailure {
                     file: snapshot.file.clone(),
                 }
@@ -1059,7 +1084,7 @@ where
     // Прямой поток больших файлов дольше всего удерживает reader worker, поэтому
     // отдельный watchdog помогает увидеть path даже если read() заблокировался.
     let _watchdog = start_long_read_watchdog(
-        &direct.file.abs_path,
+        direct.file.abs_path(),
         "direct-stream",
         direct.retries.saturating_add(1),
     );
@@ -1089,7 +1114,7 @@ where
             .with_context(|| {
                 format!(
                     "failed to read sender file {}",
-                    direct.file.abs_path.display()
+                    direct.file.abs_path().display()
                 )
             })?;
         if read == 0 {
@@ -1103,11 +1128,11 @@ where
         writer.write_all(&buffer[..read]).with_context(|| {
             format!(
                 "failed to stream sender file {}",
-                direct.file.abs_path.display()
+                direct.file.abs_path().display()
             )
         })?;
         #[cfg(test)]
-        if test_hooks::note_streamed_bytes(&direct.file.abs_path, read as u64) {
+        if test_hooks::note_streamed_bytes(direct.file.abs_path(), read as u64) {
             return Err(RetryableStreamFailure {
                 file: direct.file.clone(),
             }
@@ -1125,7 +1150,7 @@ where
     if let Some(profile) = profile {
         profile.record_file_read(
             direct.file.index,
-            &direct.file.rel_path,
+            direct.file.rel_path(),
             direct.size_at_open,
             read_buffers,
             direct.read_started,

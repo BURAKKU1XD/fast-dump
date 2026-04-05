@@ -164,6 +164,9 @@ fn receiver_binary_roundtrips_source_into_valid_archive_in_pull_mode() {
             min_readers: 2,
             max_readers: 8,
             read_buffer_bytes: 1024 * 1024,
+            manifest_chunk_bytes: 256 * 1024,
+            manifest_ack_records: 4096,
+            manifest_ack_bytes: 1024 * 1024,
         };
         send_dump(&mut session.stream, sender_path, "dump-04", &options).unwrap()
     });
@@ -234,6 +237,9 @@ fn sender_and_receiver_binaries_persist_issue_journal_for_terminal_skip() {
     let sender_stdout = String::from_utf8_lossy(&result.sender_output.stdout);
     assert!(sender_stdout.contains("status=completed_with_warnings"));
     assert!(sender_stdout.contains("files_skipped_open_failed=1"));
+    assert!(sender_stdout.contains("discovery_issues_total=0"));
+    assert!(sender_stdout.contains("subtrees_skipped=0"));
+    assert!(sender_stdout.contains("manifest_resets_total=0"));
 
     assert_archive_hashes(&result.archive_path, &expected);
 

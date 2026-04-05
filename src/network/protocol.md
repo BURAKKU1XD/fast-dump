@@ -204,6 +204,192 @@ Receiver перед `FinishAck`:
 - переименовывает `.tar.zst.part` в финальный `.tar.zst`
 - удаляет journal
 
+## Frozen v3 Model
+
+Status note:
+
+- Current CLI/runtime still speaks packet version `2` by default.
+- [`protocol.rs`](./protocol.rs) now also contains a frozen packet version `3`
+  message model, codec tests, and library-level session helpers used by tests
+  and benches.
+- The `v3` model below is implemented for opt-in library paths, but it is not
+  yet the default CLI/runtime session loop.
+- Current automated benchmark campaign keeps the cutover decision at `no-go`:
+  the active runtime stays on packet version `2`, while the current measured
+  `v3` tuning candidate is `manifest_chunk_kb=512`,
+  `manifest_ack_records=65536`, `manifest_ack_kb=8192` for further library-side
+  work and comparison.
+
+Packet version `3` keeps the same fixed header layout:
+
+| Field | Type | Size | Value |
+|---|---:|---:|---|
+| `magic` | `u32` | 4 | `0x504D4446` (`FDMP`) |
+| `version` | `u16` | 2 | `3` |
+| `kind` | `u16` | 2 | v3 message kind |
+| `body_len` | `u32` | 4 | body size in bytes |
+
+Field encoding for `v3`:
+
+- `u8/u16/u32/u64/i32`: little-endian
+- `string`: `u32 len` + UTF-8 bytes
+- optional `u64`: encoded as `u64`, where `0` means `none`
+- `FrameChunk.bytes`: raw compressed bytes, length comes from packet header
+- `ManifestChunk.bytes`: raw manifest payload bytes, length is part of the
+  message body
+
+V3 size limits:
+
+- `ManifestChunk`: maximum `1 MiB`
+- `FrameChunk`: maximum `1 MiB`
+- every other v3 control body: maximum `64 KiB`
+- total unacked manifest window: maximum `8 MiB` and `65536` records
+- `FinishAck`: empty body
+
+### V3 boundaries
+
+`ResumeStateV3` carries two independent durable boundaries:
+
+- `manifest`
+  - `manifest_bytes_persisted: u64`
+  - `last_record_seq: u64?`
+  - `last_work_ordinal: u64?`
+  - `sealed: bool`
+- `archive`
+  - `last_committed_frame: u64`
+  - `last_committed_work_ordinal: u64?`
+  - `archive_len: u64`
+
+Rules:
+
+- `work_ordinal` is the primary progress coordinate for frame, ack, and finish
+  validation.
+- `record_seq` tracks manifest discovery progress and may advance beyond the
+  committed archive boundary.
+- a manifest boundary must not carry `last_work_ordinal` without
+  `last_record_seq`.
+- a zero-byte manifest boundary must not claim progress or `sealed = true`.
+
+### V3 messages
+
+| Kind | No. | Body |
+|---|---:|---|
+| `Hello` | 1 | `role: u8`, `protocol_version: u16`, `dump_id: string`, `token: string` |
+| `HelloAck` | 2 | `role: u8` |
+| `ResumeQuery` | 3 | `dump_id: string` |
+| `ResumeState` | 4 | `manifest_bytes_persisted: u64`, `last_record_seq: u64?`, `last_work_ordinal: u64?`, `sealed: bool`, `last_committed_frame: u64`, `last_committed_work_ordinal: u64?`, `archive_len: u64` |
+| `ManifestStart` | 5 | `base_manifest_bytes_persisted: u64`, `base_last_record_seq: u64?`, `base_last_work_ordinal: u64?`, `base_sealed: bool` |
+| `ManifestChunk` | 6 | `last_record_seq: u64?`, `last_work_ordinal: u64?`, `payload_len: u32`, `payload_bytes...` |
+| `ManifestAck` | 7 | `manifest_bytes_persisted: u64`, `last_record_seq: u64?`, `last_work_ordinal: u64?`, `sealed: bool` |
+| `ManifestSeal` | 8 | `final_record_seq: u64?`, `final_work_ordinal: u64?` |
+| `FrameStart` | 9 | `frame_no: u64`, `first_work_ordinal: u64`, `level: i32`, `threads: u32` |
+| `FrameChunk` | 10 | raw compressed bytes |
+| `FrameEnd` | 11 | `frame_no: u64`, `last_work_ordinal: u64`, `compressed_len: u64`, `compressed_xxh3_64: u64` |
+| `Ack` | 12 | `frame_no: u64`, `last_work_ordinal: u64`, `archive_len: u64` |
+| `FrameAbort` | 13 | `frame_no: u64` |
+| `AbortAck` | 14 | `frame_no: u64`, `archive_len: u64` |
+| `IssueChunk` | 15 | `entry_count: u32`, then repeated `scope: u8`, `record_seq: u64?`, `work_ordinal: u64?`, `path: string`, `attempts: u32`, `code: u8`, `detail: string`, `context: string` |
+| `Finish` | 16 | `final_frame_no: u64`, `final_work_ordinal: u64?` |
+| `FinishAck` | 17 | empty body |
+| `Error` | 18 | `message: string` |
+
+### V3 typed issue stream
+
+`IssueChunk` uses a single typed tail instead of separate file/discovery
+journals.
+
+`scope` values:
+
+- `1 = File`
+- `2 = DiscoveryEntry`
+- `3 = DiscoverySubtree`
+- `4 = SenderState`
+
+`code` values:
+
+- `1 = OpenFailed`
+- `2 = UnstableAfterRetries`
+- `3 = UnsupportedEntry`
+- `4 = UnreadableSymlinkTarget`
+- `5 = VirtualFilesystem`
+- `6 = Io`
+- `7 = SenderStateEvent`
+- `8 = ReadDirFailed`
+- `9 = SourceInvalidated`
+
+Validation rules:
+
+- file-scope issues must carry `work_ordinal`, must not carry `record_seq`, and
+  must carry non-zero `attempts`
+- discovery and sender-state issues must not carry `work_ordinal`
+- `path` is diagnostic text in `v3`; it is not a resume boundary field
+- receiver persists accepted `IssueChunk` entries incrementally into
+  `<dump_id>.tar.zst.issues.tsv.part` instead of buffering the whole typed tail
+  in RAM
+
+### V3 ordering rules
+
+The frozen `v3` session model is:
+
+1. `Hello`
+2. `HelloAck`
+3. `ResumeQuery`
+4. `ResumeState`
+5. `ManifestStart`
+6. zero or more `ManifestChunk`
+7. zero or more `ManifestAck`
+8. optional overlap of additional `ManifestChunk`/`ManifestAck` traffic with
+   committed archive frame traffic, but only for `work_ordinal` values already
+   covered by the latest durable `ManifestAck`
+9. optional `ManifestSeal`
+10. final sealed `ManifestAck`
+11. repeated frame groups:
+    `FrameStart -> FrameChunk* -> (FrameEnd -> Ack | FrameAbort -> AbortAck)`
+12. zero or more `IssueChunk`
+13. `Finish`
+14. `FinishAck`
+
+Explicit rules:
+
+- `FrameStart.first_work_ordinal` must not point beyond the receiver's latest
+  durably acked manifest boundary.
+- `ManifestChunk` may advance manifest discovery ahead of archive transfer, but
+  must not retroactively shrink or unseal the committed manifest boundary.
+- each durably committed `ManifestChunk` must end on a full manifest record
+  boundary, so reconnect can restart from `last_record_seq` without preserving a
+  partial record tail.
+- `ManifestSeal` closes the manifest stream for the session; after a sealed
+  `ManifestAck`, no further `ManifestChunk` is valid.
+- receiver may emit `ManifestAck` after a batch reaches the negotiated runtime
+  `manifest_ack_records` or `manifest_ack_kb` window, and must emit a final
+  sealed `ManifestAck` after `ManifestSeal`.
+- `IssueChunk` is allowed only after both manifest transfer and frame transfer
+  are complete.
+- `Finish` is valid only after the manifest stream is sealed and the final
+  committed archive boundary matches `final_work_ordinal`.
+
+### V3 error and rollback rules
+
+- if receiver rejects a `ManifestChunk` or `ManifestSeal`, it sends `Error` and
+  keeps the previous durable manifest boundary
+- manifest failures must not advance `archive_len` or the committed archive
+  boundary
+- receiver additionally enforces local temp-store caps:
+  - `<dump_id>.manifest.part`: `512 MiB`
+  - `<dump_id>.tar.zst.issues.tsv.part`: `64 MiB`
+- quota exhaustion or OS-level disk-full errors on those temp stores cause
+  `Error`, and receiver rolls the affected temp file back to its pre-append
+  length when possible
+- `ManifestAck` is the only signal that allows sender to treat a manifest prefix
+  as durably replicated on the receiver
+- `FrameAbort` rolls back only the current uncommitted archive frame and does
+  not change the committed manifest boundary
+- typed issue chunks never change manifest or archive resume state and may be
+  discarded safely on abort before `FinishAck`
+- receiver renames `.issues.tsv.part` into the final `.issues.tsv` only after a
+  successful `Finish`; stale partial issue tails are removed on restart, and
+  abandoned `.manifest.part` files with no journal are discarded on fresh open
+
 ## Contract Versus Implementation Notes
 
 Стабильной частью v2 contract считаются:

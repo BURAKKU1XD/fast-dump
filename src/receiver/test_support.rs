@@ -53,7 +53,10 @@ impl Drop for TestDir {
 impl FsFailureGuard {
     pub(crate) fn new() -> Self {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        let lock = LOCK.get_or_init(|| Mutex::new(())).lock().unwrap();
+        let lock = LOCK
+            .get_or_init(|| Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
         test_hooks::clear();
         Self { _lock: lock }
     }
@@ -178,5 +181,8 @@ pub(crate) fn sample_send_options() -> SendOptions {
         min_readers: 2,
         max_readers: 4,
         read_buffer_bytes: 1024,
+        manifest_chunk_bytes: 256 * 1024,
+        manifest_ack_records: 4096,
+        manifest_ack_bytes: 1024 * 1024,
     }
 }

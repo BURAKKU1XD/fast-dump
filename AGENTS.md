@@ -78,16 +78,29 @@ wishlist.
   - `--token <TOKEN>`
   - `-l, --level <N>` default `3`
   - `-t, --threads <N|auto>` default `auto`
-  - `--min-readers <N>` default `2`
-  - `--max-readers <N>` default `8`
-  - `--read-buffer-kb <N>` default `1024`
-  - `--frame-target-mb <N>` default `64`
+- `--min-readers <N>` default `2`
+- `--max-readers <N>` default `8`
+- `--read-buffer-kb <N>` default `1024`
+- `--frame-target-mb <N>` default `64`
+- `--manifest-chunk-kb <N>` default `256`
+- `--manifest-ack-records <N>` default `4096`
+- `--manifest-ack-kb <N>` default `1024`
 - Current behavior:
   - if `--dump-id` is omitted, sender falls back to the last path component of
     `--source`
   - `--threads auto` resolves to `available_parallelism() - 1`, minimum `1`
   - runtime validation rejects zero threads, zero reader counts, and
     `min_readers > max_readers`
+  - manifest transfer tuning is already validated against frozen `v3` hard caps:
+    `ManifestChunk <= 1 MiB`, total unacked manifest window `<= 8 MiB` and
+    `<= 65536` records
+  - sender-side manifest spool sealing is bounded by an internal `512 MiB`
+    quota; on exhaustion the sender fails loudly and removes the partial spool
+    plus stale checkpoint instead of keeping an unbounded dirty prefix
+  - the active CLI/runtime path still uses the `v2` frame loop
+  - library-level `v3` session helpers now exist for pipelined manifest plus
+    archive transfer in tests and benches, but CLI transport still has not
+    switched to `v3` by default
 
 ## Receiver CLI
 
@@ -194,6 +207,12 @@ wishlist.
   retry loops across reconnects.
 - Committed progress must be able to advance across skipped indices even when
   skipped files produce no tar payload.
+- Current runtime still uses `file_index` plus diagnostic path as the v2 resume
+  boundary.
+- The frozen protocol v3 design in `src/network/protocol.rs` and
+  `src/network/protocol.md` moves future primary resume state to a durable
+  manifest boundary plus archive `work_ordinal`, but that model is not yet the
+  active runtime contract.
 
 ## Sender Pipeline
 
@@ -204,6 +223,9 @@ wishlist.
   - it uses `ReaderPool` for bounded prefetch and adaptive scaling
   - it streams zstd output directly into protocol `FrameChunk` packets through
     `ProtocolChunkWriter`
+  - sender `PipelineProfile` now records manifest build bytes/time, spool read
+    bytes/time, replay bytes/time, and disk-budget wait counters for
+    observability and bench plumbing
 - Buffered path:
   - `prepare_dump` still exists for tests and benchmarks
   - it materializes chunks in memory and should not be confused with the
@@ -257,6 +279,14 @@ wishlist.
   - `archive_len`
 - Before resuming, truncate any trailing bytes beyond `archive_len`.
 - If trailing bytes cannot be reconciled with the journal, fail loudly.
+- Receiver-side v3 temp stores are bounded locally:
+  - `<dump_id>.manifest.part` max `512 MiB`
+  - `<dump_id>.tar.zst.issues.tsv.part` max `64 MiB`
+- If manifest or typed issue-tail persistence hits quota or ENOSPC, receiver
+  keeps the previous durable manifest/archive boundary and rolls the temp file
+  back to the last committed length when possible.
+- Fresh opens discard abandoned `.manifest.part` files that have no journal, and
+  restart always removes stale `.issues.tsv.part` tails.
 - Finalization writes tar end blocks, closes the last local zstd frame, fsyncs,
   renames the file, and removes the journal.
 - If sender uploaded terminal skip details, receiver also persists
@@ -302,6 +332,26 @@ Current runtime message sequence:
 - `Finish { final_frame_no, final_file_index, final_file_path }`
 - `FinishAck`
 
+Frozen v3 message model in code and docs, not yet active at runtime:
+
+- `Hello { role, protocol_version, dump_id, token }`
+- `HelloAck { role }`
+- `ResumeQuery { dump_id }`
+- `ResumeStateV3 { manifest_bytes_persisted, last_manifest_record_seq, last_manifest_work_ordinal, manifest_sealed, last_committed_frame, last_committed_work_ordinal, archive_len }`
+- `ManifestStart { base_manifest_* }`
+- zero or more `ManifestChunk { last_record_seq, last_work_ordinal, bytes }`
+- zero or more `ManifestAck { manifest_bytes_persisted, last_record_seq, last_work_ordinal, sealed }`
+- optional `ManifestSeal { final_record_seq, final_work_ordinal }`
+- repeated archive frame groups:
+  - `FrameStart { frame_no, first_work_ordinal, level, threads }`
+  - zero or more `FrameChunk { bytes }`
+  - `FrameEnd { frame_no, last_work_ordinal, compressed_len, compressed_xxh3_64 }`
+  - `Ack { frame_no, last_work_ordinal, archive_len }`
+- optional `FrameAbort { frame_no }` with `AbortAck { frame_no, archive_len }`
+- zero or more `IssueChunk { scope, record_seq?, work_ordinal?, path, attempts, code, detail, context }`
+- `Finish { final_frame_no, final_work_ordinal }`
+- `FinishAck`
+
 Protocol rules:
 
 - `last_committed_file_index` is the monotonic index in deterministic traversal
@@ -320,12 +370,19 @@ Protocol rules:
   previous committed `archive_len`.
 - If the connection drops before `Ack`, receiver discards the partial frame by
   truncating back to the last committed `archive_len`.
+- In the frozen v3 contract, manifest transfer is durably advanced only by
+  `ManifestAck`; archive frames must not move past the latest durably acked
+  manifest `work_ordinal`.
+- In the frozen v3 contract, typed `IssueChunk` entries are persisted
+  incrementally into `<dump_id>.tar.zst.issues.tsv.part`, do not mutate resume
+  state, and are finalized only after successful `FinishAck`.
 
 ## File Type Policy
 
 - Support regular files and symlinks.
 - Preserve symlinks as symlink entries in tar without dereferencing targets when their link targets can be read.
 - Skip symlinks whose link targets become unreadable during source traversal with a warning.
+- On Linux, skip entries on virtual filesystems such as `procfs`, `sysfs`, `cgroup2`, `debugfs`, and `tracefs` with a warning based on a cached `/proc/self/mountinfo` filesystem-type lookup.
 - Skip sockets, devices, FIFOs, and other unsupported special entries with a kind-specific warning.
 
 ## Testing and Verification
@@ -338,6 +395,23 @@ Protocol rules:
   - `tests/connectivity/observability.rs`
   - `tests/connectivity/stress.rs`
 - Benchmarks live under `benches/`.
+- `cargo bench --bench loopback_send_dump -- ...` is the current comparative
+  matrix runner for performance work.
+- The loopback matrix now supports both `v2` and library-level `v3` sender /
+  receiver session helpers under deterministic benchmark network profiles:
+  `loopback-localhost`, `lan-low-rtt`, `wan-moderate-rtt`, `wan-high-rtt`,
+  and `bandwidth-limited`.
+- The runner writes `benchmark_plan.md`, `results_raw.csv`,
+  `results_summary.csv`, and `benchmark_report.md` under the selected matrix
+  output directory.
+- Current automated benchmark verdict:
+  - active CLI/runtime remains `v2`
+  - measured `v3` tuning candidate for further work is
+    `manifest_chunk_kb=512`, `manifest_ack_records=65536`,
+    `manifest_ack_kb=8192`
+  - no `v3` cutover yet because the automated subset still shows RTT-sensitive
+    regressions versus `v2`, and the full required matrix from
+    `PERFOMANCE_V3.md` is not implemented yet
 - Before landing behavior changes, run:
   - `cargo test --quiet`
   - `cargo clippy --all-targets --all-features`

@@ -22,11 +22,19 @@ pub struct PipelineProfile {
     pub compress: StageProfile,
     pub send: StageProfile,
     pub total: StageProfile,
+    pub manifest_build: StageProfile,
+    pub manifest_transfer: StageProfile,
+    pub manifest_spool_read: StageProfile,
+    pub manifest_replay: StageProfile,
+    pub disk_budget_wait: StageProfile,
     pub traversal_wait: StageProfile,
     pub ack_wait: StageProfile,
+    pub time_to_first_frame: Duration,
     pub files_read: u64,
     pub read_buffers: u64,
+    pub manifest_replay_records: u64,
     pub max_inflight_directory_tasks: u64,
+    pub max_dirfd_depth: u64,
     pub flush_count: u64,
     pub file_reads: Vec<FileReadProfile>,
 }
@@ -106,6 +114,49 @@ impl PipelineProfileCollector {
         state.profile.total.duration = duration;
     }
 
+    pub(crate) fn record_manifest_build(&self, bytes: u64, duration: Duration) {
+        let mut state = self.inner.lock().unwrap();
+        state.profile.manifest_build.bytes =
+            state.profile.manifest_build.bytes.saturating_add(bytes);
+        state.profile.manifest_build.duration += duration;
+    }
+
+    pub(crate) fn record_manifest_transfer(&self, bytes: u64, duration: Duration) {
+        let mut state = self.inner.lock().unwrap();
+        state.profile.manifest_transfer.bytes =
+            state.profile.manifest_transfer.bytes.saturating_add(bytes);
+        state.profile.manifest_transfer.duration += duration;
+    }
+
+    pub(crate) fn record_manifest_spool_read(&self, bytes: u64, duration: Duration) {
+        let mut state = self.inner.lock().unwrap();
+        state.profile.manifest_spool_read.bytes = state
+            .profile
+            .manifest_spool_read
+            .bytes
+            .saturating_add(bytes);
+        state.profile.manifest_spool_read.duration += duration;
+    }
+
+    pub(crate) fn record_manifest_replay(&self, bytes: u64, records: u64, duration: Duration) {
+        let mut state = self.inner.lock().unwrap();
+        state.profile.manifest_replay.bytes =
+            state.profile.manifest_replay.bytes.saturating_add(bytes);
+        state.profile.manifest_replay.duration += duration;
+        state.profile.manifest_replay_records = state
+            .profile
+            .manifest_replay_records
+            .saturating_add(records);
+    }
+
+    #[cfg_attr(not(test), allow(dead_code))]
+    pub(crate) fn record_disk_budget_wait(&self, duration: Duration) {
+        let mut state = self.inner.lock().unwrap();
+        state.profile.disk_budget_wait.bytes =
+            state.profile.disk_budget_wait.bytes.saturating_add(1);
+        state.profile.disk_budget_wait.duration += duration;
+    }
+
     pub(crate) fn record_traversal_wait(&self, duration: Duration) {
         let mut state = self.inner.lock().unwrap();
         state.profile.traversal_wait.bytes = state.profile.traversal_wait.bytes.saturating_add(1);
@@ -120,6 +171,11 @@ impl PipelineProfileCollector {
             .max(inflight_tasks as u64);
     }
 
+    pub(crate) fn record_dirfd_depth(&self, depth: usize) {
+        let mut state = self.inner.lock().unwrap();
+        state.profile.max_dirfd_depth = state.profile.max_dirfd_depth.max(depth as u64);
+    }
+
     pub(crate) fn record_ack_wait(&self, duration: Duration) {
         let mut state = self.inner.lock().unwrap();
         state.profile.ack_wait.bytes = state.profile.ack_wait.bytes.saturating_add(1);
@@ -129,6 +185,13 @@ impl PipelineProfileCollector {
     pub(crate) fn record_flush(&self) {
         let mut state = self.inner.lock().unwrap();
         state.profile.flush_count = state.profile.flush_count.saturating_add(1);
+    }
+
+    pub(crate) fn record_time_to_first_frame(&self, duration: Duration) {
+        let mut state = self.inner.lock().unwrap();
+        if state.profile.time_to_first_frame.is_zero() {
+            state.profile.time_to_first_frame = duration;
+        }
     }
 
     pub(crate) fn finish(&self) -> PipelineProfile {
@@ -247,6 +310,14 @@ mod tests {
     fn collector_tracks_traversal_ack_and_flush_metrics() {
         let collector = PipelineProfileCollector::default();
 
+        collector.record_manifest_build(96, Duration::from_millis(6));
+        collector.record_manifest_build(24, Duration::from_millis(4));
+        collector.record_manifest_spool_read(40, Duration::from_millis(3));
+        collector.record_manifest_spool_read(24, Duration::from_millis(2));
+        collector.record_manifest_replay(32, 2, Duration::from_millis(5));
+        collector.record_manifest_replay(16, 1, Duration::from_millis(7));
+        collector.record_disk_budget_wait(Duration::from_millis(9));
+        collector.record_disk_budget_wait(Duration::from_millis(1));
         collector.record_traversal_wait(Duration::from_millis(7));
         collector.record_traversal_wait(Duration::from_millis(5));
         collector.record_directory_inflight(2);
@@ -258,6 +329,18 @@ mod tests {
 
         let profile = collector.finish();
 
+        assert_eq!(profile.manifest_build.bytes, 120);
+        assert_eq!(profile.manifest_build.duration, Duration::from_millis(10));
+        assert_eq!(profile.manifest_spool_read.bytes, 64);
+        assert_eq!(
+            profile.manifest_spool_read.duration,
+            Duration::from_millis(5)
+        );
+        assert_eq!(profile.manifest_replay.bytes, 48);
+        assert_eq!(profile.manifest_replay.duration, Duration::from_millis(12));
+        assert_eq!(profile.manifest_replay_records, 3);
+        assert_eq!(profile.disk_budget_wait.bytes, 2);
+        assert_eq!(profile.disk_budget_wait.duration, Duration::from_millis(10));
         assert_eq!(profile.traversal_wait.duration, Duration::from_millis(12));
         assert_eq!(profile.traversal_wait.bytes, 2);
         assert_eq!(profile.max_inflight_directory_tasks, 5);
