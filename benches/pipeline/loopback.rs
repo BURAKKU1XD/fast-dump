@@ -14,12 +14,11 @@ use super::results::{
     write_summary_csv,
 };
 use super::shared::{
-    BIG_FILES_DATASET, BenchmarkProtocolRuntime, DEFAULT_MEMORY_BUDGET_MIB,
-    MANY_SMALL_FILES_DATASET, MIXED_DATASET, MatrixDataset, benchmark_network_profile,
-    benchmark_network_shape, benchmark_protocol_runtimes, default_matrix_network_profiles,
-    default_matrix_send_options, ensure_big_files_dataset, ensure_many_small_files_dataset,
-    ensure_mixed_dataset, matrix_frame_target_values_mb, matrix_read_buffer_values_kb,
-    matrix_thread_counts,
+    BIG_FILES_DATASET, DEFAULT_MEMORY_BUDGET_MIB, MANY_SMALL_FILES_DATASET, MIXED_DATASET,
+    MatrixDataset, benchmark_network_profile, benchmark_network_shape,
+    default_matrix_network_profiles, default_matrix_send_options, ensure_big_files_dataset,
+    ensure_many_small_files_dataset, ensure_mixed_dataset, matrix_frame_target_values_mb,
+    matrix_read_buffer_values_kb, matrix_thread_counts,
 };
 use super::stats::{LoopbackRunMetrics, run_loopback_scenario};
 
@@ -56,8 +55,6 @@ impl Display for ExecutorMode {
 struct MatrixArgs {
     #[arg(long = "dataset", value_delimiter = ',', num_args = 1..)]
     datasets: Vec<String>,
-    #[arg(long = "protocol-runtime", value_delimiter = ',', num_args = 1..)]
-    protocol_runtimes: Vec<String>,
     #[arg(long = "network-profile", value_delimiter = ',', num_args = 1..)]
     network_profiles: Vec<String>,
     #[arg(long, value_delimiter = ',', num_args = 1..)]
@@ -207,29 +204,6 @@ pub(crate) fn resolve_dataset_names(requested: &[String]) -> Result<Vec<&'static
     Ok(requested_names)
 }
 
-fn resolve_protocol_runtimes(requested: &[String]) -> Result<Vec<BenchmarkProtocolRuntime>> {
-    if requested.is_empty() {
-        return Ok(benchmark_protocol_runtimes().to_vec());
-    }
-
-    let mut selected = BTreeSet::new();
-    for runtime in requested {
-        match runtime.trim() {
-            "v2" => {
-                selected.insert(BenchmarkProtocolRuntime::V2);
-            }
-            "v3" => {
-                selected.insert(BenchmarkProtocolRuntime::V3);
-            }
-            other => {
-                bail!("unsupported protocol runtime `{other}`; supported runtimes: v2, v3");
-            }
-        }
-    }
-
-    Ok(selected.into_iter().collect())
-}
-
 fn resolve_network_profiles(requested: &[String]) -> Result<Vec<&'static str>> {
     if requested.is_empty() {
         return Ok(default_matrix_network_profiles());
@@ -284,7 +258,6 @@ fn run_matrix(args: MatrixArgs) -> Result<()> {
                 .join("fast-dump-bench-datasets")
         });
     let datasets = resolve_datasets(&args.datasets, &dataset_root)?;
-    let protocol_runtimes = resolve_protocol_runtimes(&args.protocol_runtimes)?;
     let network_profiles = resolve_network_profiles(&args.network_profiles)?;
     let threads = resolve_values("threads", &matrix_thread_counts(), &args.threads)?;
     let frames_mb = resolve_values("frames", &matrix_frame_target_values_mb(), &args.frames_mb)?;
@@ -302,11 +275,10 @@ fn run_matrix(args: MatrixArgs) -> Result<()> {
 
     for dataset in datasets {
         eprintln!(
-            "[bench-matrix] dataset={} path={} scenarios={} repeats={} thresholds={} runtimes={} networks={} executors={} resume={} shuffle={} plan={}",
+            "[bench-matrix] dataset={} path={} scenarios={} repeats={} thresholds={} runtime=v3 networks={} executors={} resume={} shuffle={} plan={}",
             dataset.name,
             dataset.path.display(),
-            protocol_runtimes.len()
-                * network_profiles.len()
+            network_profiles.len()
                 * executors.len()
                 * threads.len()
                 * frames_mb.len()
@@ -317,7 +289,6 @@ fn run_matrix(args: MatrixArgs) -> Result<()> {
                 * thresholds_mib.len(),
             args.repeats,
             join_values(&thresholds_mib),
-            join_values(&protocol_runtimes),
             join_values(&network_profiles),
             join_values(&executors),
             args.resume,
@@ -328,49 +299,43 @@ fn run_matrix(args: MatrixArgs) -> Result<()> {
         let mut executed_runs = 0_usize;
         let mut skipped_runs = 0_usize;
         let mut planned_runs = Vec::new();
-        for runtime in &protocol_runtimes {
-            for network_profile in &network_profiles {
-                for executor in &executors {
-                    for threads in &threads {
-                        for frame_target_mb in &frames_mb {
-                            for read_buffer_kb in &buffers_kb {
-                                for manifest_chunk_kb in &manifest_chunk_kb {
-                                    for manifest_ack_records in &manifest_ack_records {
-                                        for manifest_ack_kb in &manifest_ack_kb {
-                                            if *manifest_ack_kb < *manifest_chunk_kb {
-                                                bail!(
-                                                    "manifest-ack-kb must not be smaller than manifest-chunk-kb: {} < {}",
-                                                    manifest_ack_kb,
-                                                    manifest_chunk_kb
-                                                );
-                                            }
-                                            for threshold_mib in &thresholds_mib {
-                                                for repeat_index in 1..=args.repeats {
-                                                    planned_runs.push((
-                                                        *runtime,
-                                                        *network_profile,
-                                                        *executor,
-                                                        ScenarioKey {
-                                                            dataset: dataset.name.to_owned(),
-                                                            protocol_runtime: runtime
-                                                                .id()
-                                                                .to_owned(),
-                                                            network_profile: (*network_profile)
-                                                                .to_owned(),
-                                                            executor: executor.label().to_owned(),
-                                                            threads: *threads,
-                                                            frame_target_mb: *frame_target_mb,
-                                                            read_buffer_kb: *read_buffer_kb,
-                                                            manifest_chunk_kb: *manifest_chunk_kb,
-                                                            manifest_ack_records:
-                                                                *manifest_ack_records,
-                                                            manifest_ack_kb: *manifest_ack_kb,
-                                                            large_file_single_frame_threshold_mib:
-                                                                *threshold_mib,
-                                                        },
-                                                        repeat_index,
-                                                    ));
-                                                }
+        for network_profile in &network_profiles {
+            for executor in &executors {
+                for threads in &threads {
+                    for frame_target_mb in &frames_mb {
+                        for read_buffer_kb in &buffers_kb {
+                            for manifest_chunk_kb in &manifest_chunk_kb {
+                                for manifest_ack_records in &manifest_ack_records {
+                                    for manifest_ack_kb in &manifest_ack_kb {
+                                        if *manifest_ack_kb < *manifest_chunk_kb {
+                                            bail!(
+                                                "manifest-ack-kb must not be smaller than manifest-chunk-kb: {} < {}",
+                                                manifest_ack_kb,
+                                                manifest_chunk_kb
+                                            );
+                                        }
+                                        for threshold_mib in &thresholds_mib {
+                                            for repeat_index in 1..=args.repeats {
+                                                planned_runs.push((
+                                                    *network_profile,
+                                                    *executor,
+                                                    ScenarioKey {
+                                                        dataset: dataset.name.to_owned(),
+                                                        protocol_runtime: "v3".to_owned(),
+                                                        network_profile: (*network_profile)
+                                                            .to_owned(),
+                                                        executor: executor.label().to_owned(),
+                                                        threads: *threads,
+                                                        frame_target_mb: *frame_target_mb,
+                                                        read_buffer_kb: *read_buffer_kb,
+                                                        manifest_chunk_kb: *manifest_chunk_kb,
+                                                        manifest_ack_records: *manifest_ack_records,
+                                                        manifest_ack_kb: *manifest_ack_kb,
+                                                        large_file_single_frame_threshold_mib:
+                                                            *threshold_mib,
+                                                    },
+                                                    repeat_index,
+                                                ));
                                             }
                                         }
                                     }
@@ -389,7 +354,7 @@ fn run_matrix(args: MatrixArgs) -> Result<()> {
             );
         }
 
-        for (runtime, network_profile, executor_mode, scenario, repeat_index) in planned_runs {
+        for (network_profile, executor_mode, scenario, repeat_index) in planned_runs {
             if args.resume && completed.contains_key(&(scenario.clone(), repeat_index)) {
                 skipped_runs += 1;
                 continue;
@@ -424,7 +389,7 @@ fn run_matrix(args: MatrixArgs) -> Result<()> {
                 scenario.manifest_ack_records,
                 scenario.manifest_ack_kb,
             );
-            let metrics = run_loopback_scenario(&dataset.path, &options, runtime, network_profile);
+            let metrics = run_loopback_scenario(&dataset.path, &options, network_profile);
             let row = raw_row(scenario.clone(), repeat_index, metrics);
 
             append_raw_result(&raw_results_path, &row)?;
@@ -544,7 +509,7 @@ fn resolve_manifest_chunk_values_kb(requested: &[usize]) -> Result<Vec<usize>> {
         return Ok(vec![default_chunk_kb]);
     }
 
-    let max_chunk_kb = protocol::MAX_MANIFEST_CHUNK_BYTES / 1024;
+    let max_chunk_kb = protocol::MAX_MANIFEST_CHUNK_PAYLOAD_BYTES / 1024;
     let mut selected = BTreeSet::new();
     for value in requested {
         if *value == 0 {
@@ -704,6 +669,21 @@ fn raw_row(scenario: ScenarioKey, repeat_index: u32, metrics: LoopbackRunMetrics
         manifest_replay_records: metrics.manifest_replay_records,
         receiver_manifest_bytes: metrics.receiver_manifest_bytes,
         receiver_issue_tail_bytes: metrics.receiver_issue_tail_bytes,
+        receiver_total_duration_ms: metrics.receiver_total_duration_ms,
+        receiver_manifest_stage_duration_ms: metrics.receiver_manifest_stage_duration_ms,
+        receiver_manifest_commit_duration_ms: metrics.receiver_manifest_commit_duration_ms,
+        receiver_manifest_ack_flush_duration_ms: metrics.receiver_manifest_ack_flush_duration_ms,
+        receiver_frame_duration_ms: metrics.receiver_frame_duration_ms,
+        receiver_frame_write_duration_ms: metrics.receiver_frame_write_duration_ms,
+        receiver_frame_sync_duration_ms: metrics.receiver_frame_sync_duration_ms,
+        receiver_frame_journal_persist_duration_ms: metrics
+            .receiver_frame_journal_persist_duration_ms,
+        receiver_frame_ack_flush_duration_ms: metrics.receiver_frame_ack_flush_duration_ms,
+        receiver_issue_tail_duration_ms: metrics.receiver_issue_tail_duration_ms,
+        receiver_finish_duration_ms: metrics.receiver_finish_duration_ms,
+        receiver_archive_finalize_duration_ms: metrics.receiver_archive_finalize_duration_ms,
+        receiver_issue_finalize_duration_ms: metrics.receiver_issue_finalize_duration_ms,
+        receiver_finish_ack_flush_duration_ms: metrics.receiver_finish_ack_flush_duration_ms,
         disk_budget_wait_ms: metrics.disk_budget_wait_ms,
         time_to_first_frame_ms: metrics.time_to_first_frame_ms,
         overlap_efficiency_pct: metrics.overlap_efficiency_pct,

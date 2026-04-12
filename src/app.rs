@@ -7,7 +7,10 @@ use crate::cli::{Cli, Command, ReceiverArgs, SenderArgs, SenderRuntimeOptions};
 use crate::network::transport::{BoundListener, TransportMode, establish_session};
 use crate::receiver::{receive_dump_checked, serve_listener};
 use crate::role::Role;
-use crate::sender::{SendOptions, send_dump};
+use crate::sender::{
+    SendOptions, SenderSource, SenderSourceProbe, SenderWorkloadClass, probe_source_workload,
+    send_dump,
+};
 use crate::telemetry;
 
 // Основной orchestration-шаг живёт в библиотеке, чтобы его можно было
@@ -69,6 +72,83 @@ where
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct AdaptiveSenderProfile {
+    threads: u32,
+    read_buffer_bytes: usize,
+    frame_target_bytes: u64,
+}
+
+impl AdaptiveSenderProfile {
+    const fn for_workload_class(workload_class: SenderWorkloadClass) -> Self {
+        match workload_class {
+            SenderWorkloadClass::TinyHeavy => Self {
+                threads: 2,
+                read_buffer_bytes: 1024 * 1024,
+                frame_target_bytes: 64 * 1024 * 1024,
+            },
+            SenderWorkloadClass::Mixed => Self {
+                threads: 2,
+                read_buffer_bytes: 64 * 1024,
+                frame_target_bytes: 64 * 1024 * 1024,
+            },
+            SenderWorkloadClass::LargeHeavy => Self {
+                threads: 4,
+                read_buffer_bytes: 1024 * 1024,
+                frame_target_bytes: 64 * 1024 * 1024,
+            },
+        }
+    }
+}
+
+fn apply_sender_probe_to_runtime(
+    args: &SenderArgs,
+    mut runtime: SenderRuntimeOptions,
+    probe: &SenderSourceProbe,
+) -> SenderRuntimeOptions {
+    let profile = AdaptiveSenderProfile::for_workload_class(probe.workload_class);
+    if args.threads.is_none() {
+        runtime.threads = profile.threads;
+    }
+    if args.read_buffer_kb.is_none() {
+        runtime.read_buffer_bytes = profile.read_buffer_bytes;
+    }
+    if args.frame_target_mb.is_none() {
+        runtime.frame_target_bytes = profile.frame_target_bytes;
+    }
+    runtime
+}
+
+fn adapt_sender_runtime(
+    args: &SenderArgs,
+    source: &SenderSource,
+    runtime: SenderRuntimeOptions,
+) -> Result<SenderRuntimeOptions> {
+    if args.threads.is_some() && args.read_buffer_kb.is_some() && args.frame_target_mb.is_some() {
+        return Ok(runtime);
+    }
+
+    let probe = probe_source_workload(source)?;
+    let runtime = apply_sender_probe_to_runtime(args, runtime, &probe);
+    debug!(
+        "sender adaptive defaults: source={} workload_class={:?} sampled_directories={} sampled_regular_files={} sampled_regular_bytes={} average_regular_file_bytes={} max_regular_file_bytes={} explicit_threads={} explicit_read_buffer_kb={} explicit_frame_target_mb={} selected_threads={} selected_read_buffer_bytes={} selected_frame_target_bytes={}",
+        source.path().display(),
+        probe.workload_class,
+        probe.sampled_directories,
+        probe.sampled_regular_files,
+        probe.sampled_regular_bytes,
+        probe.average_regular_file_bytes(),
+        probe.max_regular_file_bytes,
+        args.threads.is_some(),
+        args.read_buffer_kb.is_some(),
+        args.frame_target_mb.is_some(),
+        runtime.threads,
+        runtime.read_buffer_bytes,
+        runtime.frame_target_bytes
+    );
+    Ok(runtime)
+}
+
 struct RealRuntime;
 
 impl Runtime for RealRuntime {
@@ -80,6 +160,7 @@ impl Runtime for RealRuntime {
         runtime: SenderRuntimeOptions,
     ) -> Result<()> {
         let source = args.sender_source();
+        let runtime = adapt_sender_runtime(&args, &source, runtime)?;
         debug!(
             "sender starting: mode={transport_mode:?} dump_id={} source={} source_backend={:?} level={} threads={} min_readers={} max_readers={} read_buffer_bytes={} frame_target_bytes={} manifest_chunk_bytes={} manifest_ack_records={} manifest_ack_bytes={}",
             dump_id,
@@ -114,6 +195,8 @@ impl Runtime for RealRuntime {
         };
         let report = send_dump(&mut session.stream, source, &dump_id, &options)?;
 
+        // Поле file в sender summary оставляем стабильным именем счётчика.
+        // В active v3 оно соответствует committed work_ordinal.
         println!(
             "{} connected to {} at {}; dump_id={}; resume frame={} file={} archive_len={}; status={}; files_total_discovered={}; files_sent_clean={}; files_sent_best_effort={}; files_skipped_open_failed={}; files_skipped_unstable_after_retries={}; discovery_issues_total={}; subtrees_skipped={}; manifest_resets_total={}; retries_total={}; bytes_sent_raw={}; bytes_sent_best_effort_raw={}; frames_sent={}; final_archive_bytes={}; final frame={} file={}",
             session.local_role,
@@ -121,7 +204,7 @@ impl Runtime for RealRuntime {
             session.peer_addr,
             report.dump_id,
             report.resume_state.last_committed_frame,
-            report.resume_state.last_committed_file_index,
+            report.resume_state.last_committed_work_ordinal(),
             report.resume_state.archive_len,
             report.status,
             report.files_total_discovered,
@@ -150,9 +233,12 @@ impl Runtime for RealRuntime {
         transport_mode: TransportMode,
         _max_sessions: usize,
     ) -> Result<()> {
+        let runtime = args.runtime_options()?;
         debug!(
-            "receiver starting in connect mode: mode={transport_mode:?} data_dir={}",
-            args.data_dir.display()
+            "receiver starting in connect mode: mode={transport_mode:?} data_dir={} manifest_ack_records={} manifest_ack_bytes={}",
+            args.data_dir.display(),
+            runtime.manifest_ack_records,
+            runtime.manifest_ack_bytes
         );
         let mut session =
             establish_session(Role::Receiver, transport_mode, None, args.token.as_deref())?;
@@ -160,19 +246,21 @@ impl Runtime for RealRuntime {
             &mut session.stream,
             args.data_dir,
             session.peer_dump_id.as_deref(),
+            runtime.manifest_ack_records,
+            runtime.manifest_ack_bytes,
         )?;
 
         println!(
-            "{} connected to {} at {}; dump_id={}; resume frame={} file={} archive_len={}; final frame={} file={} archive={}",
+            "{} connected to {} at {}; dump_id={}; resume frame={} work_ordinal={:?} archive_len={}; final frame={} work_ordinal={:?} archive={}",
             session.local_role,
             session.peer_role,
             session.peer_addr,
             report.state.paths.dump_id(),
-            report.resume_state.last_committed_frame,
-            report.resume_state.last_committed_file_index,
-            report.resume_state.archive_len,
+            report.resume_state.archive.last_committed_frame,
+            report.resume_state.archive.last_committed_work_ordinal,
+            report.resume_state.archive.archive_len,
             report.finish.final_frame_no,
-            report.finish.final_file_path,
+            report.finish.final_work_ordinal,
             report.final_archive_path.display()
         );
 
@@ -185,14 +273,24 @@ impl Runtime for RealRuntime {
         addr: SocketAddr,
         max_sessions: usize,
     ) -> Result<()> {
+        let runtime = args.runtime_options()?;
         debug!(
-            "receiver starting in listen mode: addr={} data_dir={} max_sessions={}",
+            "receiver starting in listen mode: addr={} data_dir={} max_sessions={} manifest_ack_records={} manifest_ack_bytes={}",
             addr,
             args.data_dir.display(),
-            max_sessions
+            max_sessions,
+            runtime.manifest_ack_records,
+            runtime.manifest_ack_bytes
         );
         let listener = BoundListener::bind(addr)?;
-        serve_listener(listener, args.data_dir, max_sessions, args.token)
+        serve_listener(
+            listener,
+            args.data_dir,
+            max_sessions,
+            args.token,
+            runtime.manifest_ack_records,
+            runtime.manifest_ack_bytes,
+        )
     }
 }
 
@@ -205,9 +303,10 @@ mod tests {
     use anyhow::{Result, bail};
     use clap::Parser;
 
-    use super::{Runtime, run_with};
-    use crate::cli::{Cli, ReceiverArgs, SenderArgs, SenderRuntimeOptions};
+    use super::{Runtime, apply_sender_probe_to_runtime, run_with};
+    use crate::cli::{Cli, Command, ReceiverArgs, SenderArgs, SenderRuntimeOptions};
     use crate::network::transport::TransportMode;
+    use crate::sender::{SenderSourceProbe, SenderWorkloadClass};
 
     #[derive(Debug, Clone, PartialEq, Eq)]
     enum Call {
@@ -331,14 +430,125 @@ mod tests {
                     max_readers: 5,
                     read_buffer_bytes: 2 * 1024,
                     frame_target_bytes: 3 * 1024 * 1024,
-                    manifest_chunk_bytes: 256 * 1024,
-                    manifest_ack_records: 4096,
-                    manifest_ack_bytes: 1024 * 1024,
+                    manifest_chunk_bytes: 512 * 1024,
+                    manifest_ack_records: 4_096,
+                    manifest_ack_bytes: 8 * 1024 * 1024,
                 },
                 source: PathBuf::from("input"),
                 token: Some("secret".to_owned()),
             }]
         );
+    }
+
+    #[test]
+    fn adaptive_sender_runtime_applies_large_file_profile_to_omitted_knobs() {
+        let cli = Cli::try_parse_from([
+            "fast-dump",
+            "sender",
+            "--connect",
+            "127.0.0.1:7019",
+            "--source",
+            "input",
+        ])
+        .unwrap();
+
+        let Command::Sender(args) = cli.command else {
+            panic!("expected sender command");
+        };
+        let runtime = args.runtime_options().unwrap();
+        let adapted = apply_sender_probe_to_runtime(
+            &args,
+            runtime,
+            &SenderSourceProbe {
+                workload_class: SenderWorkloadClass::LargeHeavy,
+                sampled_directories: 2,
+                sampled_regular_files: 4,
+                sampled_regular_bytes: 256 * 1024 * 1024,
+                small_regular_files: 0,
+                large_regular_files: 4,
+                max_regular_file_bytes: 64 * 1024 * 1024,
+            },
+        );
+
+        assert_eq!(adapted.threads, 4);
+        assert_eq!(adapted.read_buffer_bytes, 1024 * 1024);
+        assert_eq!(adapted.frame_target_bytes, 64 * 1024 * 1024);
+    }
+
+    #[test]
+    fn adaptive_sender_runtime_keeps_explicit_knobs_stronger_than_probe() {
+        let cli = Cli::try_parse_from([
+            "fast-dump",
+            "sender",
+            "--connect",
+            "127.0.0.1:7020",
+            "--source",
+            "input",
+            "--threads",
+            "7",
+            "--read-buffer-kb",
+            "2048",
+        ])
+        .unwrap();
+
+        let Command::Sender(args) = cli.command else {
+            panic!("expected sender command");
+        };
+        let runtime = args.runtime_options().unwrap();
+        let adapted = apply_sender_probe_to_runtime(
+            &args,
+            runtime,
+            &SenderSourceProbe {
+                workload_class: SenderWorkloadClass::TinyHeavy,
+                sampled_directories: 3,
+                sampled_regular_files: 32,
+                sampled_regular_bytes: 128 * 1024,
+                small_regular_files: 32,
+                large_regular_files: 0,
+                max_regular_file_bytes: 8 * 1024,
+            },
+        );
+
+        assert_eq!(adapted.threads, 7);
+        assert_eq!(adapted.read_buffer_bytes, 2048 * 1024);
+        assert_eq!(adapted.frame_target_bytes, 64 * 1024 * 1024);
+    }
+
+    #[test]
+    fn adaptive_sender_runtime_preserves_explicit_auto_threads() {
+        let cli = Cli::try_parse_from([
+            "fast-dump",
+            "sender",
+            "--connect",
+            "127.0.0.1:7021",
+            "--source",
+            "input",
+            "--threads",
+            "auto",
+        ])
+        .unwrap();
+
+        let Command::Sender(args) = cli.command else {
+            panic!("expected sender command");
+        };
+        let runtime = args.runtime_options().unwrap();
+        let adapted = apply_sender_probe_to_runtime(
+            &args,
+            runtime.clone(),
+            &SenderSourceProbe {
+                workload_class: SenderWorkloadClass::TinyHeavy,
+                sampled_directories: 2,
+                sampled_regular_files: 24,
+                sampled_regular_bytes: 96 * 1024,
+                small_regular_files: 24,
+                large_regular_files: 0,
+                max_regular_file_bytes: 8 * 1024,
+            },
+        );
+
+        assert_eq!(adapted.threads, runtime.threads);
+        assert_eq!(adapted.read_buffer_bytes, 1024 * 1024);
+        assert_eq!(adapted.frame_target_bytes, 64 * 1024 * 1024);
     }
 
     #[test]

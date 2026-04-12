@@ -5,9 +5,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
-use fast_dump::network::protocol::{self, FrameChunk, FrameEnd, FrameStart, Message, ResumeState};
-use fast_dump::sender::{PreparedFrame, SendOptions};
-use xxhash_rust::xxh3::Xxh3Default;
+use fast_dump::sender::{FileResumeState, SendOptions};
 
 pub(crate) const MANY_SMALL_FILES_DATASET: &str = "manySmallFiles";
 pub(crate) const BIG_FILES_DATASET: &str = "bigFiles";
@@ -50,27 +48,6 @@ pub(crate) struct BenchDir {
 pub(crate) struct MatrixDataset {
     pub(crate) name: &'static str,
     pub(crate) path: PathBuf,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub(crate) enum BenchmarkProtocolRuntime {
-    V2,
-    V3,
-}
-
-impl BenchmarkProtocolRuntime {
-    pub(crate) const fn id(self) -> &'static str {
-        match self {
-            Self::V2 => "v2",
-            Self::V3 => "v3",
-        }
-    }
-}
-
-impl std::fmt::Display for BenchmarkProtocolRuntime {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str(self.id())
-    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -249,8 +226,8 @@ const BENCHMARK_NETWORK_PROFILES: &[BenchmarkNetworkProfile] = &[
 
 const BENCHMARK_COMPARISON_RULES: &[BenchmarkComparisonRule] = &[
     BenchmarkComparisonRule {
-        id: "compare-like-for-like",
-        rule: "Compare v2 and v3 only on the same machine, dataset, network profile, sender knobs, and warm/cold cache mode.",
+        id: "compare-like-for-like-configs",
+        rule: "Compare benchmark runs only on the same machine, dataset, network profile, sender knobs, and warm/cold cache mode.",
     },
     BenchmarkComparisonRule {
         id: "median-and-tail",
@@ -294,13 +271,10 @@ const BENCHMARK_SUCCESS_GATES: &[BenchmarkSuccessGate] = &[
     BenchmarkSuccessGate {
         id: "target-throughput-non-regression",
         title: "Target scenarios do not regress throughput",
-        rule: "v3 must match or improve v2 median throughput on the required target scenarios after accounting for the same correctness and resource budgets.",
-        evidence: "Per-scenario median throughput for the agreed matrix is stored and compared directly between v2 and v3 artifacts.",
+        rule: "The current runtime must match or improve the recorded baseline throughput on the required target scenarios after accounting for the same correctness and resource budgets.",
+        evidence: "Per-scenario median throughput for the agreed matrix is stored and compared against the checked-in baseline artifacts.",
     },
 ];
-
-const BENCHMARK_PROTOCOL_RUNTIMES: &[BenchmarkProtocolRuntime] =
-    &[BenchmarkProtocolRuntime::V2, BenchmarkProtocolRuntime::V3];
 
 impl BenchDir {
     pub(crate) fn new(prefix: &str) -> Self {
@@ -431,10 +405,6 @@ pub(crate) fn loopback_measurement_time() -> Duration {
         5_000,
         100,
     ))
-}
-
-pub(crate) fn receive_frame_group_sample_size() -> usize {
-    env_usize("FAST_DUMP_BENCH_RECEIVE_FRAME_SAMPLE_SIZE", 100, 10)
 }
 
 pub(crate) fn scan_group_sample_size() -> usize {
@@ -611,8 +581,8 @@ pub(crate) fn create_single_large_file_fixture(dir: &Path, size: u64) -> u64 {
     size
 }
 
-pub(crate) fn empty_resume_state() -> ResumeState {
-    ResumeState {
+pub(crate) fn empty_resume_state() -> FileResumeState {
+    FileResumeState {
         last_committed_frame: 0,
         last_committed_file_index: 0,
         last_committed_file_path: String::new(),
@@ -640,9 +610,9 @@ fn sample_send_options() -> SendOptions {
         min_readers: 2,
         max_readers: 8,
         read_buffer_bytes: 1024 * 1024,
-        manifest_chunk_bytes: 256 * 1024,
-        manifest_ack_records: 4096,
-        manifest_ack_bytes: 1024 * 1024,
+        manifest_chunk_bytes: 512 * 1024,
+        manifest_ack_records: 4_096,
+        manifest_ack_bytes: 8 * 1024 * 1024,
     }
 }
 
@@ -691,10 +661,6 @@ pub(crate) fn benchmark_network_shape(profile_id: &str) -> Option<BenchmarkNetwo
         LOSSY_RECONNECT_PRONE_PROFILE => None,
         _ => None,
     }
-}
-
-pub(crate) fn benchmark_protocol_runtimes() -> &'static [BenchmarkProtocolRuntime] {
-    BENCHMARK_PROTOCOL_RUNTIMES
 }
 
 pub(crate) fn default_matrix_network_profiles() -> Vec<&'static str> {
@@ -821,51 +787,4 @@ pub(crate) fn ensure_mixed_dataset(root: &Path) -> Result<MatrixDataset> {
 
 pub(crate) fn loopback_addr() -> SocketAddr {
     "127.0.0.1:0".parse().unwrap()
-}
-
-pub(crate) fn encode_prepared_frame(frame: &PreparedFrame) -> Vec<u8> {
-    let mut encoded = Vec::new();
-    protocol::write_message(
-        &mut encoded,
-        &Message::FrameStart(FrameStart {
-            frame_no: frame.outbound.frame_no,
-            first_file_index: frame.outbound.first_file_index,
-            first_file_path: frame.outbound.first_file_path.clone(),
-            level: frame.outbound.level,
-            threads: frame.outbound.threads,
-        }),
-    )
-    .unwrap();
-
-    let mut hasher = Xxh3Default::new();
-    let mut compressed_len = 0_u64;
-    for chunk in &frame.chunks {
-        hasher.update(chunk);
-        compressed_len += chunk.len() as u64;
-        protocol::write_message(
-            &mut encoded,
-            &Message::FrameChunk(FrameChunk {
-                bytes: chunk.clone(),
-            }),
-        )
-        .unwrap();
-    }
-
-    protocol::write_message(
-        &mut encoded,
-        &Message::FrameEnd(FrameEnd {
-            frame_no: frame.outbound.frame_no,
-            last_file_index: frame.outbound.last_file_index,
-            last_file_path: frame.outbound.last_file_path.clone(),
-            compressed_len,
-            compressed_xxh3_64: hasher.digest(),
-        }),
-    )
-    .unwrap();
-
-    encoded
-}
-
-pub(crate) fn total_compressed_bytes(frame: &PreparedFrame) -> u64 {
-    frame.chunks.iter().map(|chunk| chunk.len() as u64).sum()
 }

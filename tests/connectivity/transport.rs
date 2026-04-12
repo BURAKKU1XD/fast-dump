@@ -27,16 +27,13 @@ fn dump_id_for_role(role: Role, dump_id: &'static str) -> Option<&'static str> {
 }
 
 fn assert_zero_resume_state(label: &str, state: &ResumeState) {
-    assert_eq!(
-        *state,
-        ResumeState {
-            last_committed_frame: 0,
-            last_committed_file_index: 0,
-            last_committed_file_path: String::new(),
-            archive_len: 0,
-        },
-        "{label}"
-    );
+    assert_eq!(state.manifest.manifest_bytes_persisted, 0, "{label}");
+    assert_eq!(state.manifest.last_record_seq, None, "{label}");
+    assert_eq!(state.manifest.last_work_ordinal, None, "{label}");
+    assert!(!state.manifest.sealed, "{label}");
+    assert_eq!(state.archive.last_committed_frame, 0, "{label}");
+    assert_eq!(state.archive.last_committed_work_ordinal, None, "{label}");
+    assert_eq!(state.archive.archive_len, 0, "{label}");
 }
 
 #[test]
@@ -260,7 +257,7 @@ fn push_mode_rejects_resume_query_dump_id_mismatch_after_handshake() {
     assert!(
         error
             .to_string()
-            .contains("peer rejected resume query: resume dump_id mismatch: hello announced dump-09 but resume query requested dump-10")
+            .contains("peer rejected v3 resume query: resume dump_id mismatch: hello announced dump-09 but resume query requested dump-10")
     );
     assert!(receiver_error.contains(
         "resume dump_id mismatch: hello announced dump-09 but resume query requested dump-10"
@@ -282,7 +279,7 @@ fn push_mode_token_authentication_accepts_matching_token_and_rejects_mismatches(
             let mut session = listener
                 .accept(Role::Receiver, None, Some("secret-token"))
                 .unwrap();
-            receive_dump(&mut session.stream, receiver_path).unwrap()
+            receive_dump(&mut session.stream, receiver_path, 65_536, 8 * 1024 * 1024).unwrap()
         });
 
         let output = Command::new(binary_path())

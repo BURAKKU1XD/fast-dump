@@ -7,11 +7,11 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, Result, bail};
 use xxhash_rust::xxh3::xxh3_64;
 
-use crate::network::protocol::{self, ArchiveBoundaryV3, Message, ResumeState, ResumeStateV3};
+use crate::network::protocol::{self, ArchiveBoundary, Message, ResumeState};
 
 use super::shared::{
-    ReceiverTempFileKind, append_temp_file_payload, remove_file_if_exists, remove_file_path,
-    rename_path,
+    ReceiverTempFileAppender, ReceiverTempFileKind, remove_file_if_exists, remove_file_path,
+    rename_path, rollback_appender_to,
 };
 
 // Отдельный magic помогает не перепутать journal с частичным архивом
@@ -89,6 +89,8 @@ pub struct ReceiverJournal {
     pub protocol_version: u16,
     pub dump_id: String,
     pub last_committed_frame: u64,
+    // Эти поля сохраняем только ради совместимости local journal layout.
+    // Текущий v3 resume boundary наружу публикуется через work_ordinal.
     pub last_committed_file_index: u64,
     pub last_committed_file_path: String,
     pub last_committed_work_ordinal: Option<u64>,
@@ -288,32 +290,23 @@ impl ReceiverJournal {
         Ok(())
     }
 
-    pub fn to_resume_state(&self) -> ResumeState {
-        ResumeState {
-            last_committed_frame: self.last_committed_frame,
-            last_committed_file_index: self.last_committed_file_index,
-            last_committed_file_path: self.last_committed_file_path.clone(),
-            archive_len: self.archive_len,
-        }
-    }
-
-    pub fn archive_boundary_v3(&self) -> ArchiveBoundaryV3 {
-        ArchiveBoundaryV3 {
+    pub fn archive_boundary(&self) -> ArchiveBoundary {
+        ArchiveBoundary {
             last_committed_frame: self.last_committed_frame,
             last_committed_work_ordinal: self.last_committed_work_ordinal,
             archive_len: self.archive_len,
         }
     }
 
-    pub fn to_resume_state_v3(&self) -> ResumeStateV3 {
-        ResumeStateV3 {
-            manifest: protocol::ManifestBoundaryV3 {
+    pub fn to_resume_state(&self) -> ResumeState {
+        ResumeState {
+            manifest: protocol::ManifestBoundary {
                 manifest_bytes_persisted: self.manifest_bytes_persisted,
                 last_record_seq: self.last_manifest_record_seq,
                 last_work_ordinal: self.last_manifest_work_ordinal,
                 sealed: self.manifest_sealed,
             },
-            archive: self.archive_boundary_v3(),
+            archive: self.archive_boundary(),
         }
     }
 
@@ -405,6 +398,89 @@ impl ReceiverState {
         self.journal.persist(self.paths.journal_path())
     }
 
+    pub(crate) fn stage_manifest_chunk_with_appender(
+        &self,
+        current: ReceiverManifestBoundary,
+        appender: &mut ReceiverTempFileAppender,
+        payload: &[u8],
+        last_record_seq: Option<u64>,
+        last_work_ordinal: Option<u64>,
+        sealed: bool,
+    ) -> Result<ReceiverManifestBoundary> {
+        if appender.current_len() != current.manifest_bytes_persisted {
+            bail!(
+                "receiver manifest appender length {} does not match staged boundary {}",
+                appender.current_len(),
+                current.manifest_bytes_persisted
+            );
+        }
+        let encoded = encode_manifest_frame(payload, last_record_seq, last_work_ordinal, sealed);
+        let predicted_len = current
+            .manifest_bytes_persisted
+            .checked_add(encoded.len() as u64)
+            .context("receiver manifest length overflow while staging chunk")?;
+        let next = next_manifest_boundary(
+            current,
+            predicted_len,
+            last_record_seq,
+            last_work_ordinal,
+            sealed,
+        )?;
+        let next_len = appender.append(&encoded)?;
+        if next_len != next.manifest_bytes_persisted {
+            bail!(
+                "receiver manifest append length {} does not match predicted boundary {}",
+                next_len,
+                next.manifest_bytes_persisted
+            );
+        }
+        Ok(next)
+    }
+
+    pub(crate) fn commit_manifest_boundary_with_appender(
+        &mut self,
+        appender: &mut ReceiverTempFileAppender,
+        previous: ReceiverManifestBoundary,
+        next: ReceiverManifestBoundary,
+    ) -> Result<ReceiverManifestBoundary> {
+        if next.manifest_bytes_persisted < previous.manifest_bytes_persisted {
+            bail!(
+                "receiver manifest bytes persisted must not move backwards: {} < {}",
+                next.manifest_bytes_persisted,
+                previous.manifest_bytes_persisted
+            );
+        }
+        validate_manifest_boundary(previous)?;
+        validate_manifest_boundary(next)?;
+        if next == previous {
+            return Ok(previous);
+        }
+
+        if let Err(error) = appender.sync_after_append(previous.manifest_bytes_persisted) {
+            return Err(rollback_appender_to(
+                appender,
+                previous.manifest_bytes_persisted,
+                error,
+            ));
+        }
+
+        let mut journal = self.journal.clone();
+        journal.manifest_bytes_persisted = next.manifest_bytes_persisted;
+        journal.last_manifest_record_seq = next.last_manifest_record_seq;
+        journal.last_manifest_work_ordinal = next.last_manifest_work_ordinal;
+        journal.manifest_sealed = next.manifest_sealed;
+        if let Err(error) = journal.persist(self.paths.journal_path()) {
+            return Err(rollback_appender_to(
+                appender,
+                previous.manifest_bytes_persisted,
+                error,
+            ));
+        }
+
+        self.journal = journal;
+        Ok(next)
+    }
+
     pub fn commit_manifest_chunk(
         &mut self,
         payload: &[u8],
@@ -413,47 +489,23 @@ impl ReceiverState {
         sealed: bool,
     ) -> Result<ReceiverManifestBoundary> {
         let current = self.journal.manifest_boundary();
-        if current.manifest_sealed && !sealed {
-            bail!("receiver manifest cannot move from sealed back to unsealed");
-        }
-        if current.last_manifest_record_seq.unwrap_or(0) > last_record_seq.unwrap_or(0) {
-            bail!("receiver manifest record sequence must not move backwards");
-        }
-        if current.last_manifest_work_ordinal.unwrap_or(0) > last_work_ordinal.unwrap_or(0) {
-            bail!("receiver manifest work ordinal must not move backwards");
-        }
-
-        let encoded = encode_manifest_frame(payload, last_record_seq, last_work_ordinal, sealed);
-        let mut next_boundary = ReceiverManifestBoundary {
-            manifest_bytes_persisted: current
-                .manifest_bytes_persisted
-                .saturating_add(encoded.len() as u64),
-            last_manifest_record_seq: last_record_seq,
-            last_manifest_work_ordinal: last_work_ordinal,
-            manifest_sealed: sealed,
-        };
-        validate_manifest_boundary(next_boundary)?;
-        next_boundary.manifest_bytes_persisted = append_temp_file_payload(
+        let mut appender = ReceiverTempFileAppender::open(
             self.paths.manifest_path(),
-            &encoded,
             ReceiverTempFileKind::Manifest,
         )?;
-        validate_manifest_boundary(next_boundary)?;
-
-        self.journal.manifest_bytes_persisted = next_boundary.manifest_bytes_persisted;
-        self.journal.last_manifest_record_seq = next_boundary.last_manifest_record_seq;
-        self.journal.last_manifest_work_ordinal = next_boundary.last_manifest_work_ordinal;
-        self.journal.manifest_sealed = next_boundary.manifest_sealed;
-        self.persist_journal()?;
-        Ok(next_boundary)
+        let next = self.stage_manifest_chunk_with_appender(
+            current,
+            &mut appender,
+            payload,
+            last_record_seq,
+            last_work_ordinal,
+            sealed,
+        )?;
+        self.commit_manifest_boundary_with_appender(&mut appender, current, next)
     }
 
     pub fn resume_state(&self) -> ResumeState {
         self.journal.to_resume_state()
-    }
-
-    pub fn resume_state_v3(&self) -> ResumeStateV3 {
-        self.journal.to_resume_state_v3()
     }
 }
 
@@ -493,6 +545,36 @@ fn validate_manifest_boundary(boundary: ReceiverManifestBoundary) -> Result<()> 
         );
     }
     Ok(())
+}
+
+fn next_manifest_boundary(
+    current: ReceiverManifestBoundary,
+    manifest_bytes_persisted: u64,
+    last_record_seq: Option<u64>,
+    last_work_ordinal: Option<u64>,
+    sealed: bool,
+) -> Result<ReceiverManifestBoundary> {
+    if current.manifest_sealed && !sealed {
+        bail!("receiver manifest cannot move from sealed back to unsealed");
+    }
+    if current.last_manifest_record_seq.unwrap_or(0) > last_record_seq.unwrap_or(0) {
+        bail!("receiver manifest record sequence must not move backwards");
+    }
+    if current.last_manifest_work_ordinal.unwrap_or(0) > last_work_ordinal.unwrap_or(0) {
+        bail!("receiver manifest work ordinal must not move backwards");
+    }
+    if manifest_bytes_persisted < current.manifest_bytes_persisted {
+        bail!("receiver manifest bytes persisted must not move backwards");
+    }
+
+    let boundary = ReceiverManifestBoundary {
+        manifest_bytes_persisted,
+        last_manifest_record_seq: last_record_seq,
+        last_manifest_work_ordinal: last_work_ordinal,
+        manifest_sealed: sealed,
+    };
+    validate_manifest_boundary(boundary)?;
+    Ok(boundary)
 }
 
 fn encode_optional_u64(value: Option<u64>) -> u64 {
@@ -1104,23 +1186,23 @@ mod tests {
 
         assert_eq!(reloaded, journal);
         assert_eq!(
-            reloaded.archive_boundary_v3(),
-            ArchiveBoundaryV3 {
+            reloaded.archive_boundary(),
+            ArchiveBoundary {
                 last_committed_frame: 4,
                 last_committed_work_ordinal: Some(12),
                 archive_len: 512,
             }
         );
         assert_eq!(
-            reloaded.to_resume_state_v3(),
-            ResumeStateV3 {
-                manifest: protocol::ManifestBoundaryV3 {
+            reloaded.to_resume_state(),
+            ResumeState {
+                manifest: protocol::ManifestBoundary {
                     manifest_bytes_persisted: 128,
                     last_record_seq: Some(7),
                     last_work_ordinal: Some(12),
                     sealed: true,
                 },
-                archive: ArchiveBoundaryV3 {
+                archive: ArchiveBoundary {
                     last_committed_frame: 4,
                     last_committed_work_ordinal: Some(12),
                     archive_len: 512,
@@ -1451,22 +1533,6 @@ mod tests {
             error
                 .to_string()
                 .contains("receiver journal protocol version must match current protocol version")
-        );
-    }
-
-    #[test]
-    fn persist_rejects_invalid_resume_state_path() {
-        let temp = TestDir::new();
-        let paths = ReceiverPaths::new(temp.path().to_path_buf(), "dump-01").unwrap();
-        let mut journal = sample_committed_journal();
-        journal.last_committed_file_path = "../escape.txt".to_owned();
-
-        let error = journal.persist(paths.journal_path()).unwrap_err();
-
-        assert!(
-            error
-                .to_string()
-                .contains("receiver journal contains invalid resume state")
         );
     }
 

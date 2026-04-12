@@ -46,12 +46,12 @@ fn debug_flag_toggles_sender_and_receiver_logs() {
             "case={label} sender_stderr={sender_stderr}"
         );
         assert_eq!(
-            sender_stderr.contains("sender dump session bootstrapping:"),
+            sender_stderr.contains("sender v3 dump session bootstrapping:"),
             debug,
             "case={label} sender_stderr={sender_stderr}"
         );
         assert_eq!(
-            sender_stderr.contains("sender frame acknowledged:"),
+            sender_stderr.contains("sender v3 frame acknowledged:"),
             debug,
             "case={label} sender_stderr={sender_stderr}"
         );
@@ -61,12 +61,12 @@ fn debug_flag_toggles_sender_and_receiver_logs() {
             "case={label} receiver_stderr={receiver_stderr}"
         );
         assert_eq!(
-            receiver_stderr.contains("receiver dump session ready:"),
+            receiver_stderr.contains("receiver v3 dump session ready:"),
             debug,
             "case={label} receiver_stderr={receiver_stderr}"
         );
         assert_eq!(
-            receiver_stderr.contains("receiver frame committed:"),
+            receiver_stderr.contains("receiver v3 frame committed:"),
             debug,
             "case={label} receiver_stderr={receiver_stderr}"
         );
@@ -100,14 +100,14 @@ fn v3_profile_reports_manifest_overlap_and_durable_boundaries() {
     options.manifest_ack_records = 1;
     options.manifest_ack_bytes = 64;
 
-    let result = run_push_roundtrip_v3_with_options(source_dir.path(), dump_id, options);
+    let result = run_push_roundtrip_with_options(source_dir.path(), dump_id, options);
 
     assert_archive_hashes(&result.receive_report.final_archive_path, &expected);
     assert_eq!(result.sender_report.sent_frames, 3);
     assert_eq!(result.sender_report.final_file_index, 3);
     assert_eq!(result.receive_report.finish.final_work_ordinal, Some(3));
     assert!(result.sender_profile.manifest_build.bytes > 0);
-    assert!(result.sender_profile.manifest_spool_read.bytes > 0);
+    assert_eq!(result.sender_profile.manifest_spool_read.bytes, 0);
     assert_eq!(result.sender_profile.manifest_replay.bytes, 0);
     assert!(result.sender_profile.ack_wait.duration >= Duration::ZERO);
     assert!(result.receive_report.state.journal.manifest_sealed);

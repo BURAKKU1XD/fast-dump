@@ -14,12 +14,9 @@ use std::mem::{size_of, zeroed};
 
 use criterion::black_box;
 use fast_dump::network::transport::{BoundListener, connect_once};
-use fast_dump::receiver::{receive_dump, receive_dump_v3};
+use fast_dump::receiver::{ReceiverProfile, receive_dump};
 use fast_dump::role::Role;
-use fast_dump::sender::{
-    PipelineProfile, SendOptions, StageProfile, prepare_dump_profile, send_dump_profile,
-    send_dump_profile_v3,
-};
+use fast_dump::sender::{PipelineProfile, SendOptions, StageProfile, send_dump_profile};
 #[cfg(target_os = "windows")]
 use windows_sys::Win32::Foundation::FILETIME;
 #[cfg(target_os = "windows")]
@@ -32,8 +29,8 @@ use windows_sys::Win32::System::Threading::{GetCurrentProcess, GetProcessTimes};
 #[cfg(target_os = "windows")]
 use super::shared::available_logical_cpus;
 use super::shared::{
-    BenchDir, BenchmarkCoverage, BenchmarkProtocolRuntime, benchmark_network_shape,
-    empty_resume_state, loopback_addr, loopback_profile_sample_count, monitor_interval,
+    BenchDir, BenchmarkCoverage, benchmark_network_shape, loopback_addr,
+    loopback_profile_sample_count, monitor_interval,
 };
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -92,6 +89,20 @@ pub(crate) struct LoopbackRunMetrics {
     pub(crate) manifest_replay_records: u64,
     pub(crate) receiver_manifest_bytes: u64,
     pub(crate) receiver_issue_tail_bytes: u64,
+    pub(crate) receiver_total_duration_ms: f64,
+    pub(crate) receiver_manifest_stage_duration_ms: f64,
+    pub(crate) receiver_manifest_commit_duration_ms: f64,
+    pub(crate) receiver_manifest_ack_flush_duration_ms: f64,
+    pub(crate) receiver_frame_duration_ms: f64,
+    pub(crate) receiver_frame_write_duration_ms: f64,
+    pub(crate) receiver_frame_sync_duration_ms: f64,
+    pub(crate) receiver_frame_journal_persist_duration_ms: f64,
+    pub(crate) receiver_frame_ack_flush_duration_ms: f64,
+    pub(crate) receiver_issue_tail_duration_ms: f64,
+    pub(crate) receiver_finish_duration_ms: f64,
+    pub(crate) receiver_archive_finalize_duration_ms: f64,
+    pub(crate) receiver_issue_finalize_duration_ms: f64,
+    pub(crate) receiver_finish_ack_flush_duration_ms: f64,
     pub(crate) disk_budget_wait_ms: f64,
     pub(crate) time_to_first_frame_ms: f64,
     pub(crate) overlap_efficiency_pct: f64,
@@ -153,7 +164,7 @@ const BENCHMARK_METRIC_PLAN: &[BenchmarkMetricPlan] = &[
         title: "Read/compress/send durations and speeds",
         coverage: BenchmarkCoverage::Implemented,
         current_source: "LoopbackRunMetrics read/compress/send fields",
-        notes: "Useful for locating whether CPU, protocol, or storage dominates the current v2 path.",
+        notes: "Useful for locating whether CPU, protocol, or storage dominates the current v3 path.",
     },
     BenchmarkMetricPlan {
         id: "traversal-and-ack-wait",
@@ -207,9 +218,9 @@ const BENCHMARK_METRIC_PLAN: &[BenchmarkMetricPlan] = &[
     BenchmarkMetricPlan {
         id: "issue-tail-cost",
         title: "Issue-tail persistence cost",
-        coverage: BenchmarkCoverage::Partial,
-        current_source: "LoopbackRunMetrics.receiver_issue_tail_bytes",
-        notes: "Current loopback runner reports persisted typed issue-tail bytes; latency still needs a dedicated timing split.",
+        coverage: BenchmarkCoverage::Implemented,
+        current_source: "LoopbackRunMetrics.receiver_issue_tail_bytes and receiver_issue_tail_duration_ms",
+        notes: "Loopback runner now reports both persisted typed issue-tail bytes and the receiver-side wall time spent consuming the typed tail.",
     },
     BenchmarkMetricPlan {
         id: "time-to-first-frame",
@@ -238,6 +249,13 @@ const BENCHMARK_METRIC_PLAN: &[BenchmarkMetricPlan] = &[
         coverage: BenchmarkCoverage::Implemented,
         current_source: "LoopbackRunMetrics.overlap_efficiency_pct",
         notes: "Computed from v3 manifest-transfer duration versus time-to-first-frame so sequential fallback is visible in results.",
+    },
+    BenchmarkMetricPlan {
+        id: "receiver-stage-latency",
+        title: "Receiver manifest/frame/finish stage latency",
+        coverage: BenchmarkCoverage::Implemented,
+        current_source: "LoopbackRunMetrics receiver_*_duration_ms fields",
+        notes: "Loopback raw results now split receiver-side manifest staging, frame local commit, issue-tail handling, and finish/finalization latency so sender-vs-receiver bottlenecks are distinguishable.",
     },
 ];
 
@@ -575,10 +593,10 @@ struct ReceiverLoopbackReport {
     final_archive_path: std::path::PathBuf,
     issue_journal_path: std::path::PathBuf,
     receiver_manifest_bytes: u64,
+    receiver_profile: ReceiverProfile,
 }
 
 fn receive_loopback_dump<T>(
-    runtime: BenchmarkProtocolRuntime,
     stream: &mut T,
     receiver_path: std::path::PathBuf,
     options: &SendOptions,
@@ -586,33 +604,21 @@ fn receive_loopback_dump<T>(
 where
     T: Read + Write,
 {
-    match runtime {
-        BenchmarkProtocolRuntime::V2 => {
-            let report = receive_dump(stream, receiver_path)?;
-            Ok(ReceiverLoopbackReport {
-                final_archive_path: report.final_archive_path,
-                issue_journal_path: report.state.paths.issue_journal_path().to_path_buf(),
-                receiver_manifest_bytes: 0,
-            })
-        }
-        BenchmarkProtocolRuntime::V3 => {
-            let report = receive_dump_v3(
-                stream,
-                receiver_path,
-                options.manifest_ack_records,
-                options.manifest_ack_bytes,
-            )?;
-            Ok(ReceiverLoopbackReport {
-                final_archive_path: report.final_archive_path,
-                issue_journal_path: report.state.paths.issue_journal_path().to_path_buf(),
-                receiver_manifest_bytes: report.state.journal.manifest_bytes_persisted,
-            })
-        }
-    }
+    let report = receive_dump(
+        stream,
+        receiver_path,
+        options.manifest_ack_records,
+        options.manifest_ack_bytes,
+    )?;
+    Ok(ReceiverLoopbackReport {
+        final_archive_path: report.final_archive_path,
+        issue_journal_path: report.state.paths.issue_journal_path().to_path_buf(),
+        receiver_manifest_bytes: report.state.journal.manifest_bytes_persisted,
+        receiver_profile: report.profile,
+    })
 }
 
 fn send_loopback_profile<T>(
-    runtime: BenchmarkProtocolRuntime,
     stream: &mut T,
     source_dir: &Path,
     options: &SendOptions,
@@ -620,29 +626,7 @@ fn send_loopback_profile<T>(
 where
     T: Read + Write,
 {
-    match runtime {
-        BenchmarkProtocolRuntime::V2 => {
-            send_dump_profile(stream, source_dir.to_path_buf(), "bench-dump", options)
-        }
-        BenchmarkProtocolRuntime::V3 => {
-            send_dump_profile_v3(stream, source_dir.to_path_buf(), "bench-dump", options)
-        }
-    }
-}
-
-pub(crate) fn sample_prepare_dump_profile(
-    source_dir: &Path,
-    frame_target_bytes: u64,
-) -> PipelineProfile {
-    let (_, profile) = prepare_dump_profile(
-        source_dir.to_path_buf(),
-        &empty_resume_state(),
-        3,
-        1,
-        frame_target_bytes,
-    )
-    .unwrap();
-    profile
+    send_dump_profile(stream, source_dir.to_path_buf(), "bench-dump", options)
 }
 
 fn sample_loopback_send_profile(source_dir: &Path, options: &SendOptions) -> PipelineProfile {
@@ -655,7 +639,7 @@ fn sample_loopback_send_profile(source_dir: &Path, options: &SendOptions) -> Pip
 
     let receiver = thread::spawn(move || {
         let mut session = listener.accept(Role::Receiver, None, None).unwrap();
-        receive_dump_v3(
+        receive_dump(
             &mut session.stream,
             receiver_path,
             manifest_ack_records,
@@ -665,7 +649,7 @@ fn sample_loopback_send_profile(source_dir: &Path, options: &SendOptions) -> Pip
     });
 
     let mut sender_session = connect_once(Role::Sender, addr, Some("bench-dump"), None).unwrap();
-    let (_, profile) = send_dump_profile_v3(
+    let (_, profile) = send_dump_profile(
         &mut sender_session.stream,
         source_dir.to_path_buf(),
         "bench-dump",
@@ -690,7 +674,6 @@ where
 pub(crate) fn run_loopback_scenario(
     source_dir: &Path,
     options: &SendOptions,
-    runtime: BenchmarkProtocolRuntime,
     network_profile: &str,
 ) -> LoopbackRunMetrics {
     let receiver_dir = BenchDir::new("loopback-receiver-run");
@@ -703,26 +686,20 @@ pub(crate) fn run_loopback_scenario(
     let receiver = thread::spawn(move || {
         let session = listener.accept(Role::Receiver, None, None).unwrap();
         let mut receiver_stream = ShapedStream::new(session.stream, &receiver_network_profile);
-        receive_loopback_dump(
-            runtime,
-            &mut receiver_stream,
-            receiver_path,
-            &receiver_options,
-        )
-        .unwrap()
+        receive_loopback_dump(&mut receiver_stream, receiver_path, &receiver_options).unwrap()
     });
 
     let sender_session = connect_once(Role::Sender, addr, Some("bench-dump"), None).unwrap();
     let mut sender_stream =
         CountingStream::new(ShapedStream::new(sender_session.stream, network_profile));
     let monitor = ProcessMonitor::start(monitor_interval());
-    let (report, profile) =
-        send_loopback_profile(runtime, &mut sender_stream, source_dir, options).unwrap();
+    let (report, profile) = send_loopback_profile(&mut sender_stream, source_dir, options).unwrap();
     let resources = monitor.finish();
 
     let receive_report = receiver.join().unwrap();
     black_box(receiver_dir.path().to_path_buf());
     black_box(receive_report.final_archive_path);
+    let receiver_profile = &receive_report.receiver_profile;
 
     let raw_read_bytes = profile.read.bytes;
     let compressed_payload_bytes = profile.send.bytes;
@@ -780,6 +757,32 @@ pub(crate) fn run_loopback_scenario(
         manifest_replay_records: profile.manifest_replay_records,
         receiver_manifest_bytes: receive_report.receiver_manifest_bytes,
         receiver_issue_tail_bytes,
+        receiver_total_duration_ms: duration_ms(receiver_profile.total_duration),
+        receiver_manifest_stage_duration_ms: duration_ms(receiver_profile.manifest_stage_duration),
+        receiver_manifest_commit_duration_ms: duration_ms(
+            receiver_profile.manifest_commit_duration,
+        ),
+        receiver_manifest_ack_flush_duration_ms: duration_ms(
+            receiver_profile.manifest_ack_flush_duration,
+        ),
+        receiver_frame_duration_ms: duration_ms(receiver_profile.frame_duration),
+        receiver_frame_write_duration_ms: duration_ms(receiver_profile.frame_write_duration),
+        receiver_frame_sync_duration_ms: duration_ms(receiver_profile.frame_sync_duration),
+        receiver_frame_journal_persist_duration_ms: duration_ms(
+            receiver_profile.frame_journal_persist_duration,
+        ),
+        receiver_frame_ack_flush_duration_ms: duration_ms(
+            receiver_profile.frame_ack_flush_duration,
+        ),
+        receiver_issue_tail_duration_ms: duration_ms(receiver_profile.issue_tail_duration),
+        receiver_finish_duration_ms: duration_ms(receiver_profile.finish_duration),
+        receiver_archive_finalize_duration_ms: duration_ms(
+            receiver_profile.archive_finalize_duration,
+        ),
+        receiver_issue_finalize_duration_ms: duration_ms(receiver_profile.issue_finalize_duration),
+        receiver_finish_ack_flush_duration_ms: duration_ms(
+            receiver_profile.finish_ack_flush_duration,
+        ),
         disk_budget_wait_ms: duration_ms(profile.disk_budget_wait.duration),
         time_to_first_frame_ms: duration_ms(profile.time_to_first_frame),
         overlap_efficiency_pct,

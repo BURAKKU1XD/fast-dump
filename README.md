@@ -15,8 +15,9 @@ finalizes the result into a valid `.tar.zst` file on successful completion.
 - Both transport pairings are implemented:
   - `push`: `sender --connect` with `receiver --listen`
   - `pull`: `sender --listen` with `receiver --connect`
-- Custom binary wire protocol with handshake, resume bootstrap, per-frame commit,
-  and finish acknowledgement.
+- Active custom binary wire protocol is packet version `3`.
+- Session flow is manifest-first: handshake, resume bootstrap, durable manifest
+  replication, per-frame commit, typed issue tail, and finish acknowledgement.
 - Receiver journal and rollback-to-last-ack semantics are implemented.
 - Sender emits aggregate session statistics to stdout.
 - Sender internals are already split into `source`, `readers`, `frame`, and
@@ -57,14 +58,14 @@ Optional:
 - `--dump-id <ID>`
 - `--token <TOKEN>`
 - `-l, --level <N>` default `3`
-- `-t, --threads <N|auto>` default `auto`
+- `-t, --threads <N|auto>` default `adaptive` when omitted
 - `--min-readers <N>` default `2`
 - `--max-readers <N>` default `8`
-- `--read-buffer-kb <N>` default `1024`
-- `--frame-target-mb <N>` default `64`
-- `--manifest-chunk-kb <N>` default `256`
+- `--read-buffer-kb <N>` default `adaptive` when omitted
+- `--frame-target-mb <N>` default `adaptive` when omitted
+- `--manifest-chunk-kb <N>` default `512`
 - `--manifest-ack-records <N>` default `4096`
-- `--manifest-ack-kb <N>` default `1024`
+- `--manifest-ack-kb <N>` default `8192`
 
 Notes:
 
@@ -72,16 +73,25 @@ Notes:
   component of `--source`.
 - `--threads auto` resolves to `available_parallelism() - 1`, with a minimum of
   `1`.
-- Manifest tuning flags are validated against the frozen `v3` protocol hard caps:
+- If `--threads`, `--read-buffer-kb`, or `--frame-target-mb` are omitted, the
+  sender samples a bounded deterministic prefix of the source tree and picks one
+  of these runtime profiles:
+  - `tiny-heavy`: `threads=2`, `frame_target_mb=64`, `read_buffer_kb=1024`
+  - `mixed`: `threads=2`, `frame_target_mb=64`, `read_buffer_kb=64`
+  - `large-heavy`: `threads=4`, `frame_target_mb=64`, `read_buffer_kb=1024`
+- Explicit CLI values stay stronger than adaptive selection for the same knob.
+  This includes `--threads auto`, which is treated as an explicit thread
+  override.
+- Manifest tuning flags are validated against the protocol hard caps:
   `ManifestChunk <= 1 MiB`, total unacked manifest window `<= 8 MiB` and
   `<= 65536` records.
+- The default manifest ack record budget is intentionally smaller than the
+  protocol cap so a fresh `v3` session can commit an initial manifest prefix
+  and start archive frames earlier on file-heavy trees.
 - Sender-side manifest spool is bounded internally to `512 MiB`. If that quota
   is exceeded while sealing the durable spool, the sender fails loudly and
   removes the partial spool plus stale checkpoint instead of leaving unbounded
   disk growth behind.
-- The active end-to-end runtime still speaks packet version `2`; these manifest
-  tuning flags are already normalized and logged, but the full `v3`
-  manifest-plus-archive session loop is not enabled yet.
 
 ### Receiver
 
@@ -103,7 +113,7 @@ Notes:
 
 - `--max-sessions` is meaningful in `receiver --listen` mode. In
   `receiver --connect` mode the process handles a single session.
-- Receiver-side v3 temp stores are bounded internally: `<dump_id>.manifest.part`
+- Receiver-side temp stores are bounded internally: `<dump_id>.manifest.part`
   is capped at `512 MiB`, `<dump_id>.tar.zst.issues.tsv.part` at `64 MiB`.
   When quota or disk exhaustion is hit, the receiver keeps the last durable
   manifest/archive boundary and removes stale partial issue tails on restart.
@@ -138,6 +148,9 @@ The sender prints aggregate session statistics such as:
 - `frames_sent`
 - `final_archive_bytes`
 
+The stable sender summary field `file` is retained as an alias for the
+committed `work_ordinal` in the current `v3` runtime.
+
 The receiver prints the committed resume boundary and final archive path for
 completed sessions.
 
@@ -151,16 +164,21 @@ Actual runtime message flow:
 4. Sender sends `ResumeQuery { dump_id }`.
 5. Receiver opens or creates local state, truncates `.part` back to the
    committed `archive_len`, and returns `ResumeState`.
-6. For each committed sender-side zstd frame:
+6. Sender sends `ManifestStart { base_manifest }`.
+7. Sender streams zero or more durable `ManifestChunk` batches and receives
+   `ManifestAck` boundaries from the receiver.
+8. Sender closes manifest replication with `ManifestSeal`; receiver replies with
+   the final sealed `ManifestAck`.
+9. For each committed sender-side zstd frame:
    - sender sends `FrameStart`
    - sender streams one or more `FrameChunk`
    - sender sends `FrameEnd`
    - receiver verifies checksum and length, fsyncs, persists journal, then sends
      `Ack`
-7. If terminal skips happened, sender uploads zero or more `IssueJournalChunk`
-   control messages.
-8. Sender sends `Finish`.
-9. Receiver appends tar end blocks as a local final zstd frame, fsyncs, renames
+10. If terminal skips happened, sender uploads zero or more typed `IssueChunk`
+    control messages.
+11. Sender sends `Finish`.
+12. Receiver appends tar end blocks as a local final zstd frame, fsyncs, renames
    `.part` into the final `.tar.zst`, removes the journal, and replies with
    `FinishAck`. When terminal skips were uploaded, receiver also persists
    `<dump_id>.tar.zst.issues.tsv` next to the final archive.
@@ -197,25 +215,38 @@ At most one unacknowledged frame is lost on disconnect.
 
 Implementation detail:
 
-- The current sender keeps accepted small-file snapshots in memory and streams
-  accepted large files directly from an authoritative source handle into tar,
-  zstd, and the transport. This keeps large files out of RAM while removing
-  temp-file overhead from the common send path.
+- The sender keeps accepted small-file snapshots in memory and streams accepted
+  large files directly from an authoritative source handle into tar, zstd, and
+  the transport. This keeps large files out of RAM while removing temp-file
+  overhead from the common send path.
 - The production send path streams compressed bytes directly to the transport via
   `FrameChunk` messages.
-- The buffered `prepare_dump` path still exists for tests and benchmarks.
+- Mainline no longer carries a separate buffered dump-builder path.
 
 ## Current Benchmark Notes
 
-The coarse loopback matrix on `2026-03-31` currently points to these
-dataset-specific winners:
+The current `v3` default keeps the smaller bootstrap manifest horizon for
+file-heavy starts while keeping a larger horizon when the first queued file
+already looks large, and now uses `manifest_ack_records=4096` after a focused
+localhost retune. When `--threads`, `--frame-target-mb`, or
+`--read-buffer-kb` are omitted, the sender also applies a bounded workload
+probe and selects one of the built-in sender profiles. The current localhost-
+confirmed adaptive mapping is:
 
-- `manySmallFiles`: `threads=1`, `frame_target_mb=16`, `read_buffer_kb=64`
-- `bigFiles`: `threads=4`, `frame_target_mb=64`, `read_buffer_kb=4096`
-- `mixed`: `threads=2`, `frame_target_mb=16`, `read_buffer_kb=64`
+- `manySmallFiles` / `tiny-heavy`: `threads=2`, `frame_target_mb=64`, `read_buffer_kb=1024`
+- `mixed`: `threads=2`, `frame_target_mb=64`, `read_buffer_kb=64`
+- `bigFiles` / `large-heavy`: `threads=4`, `frame_target_mb=64`, `read_buffer_kb=1024`
 
-These are measured matrix winners, not automatic runtime defaults. See
-`BENCH.md` for the full coarse-sweep context and the current result schema.
+Shaped-network confirmation for the full adaptive step is still pending. The
+focused static baseline that is still useful as a reference lands roughly at:
+
+- `manySmallFiles`: `4185.19 ms`
+- `mixed`: `2168.71 ms`
+- `bigFiles`: `839.64 ms`
+
+These numbers come from the localhost confirmation sweep in
+`target/bench-blazing-manifest-records-confirm-20260408/` on `2026-04-08`
+with `repeats=3`.
 
 ## Repository Layout
 
@@ -278,7 +309,7 @@ cargo bench
 Run only the loopback matrix runner:
 
 ```powershell
-cargo bench --bench loopback_send_dump -- --dataset manySmallFiles,bigFiles,mixed --protocol-runtime v2,v3 --network-profile loopback-localhost,wan-high-rtt,bandwidth-limited
+cargo bench --bench loopback_send_dump -- --dataset manySmallFiles,bigFiles,mixed --network-profile loopback-localhost,wan-high-rtt,bandwidth-limited
 ```
 
 The matrix runner now writes `benchmark_plan.md`, `results_raw.csv`,

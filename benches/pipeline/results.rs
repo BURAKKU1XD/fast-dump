@@ -7,14 +7,14 @@ use anyhow::{Context, Result, bail};
 
 use super::shared::{
     LOOPBACK_LOCALHOST_PROFILE, benchmark_comparison_rules, benchmark_dataset_plan,
-    benchmark_network_profiles, benchmark_protocol_runtimes, benchmark_success_gates,
-    default_matrix_send_options,
+    benchmark_network_profiles, benchmark_success_gates, default_matrix_send_options,
 };
 use super::stats::benchmark_metric_plan;
 
-const RAW_HEADER: &str = "dataset,executor,threads,frame_target_mb,read_buffer_kb,large_file_single_frame_threshold_mib,repeat_index,files_count,skipped_files,sent_frames,frame_aborts,frame_rebuilds,avg_files_per_frame,raw_read_bytes,tar_input_bytes,compressed_payload_bytes,wire_bytes,wire_overhead_bytes,read_duration_ms,compress_duration_ms,send_duration_ms,total_duration_ms,traversal_wait_ms,ack_wait_ms,flush_count,max_inflight_dirs,max_dirfd_depth,read_mib_s,compress_mib_s,send_mib_s,total_mib_s,avg_cpu_pct,max_cpu_pct,avg_rss_mib,max_rss_mib,avg_private_mib,max_private_mib,compression_ratio_pct,wire_pct_of_read,wire_overhead_pct,manifest_build_bytes,manifest_build_duration_ms,manifest_transfer_bytes,manifest_transfer_duration_ms,manifest_spool_read_bytes,manifest_spool_read_duration_ms,manifest_replay_bytes,manifest_replay_duration_ms,manifest_replay_records,receiver_manifest_bytes,receiver_issue_tail_bytes,disk_budget_wait_ms,time_to_first_frame_ms,overlap_efficiency_pct,protocol_runtime,network_profile,manifest_chunk_kb,manifest_ack_records,manifest_ack_kb";
+const RAW_HEADER: &str = "dataset,executor,threads,frame_target_mb,read_buffer_kb,large_file_single_frame_threshold_mib,repeat_index,files_count,skipped_files,sent_frames,frame_aborts,frame_rebuilds,avg_files_per_frame,raw_read_bytes,tar_input_bytes,compressed_payload_bytes,wire_bytes,wire_overhead_bytes,read_duration_ms,compress_duration_ms,send_duration_ms,total_duration_ms,traversal_wait_ms,ack_wait_ms,flush_count,max_inflight_dirs,max_dirfd_depth,read_mib_s,compress_mib_s,send_mib_s,total_mib_s,avg_cpu_pct,max_cpu_pct,avg_rss_mib,max_rss_mib,avg_private_mib,max_private_mib,compression_ratio_pct,wire_pct_of_read,wire_overhead_pct,manifest_build_bytes,manifest_build_duration_ms,manifest_transfer_bytes,manifest_transfer_duration_ms,manifest_spool_read_bytes,manifest_spool_read_duration_ms,manifest_replay_bytes,manifest_replay_duration_ms,manifest_replay_records,receiver_manifest_bytes,receiver_issue_tail_bytes,receiver_total_duration_ms,receiver_manifest_stage_duration_ms,receiver_manifest_commit_duration_ms,receiver_manifest_ack_flush_duration_ms,receiver_frame_duration_ms,receiver_frame_write_duration_ms,receiver_frame_sync_duration_ms,receiver_frame_journal_persist_duration_ms,receiver_frame_ack_flush_duration_ms,receiver_issue_tail_duration_ms,receiver_finish_duration_ms,receiver_archive_finalize_duration_ms,receiver_issue_finalize_duration_ms,receiver_finish_ack_flush_duration_ms,disk_budget_wait_ms,time_to_first_frame_ms,overlap_efficiency_pct,protocol_runtime,network_profile,manifest_chunk_kb,manifest_ack_records,manifest_ack_kb";
+const PRE_RECEIVER_PROFILE_RAW_HEADER: &str = "dataset,executor,threads,frame_target_mb,read_buffer_kb,large_file_single_frame_threshold_mib,repeat_index,files_count,skipped_files,sent_frames,frame_aborts,frame_rebuilds,avg_files_per_frame,raw_read_bytes,tar_input_bytes,compressed_payload_bytes,wire_bytes,wire_overhead_bytes,read_duration_ms,compress_duration_ms,send_duration_ms,total_duration_ms,traversal_wait_ms,ack_wait_ms,flush_count,max_inflight_dirs,max_dirfd_depth,read_mib_s,compress_mib_s,send_mib_s,total_mib_s,avg_cpu_pct,max_cpu_pct,avg_rss_mib,max_rss_mib,avg_private_mib,max_private_mib,compression_ratio_pct,wire_pct_of_read,wire_overhead_pct,manifest_build_bytes,manifest_build_duration_ms,manifest_transfer_bytes,manifest_transfer_duration_ms,manifest_spool_read_bytes,manifest_spool_read_duration_ms,manifest_replay_bytes,manifest_replay_duration_ms,manifest_replay_records,receiver_manifest_bytes,receiver_issue_tail_bytes,disk_budget_wait_ms,time_to_first_frame_ms,overlap_efficiency_pct,protocol_runtime,network_profile,manifest_chunk_kb,manifest_ack_records,manifest_ack_kb";
 const LEGACY_RAW_HEADER: &str = "dataset,threads,frame_target_mb,read_buffer_kb,large_file_single_frame_threshold_mib,repeat_index,files_count,skipped_files,sent_frames,frame_aborts,frame_rebuilds,avg_files_per_frame,raw_read_bytes,tar_input_bytes,compressed_payload_bytes,wire_bytes,wire_overhead_bytes,read_duration_ms,compress_duration_ms,send_duration_ms,total_duration_ms,traversal_wait_ms,ack_wait_ms,flush_count,max_inflight_dirs,read_mib_s,compress_mib_s,send_mib_s,total_mib_s,avg_cpu_pct,max_cpu_pct,avg_rss_mib,max_rss_mib,avg_private_mib,max_private_mib,compression_ratio_pct,wire_pct_of_read,wire_overhead_pct";
-const SUMMARY_HEADER: &str = "dataset,executor,threads,frame_target_mb,read_buffer_kb,large_file_single_frame_threshold_mib,completed_repeats,files_count,skipped_files,sent_frames,frame_aborts,frame_rebuilds,avg_files_per_frame,raw_read_bytes,tar_input_bytes,compressed_payload_bytes,wire_bytes,wire_overhead_bytes,read_duration_ms,compress_duration_ms,send_duration_ms,total_duration_ms,traversal_wait_ms,ack_wait_ms,flush_count,max_inflight_dirs,max_dirfd_depth,read_mib_s,compress_mib_s,send_mib_s,total_mib_s,avg_cpu_pct,max_cpu_pct,avg_rss_mib,max_rss_mib,avg_private_mib,max_private_mib,compression_ratio_pct,wire_pct_of_read,wire_overhead_pct,manifest_build_bytes,manifest_build_duration_ms,manifest_transfer_bytes,manifest_transfer_duration_ms,manifest_spool_read_bytes,manifest_spool_read_duration_ms,manifest_replay_bytes,manifest_replay_duration_ms,manifest_replay_records,receiver_manifest_bytes,receiver_issue_tail_bytes,disk_budget_wait_ms,time_to_first_frame_ms,overlap_efficiency_pct,protocol_runtime,network_profile,manifest_chunk_kb,manifest_ack_records,manifest_ack_kb";
+const SUMMARY_HEADER: &str = "dataset,executor,threads,frame_target_mb,read_buffer_kb,large_file_single_frame_threshold_mib,completed_repeats,files_count,skipped_files,sent_frames,frame_aborts,frame_rebuilds,avg_files_per_frame,raw_read_bytes,tar_input_bytes,compressed_payload_bytes,wire_bytes,wire_overhead_bytes,read_duration_ms,compress_duration_ms,send_duration_ms,total_duration_ms,traversal_wait_ms,ack_wait_ms,flush_count,max_inflight_dirs,max_dirfd_depth,read_mib_s,compress_mib_s,send_mib_s,total_mib_s,avg_cpu_pct,max_cpu_pct,avg_rss_mib,max_rss_mib,avg_private_mib,max_private_mib,compression_ratio_pct,wire_pct_of_read,wire_overhead_pct,manifest_build_bytes,manifest_build_duration_ms,manifest_transfer_bytes,manifest_transfer_duration_ms,manifest_spool_read_bytes,manifest_spool_read_duration_ms,manifest_replay_bytes,manifest_replay_duration_ms,manifest_replay_records,receiver_manifest_bytes,receiver_issue_tail_bytes,receiver_total_duration_ms,receiver_manifest_stage_duration_ms,receiver_manifest_commit_duration_ms,receiver_manifest_ack_flush_duration_ms,receiver_frame_duration_ms,receiver_frame_write_duration_ms,receiver_frame_sync_duration_ms,receiver_frame_journal_persist_duration_ms,receiver_frame_ack_flush_duration_ms,receiver_issue_tail_duration_ms,receiver_finish_duration_ms,receiver_archive_finalize_duration_ms,receiver_issue_finalize_duration_ms,receiver_finish_ack_flush_duration_ms,disk_budget_wait_ms,time_to_first_frame_ms,overlap_efficiency_pct,protocol_runtime,network_profile,manifest_chunk_kb,manifest_ack_records,manifest_ack_kb";
 const MARKDOWN_TOP_ROWS: usize = 10;
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -80,6 +80,20 @@ pub(crate) struct RawResultRow {
     pub(crate) manifest_replay_records: u64,
     pub(crate) receiver_manifest_bytes: u64,
     pub(crate) receiver_issue_tail_bytes: u64,
+    pub(crate) receiver_total_duration_ms: f64,
+    pub(crate) receiver_manifest_stage_duration_ms: f64,
+    pub(crate) receiver_manifest_commit_duration_ms: f64,
+    pub(crate) receiver_manifest_ack_flush_duration_ms: f64,
+    pub(crate) receiver_frame_duration_ms: f64,
+    pub(crate) receiver_frame_write_duration_ms: f64,
+    pub(crate) receiver_frame_sync_duration_ms: f64,
+    pub(crate) receiver_frame_journal_persist_duration_ms: f64,
+    pub(crate) receiver_frame_ack_flush_duration_ms: f64,
+    pub(crate) receiver_issue_tail_duration_ms: f64,
+    pub(crate) receiver_finish_duration_ms: f64,
+    pub(crate) receiver_archive_finalize_duration_ms: f64,
+    pub(crate) receiver_issue_finalize_duration_ms: f64,
+    pub(crate) receiver_finish_ack_flush_duration_ms: f64,
     pub(crate) disk_budget_wait_ms: f64,
     pub(crate) time_to_first_frame_ms: f64,
     pub(crate) overlap_efficiency_pct: f64,
@@ -133,6 +147,20 @@ pub(crate) struct SummaryRow {
     pub(crate) manifest_replay_records: u64,
     pub(crate) receiver_manifest_bytes: u64,
     pub(crate) receiver_issue_tail_bytes: u64,
+    pub(crate) receiver_total_duration_ms: f64,
+    pub(crate) receiver_manifest_stage_duration_ms: f64,
+    pub(crate) receiver_manifest_commit_duration_ms: f64,
+    pub(crate) receiver_manifest_ack_flush_duration_ms: f64,
+    pub(crate) receiver_frame_duration_ms: f64,
+    pub(crate) receiver_frame_write_duration_ms: f64,
+    pub(crate) receiver_frame_sync_duration_ms: f64,
+    pub(crate) receiver_frame_journal_persist_duration_ms: f64,
+    pub(crate) receiver_frame_ack_flush_duration_ms: f64,
+    pub(crate) receiver_issue_tail_duration_ms: f64,
+    pub(crate) receiver_finish_duration_ms: f64,
+    pub(crate) receiver_archive_finalize_duration_ms: f64,
+    pub(crate) receiver_issue_finalize_duration_ms: f64,
+    pub(crate) receiver_finish_ack_flush_duration_ms: f64,
     pub(crate) disk_budget_wait_ms: f64,
     pub(crate) time_to_first_frame_ms: f64,
     pub(crate) overlap_efficiency_pct: f64,
@@ -198,6 +226,20 @@ impl RawResultRow {
             self.manifest_replay_records.to_string(),
             self.receiver_manifest_bytes.to_string(),
             self.receiver_issue_tail_bytes.to_string(),
+            format!("{:.6}", self.receiver_total_duration_ms),
+            format!("{:.6}", self.receiver_manifest_stage_duration_ms),
+            format!("{:.6}", self.receiver_manifest_commit_duration_ms),
+            format!("{:.6}", self.receiver_manifest_ack_flush_duration_ms),
+            format!("{:.6}", self.receiver_frame_duration_ms),
+            format!("{:.6}", self.receiver_frame_write_duration_ms),
+            format!("{:.6}", self.receiver_frame_sync_duration_ms),
+            format!("{:.6}", self.receiver_frame_journal_persist_duration_ms),
+            format!("{:.6}", self.receiver_frame_ack_flush_duration_ms),
+            format!("{:.6}", self.receiver_issue_tail_duration_ms),
+            format!("{:.6}", self.receiver_finish_duration_ms),
+            format!("{:.6}", self.receiver_archive_finalize_duration_ms),
+            format!("{:.6}", self.receiver_issue_finalize_duration_ms),
+            format!("{:.6}", self.receiver_finish_ack_flush_duration_ms),
             format!("{:.6}", self.disk_budget_wait_ms),
             format!("{:.6}", self.time_to_first_frame_ms),
             format!("{:.6}", self.overlap_efficiency_pct),
@@ -212,17 +254,24 @@ impl RawResultRow {
 
     fn parse(line: &str) -> Result<Self> {
         let columns = line.split(',').collect::<Vec<_>>();
-        if columns.len() != 38 && columns.len() != 40 && columns.len() != 54 && columns.len() != 59
+        if columns.len() != 38
+            && columns.len() != 40
+            && columns.len() != 54
+            && columns.len() != 59
+            && columns.len() != 73
         {
             bail!(
-                "unexpected raw results column count: expected 38, 40, 54, or 59, got {}",
+                "unexpected raw results column count: expected 38, 40, 54, 59, or 73, got {}",
                 columns.len()
             );
         }
-        let has_executor_columns =
-            columns.len() == 40 || columns.len() == 54 || columns.len() == 59;
-        let has_v3_columns = columns.len() == 54 || columns.len() == 59;
-        let has_extended_scenario_columns = columns.len() == 59;
+        let has_executor_columns = columns.len() == 40
+            || columns.len() == 54
+            || columns.len() == 59
+            || columns.len() == 73;
+        let has_v3_columns = columns.len() == 54 || columns.len() == 59 || columns.len() == 73;
+        let has_extended_scenario_columns = columns.len() == 59 || columns.len() == 73;
+        let has_receiver_profile_columns = columns.len() == 73;
         let column = |with_executor: usize, legacy: usize| -> &str {
             if has_executor_columns {
                 columns[with_executor]
@@ -236,12 +285,12 @@ impl RawResultRow {
             scenario: ScenarioKey {
                 dataset: columns[0].to_owned(),
                 protocol_runtime: if has_extended_scenario_columns {
-                    columns[54].to_owned()
+                    columns[if has_receiver_profile_columns { 68 } else { 54 }].to_owned()
                 } else {
                     "v3".to_owned()
                 },
                 network_profile: if has_extended_scenario_columns {
-                    columns[55].to_owned()
+                    columns[if has_receiver_profile_columns { 69 } else { 55 }].to_owned()
                 } else {
                     LOOPBACK_LOCALHOST_PROFILE.to_owned()
                 },
@@ -254,17 +303,26 @@ impl RawResultRow {
                 frame_target_mb: parse_u64(column(3, 2), "frame_target_mb")?,
                 read_buffer_kb: parse_u64(column(4, 3), "read_buffer_kb")?,
                 manifest_chunk_kb: if has_extended_scenario_columns {
-                    parse_usize(columns[56], "manifest_chunk_kb")?
+                    parse_usize(
+                        columns[if has_receiver_profile_columns { 70 } else { 56 }],
+                        "manifest_chunk_kb",
+                    )?
                 } else {
                     default_options.manifest_chunk_bytes / 1024
                 },
                 manifest_ack_records: if has_extended_scenario_columns {
-                    parse_u64(columns[57], "manifest_ack_records")?
+                    parse_u64(
+                        columns[if has_receiver_profile_columns { 71 } else { 57 }],
+                        "manifest_ack_records",
+                    )?
                 } else {
                     default_options.manifest_ack_records
                 },
                 manifest_ack_kb: if has_extended_scenario_columns {
-                    parse_usize(columns[58], "manifest_ack_kb")?
+                    parse_usize(
+                        columns[if has_receiver_profile_columns { 72 } else { 58 }],
+                        "manifest_ack_kb",
+                    )?
                 } else {
                     default_options.manifest_ack_bytes / 1024
                 },
@@ -366,18 +424,97 @@ impl RawResultRow {
             } else {
                 0
             },
+            receiver_total_duration_ms: if has_receiver_profile_columns {
+                parse_f64(columns[51], "receiver_total_duration_ms")?
+            } else {
+                0.0
+            },
+            receiver_manifest_stage_duration_ms: if has_receiver_profile_columns {
+                parse_f64(columns[52], "receiver_manifest_stage_duration_ms")?
+            } else {
+                0.0
+            },
+            receiver_manifest_commit_duration_ms: if has_receiver_profile_columns {
+                parse_f64(columns[53], "receiver_manifest_commit_duration_ms")?
+            } else {
+                0.0
+            },
+            receiver_manifest_ack_flush_duration_ms: if has_receiver_profile_columns {
+                parse_f64(columns[54], "receiver_manifest_ack_flush_duration_ms")?
+            } else {
+                0.0
+            },
+            receiver_frame_duration_ms: if has_receiver_profile_columns {
+                parse_f64(columns[55], "receiver_frame_duration_ms")?
+            } else {
+                0.0
+            },
+            receiver_frame_write_duration_ms: if has_receiver_profile_columns {
+                parse_f64(columns[56], "receiver_frame_write_duration_ms")?
+            } else {
+                0.0
+            },
+            receiver_frame_sync_duration_ms: if has_receiver_profile_columns {
+                parse_f64(columns[57], "receiver_frame_sync_duration_ms")?
+            } else {
+                0.0
+            },
+            receiver_frame_journal_persist_duration_ms: if has_receiver_profile_columns {
+                parse_f64(columns[58], "receiver_frame_journal_persist_duration_ms")?
+            } else {
+                0.0
+            },
+            receiver_frame_ack_flush_duration_ms: if has_receiver_profile_columns {
+                parse_f64(columns[59], "receiver_frame_ack_flush_duration_ms")?
+            } else {
+                0.0
+            },
+            receiver_issue_tail_duration_ms: if has_receiver_profile_columns {
+                parse_f64(columns[60], "receiver_issue_tail_duration_ms")?
+            } else {
+                0.0
+            },
+            receiver_finish_duration_ms: if has_receiver_profile_columns {
+                parse_f64(columns[61], "receiver_finish_duration_ms")?
+            } else {
+                0.0
+            },
+            receiver_archive_finalize_duration_ms: if has_receiver_profile_columns {
+                parse_f64(columns[62], "receiver_archive_finalize_duration_ms")?
+            } else {
+                0.0
+            },
+            receiver_issue_finalize_duration_ms: if has_receiver_profile_columns {
+                parse_f64(columns[63], "receiver_issue_finalize_duration_ms")?
+            } else {
+                0.0
+            },
+            receiver_finish_ack_flush_duration_ms: if has_receiver_profile_columns {
+                parse_f64(columns[64], "receiver_finish_ack_flush_duration_ms")?
+            } else {
+                0.0
+            },
             disk_budget_wait_ms: if has_v3_columns {
-                parse_f64(columns[51], "disk_budget_wait_ms")?
+                parse_f64(
+                    columns[if has_receiver_profile_columns { 65 } else { 51 }],
+                    "disk_budget_wait_ms",
+                )?
             } else {
                 0.0
             },
             time_to_first_frame_ms: if has_v3_columns {
-                parse_f64(columns[52], "time_to_first_frame_ms")?
+                parse_f64(
+                    columns[if has_receiver_profile_columns { 66 } else { 52 }],
+                    "time_to_first_frame_ms",
+                )?
             } else {
                 0.0
             },
             overlap_efficiency_pct: if has_v3_columns {
-                parse_f64(columns[53], "overlap_efficiency_pct")?
+                parse_f64(
+                    columns[if has_receiver_profile_columns { 67 } else { 53 }],
+                    "overlap_efficiency_pct",
+                )?
             } else {
                 0.0
             },
@@ -441,6 +578,20 @@ impl SummaryRow {
             self.manifest_replay_records.to_string(),
             self.receiver_manifest_bytes.to_string(),
             self.receiver_issue_tail_bytes.to_string(),
+            format!("{:.6}", self.receiver_total_duration_ms),
+            format!("{:.6}", self.receiver_manifest_stage_duration_ms),
+            format!("{:.6}", self.receiver_manifest_commit_duration_ms),
+            format!("{:.6}", self.receiver_manifest_ack_flush_duration_ms),
+            format!("{:.6}", self.receiver_frame_duration_ms),
+            format!("{:.6}", self.receiver_frame_write_duration_ms),
+            format!("{:.6}", self.receiver_frame_sync_duration_ms),
+            format!("{:.6}", self.receiver_frame_journal_persist_duration_ms),
+            format!("{:.6}", self.receiver_frame_ack_flush_duration_ms),
+            format!("{:.6}", self.receiver_issue_tail_duration_ms),
+            format!("{:.6}", self.receiver_finish_duration_ms),
+            format!("{:.6}", self.receiver_archive_finalize_duration_ms),
+            format!("{:.6}", self.receiver_issue_finalize_duration_ms),
+            format!("{:.6}", self.receiver_finish_ack_flush_duration_ms),
             format!("{:.6}", self.disk_budget_wait_ms),
             format!("{:.6}", self.time_to_first_frame_ms),
             format!("{:.6}", self.overlap_efficiency_pct),
@@ -534,15 +685,7 @@ pub(crate) fn write_benchmark_plan(output_dir: &Path) -> Result<PathBuf> {
         .map(|profile| format!("`{}`", profile.id))
         .collect::<Vec<_>>()
         .join(", ");
-    let automated_runtimes = benchmark_protocol_runtimes()
-        .iter()
-        .map(|runtime| format!("`{}`", runtime.id()))
-        .collect::<Vec<_>>()
-        .join(", ");
-    output.push_str(&format!(
-        "- Current automated protocol runtimes: {}.\n",
-        automated_runtimes
-    ));
+    output.push_str("- Current automated protocol runtime: `v3`.\n");
     output.push_str(&format!(
         "- Current automated network profiles: {}.\n",
         automated_profiles
@@ -625,6 +768,74 @@ pub(crate) fn write_benchmark_plan(output_dir: &Path) -> Result<PathBuf> {
     Ok(path)
 }
 
+fn non_negative_difference(left: f64, right: f64) -> f64 {
+    (left - right).max(0.0)
+}
+
+fn stage_share_pct(stage_ms: f64, total_ms: f64) -> f64 {
+    if total_ms <= 0.0 {
+        return 0.0;
+    }
+    stage_ms * 100.0 / total_ms
+}
+
+fn receiver_manifest_total_ms(row: &SummaryRow) -> f64 {
+    row.receiver_manifest_stage_duration_ms
+        + row.receiver_manifest_commit_duration_ms
+        + row.receiver_manifest_ack_flush_duration_ms
+}
+
+fn receiver_frame_local_commit_ms(row: &SummaryRow) -> f64 {
+    row.receiver_frame_write_duration_ms
+        + row.receiver_frame_sync_duration_ms
+        + row.receiver_frame_journal_persist_duration_ms
+        + row.receiver_frame_ack_flush_duration_ms
+}
+
+fn receiver_frame_network_decode_ms(row: &SummaryRow) -> f64 {
+    non_negative_difference(
+        row.receiver_frame_duration_ms,
+        receiver_frame_local_commit_ms(row),
+    )
+}
+
+fn manifest_tail_after_first_frame_ms(row: &SummaryRow) -> f64 {
+    non_negative_difference(
+        row.manifest_transfer_duration_ms,
+        row.time_to_first_frame_ms,
+    )
+}
+
+fn dominant_bottleneck(row: &SummaryRow) -> (&'static str, f64) {
+    let candidates = [
+        ("sender: read", row.read_duration_ms),
+        ("sender: compress", row.compress_duration_ms),
+        ("sender: send", row.send_duration_ms),
+        ("sender: manifest build", row.manifest_build_duration_ms),
+        (
+            "sender: manifest transfer",
+            row.manifest_transfer_duration_ms,
+        ),
+        ("sender: traversal wait", row.traversal_wait_ms),
+        ("sender: ack wait", row.ack_wait_ms),
+        ("receiver: manifest", receiver_manifest_total_ms(row)),
+        (
+            "receiver: frame local commit",
+            receiver_frame_local_commit_ms(row),
+        ),
+        (
+            "receiver: frame network/decode",
+            receiver_frame_network_decode_ms(row),
+        ),
+        ("receiver: finish", row.receiver_finish_duration_ms),
+    ];
+
+    candidates
+        .into_iter()
+        .max_by(|left, right| left.1.total_cmp(&right.1))
+        .unwrap_or(("unknown", 0.0))
+}
+
 pub(crate) fn write_benchmark_report(output_dir: &Path, rows: &[SummaryRow]) -> Result<PathBuf> {
     fs::create_dir_all(output_dir).with_context(|| {
         format!(
@@ -637,13 +848,13 @@ pub(crate) fn write_benchmark_report(output_dir: &Path, rows: &[SummaryRow]) -> 
     let mut output = String::new();
     output.push_str("# fast-dump Benchmark Report\n\n");
     output.push_str(
-        "This artifact is generated from `results_summary.csv`. It highlights the best visible `v2` and `v3` rows per dataset/network pair and the fastest current `v3` tuning candidate.\n\n",
+        "This artifact is generated from `results_summary.csv`. It highlights the fastest current `v3` tuning candidate per dataset and network pair and exposes which sender/receiver stage currently dominates wall time.\n\n",
     );
 
-    output.push_str("## Best Runtime Comparison\n\n");
-    output.push_str("| dataset | network | v2 total ms | v3 total ms | v3 delta vs v2 % | v2 MiB/s | v3 MiB/s | v3 manifest chunk KiB | v3 ack records | v3 ack KiB |\n");
-    output.push_str("| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
-    let comparison_keys = rows
+    output.push_str("## Fastest Current Rows\n\n");
+    output.push_str("| dataset | network | executor | threads | frame MiB | buffer KiB | manifest chunk KiB | ack records | ack KiB | total ms | total MiB/s | bottleneck | bottleneck share % | ack wait ms | receiver frame local ms | max RSS MiB |\n");
+    output.push_str("| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: |\n");
+    let keys = rows
         .iter()
         .map(|row| {
             (
@@ -652,99 +863,72 @@ pub(crate) fn write_benchmark_report(output_dir: &Path, rows: &[SummaryRow]) -> 
             )
         })
         .collect::<BTreeSet<_>>();
-    for (dataset, network_profile) in comparison_keys {
-        let best_v2 = rows
+    for (dataset, network_profile) in keys {
+        let Some(best_row) = rows
             .iter()
             .filter(|row| {
-                row.scenario.dataset == dataset
-                    && row.scenario.network_profile == network_profile
-                    && row.scenario.protocol_runtime == "v2"
+                row.scenario.dataset == dataset && row.scenario.network_profile == network_profile
             })
-            .min_by(|left, right| left.total_duration_ms.total_cmp(&right.total_duration_ms));
-        let best_v3 = rows
-            .iter()
-            .filter(|row| {
-                row.scenario.dataset == dataset
-                    && row.scenario.network_profile == network_profile
-                    && row.scenario.protocol_runtime == "v3"
-            })
-            .min_by(|left, right| left.total_duration_ms.total_cmp(&right.total_duration_ms));
-        let delta_pct = match (best_v2, best_v3) {
-            (Some(v2), Some(v3)) if v2.total_duration_ms > 0.0 => {
-                (v3.total_duration_ms - v2.total_duration_ms) * 100.0 / v2.total_duration_ms
-            }
-            _ => 0.0,
+            .min_by(|left, right| left.total_duration_ms.total_cmp(&right.total_duration_ms))
+        else {
+            continue;
         };
+        let (bottleneck, bottleneck_ms) = dominant_bottleneck(best_row);
         output.push_str(&format!(
-            "| {} | {} | {} | {} | {:.2} | {} | {} | {} | {} | {} |\n",
-            dataset,
-            network_profile,
-            best_v2
-                .map(|row| format!("{:.2}", row.total_duration_ms))
-                .unwrap_or_else(|| "-".to_owned()),
-            best_v3
-                .map(|row| format!("{:.2}", row.total_duration_ms))
-                .unwrap_or_else(|| "-".to_owned()),
-            delta_pct,
-            best_v2
-                .map(|row| format!("{:.2}", row.total_mib_s))
-                .unwrap_or_else(|| "-".to_owned()),
-            best_v3
-                .map(|row| format!("{:.2}", row.total_mib_s))
-                .unwrap_or_else(|| "-".to_owned()),
-            best_v3
-                .map(|row| row.scenario.manifest_chunk_kb.to_string())
-                .unwrap_or_else(|| "-".to_owned()),
-            best_v3
-                .map(|row| row.scenario.manifest_ack_records.to_string())
-                .unwrap_or_else(|| "-".to_owned()),
-            best_v3
-                .map(|row| row.scenario.manifest_ack_kb.to_string())
-                .unwrap_or_else(|| "-".to_owned()),
+            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {:.2} | {:.2} | {} | {:.2} | {:.2} | {:.2} | {:.2} |\n",
+            best_row.scenario.dataset,
+            best_row.scenario.network_profile,
+            best_row.scenario.executor,
+            best_row.scenario.threads,
+            best_row.scenario.frame_target_mb,
+            best_row.scenario.read_buffer_kb,
+            best_row.scenario.manifest_chunk_kb,
+            best_row.scenario.manifest_ack_records,
+            best_row.scenario.manifest_ack_kb,
+            best_row.total_duration_ms,
+            best_row.total_mib_s,
+            bottleneck,
+            stage_share_pct(bottleneck_ms, best_row.total_duration_ms),
+            best_row.ack_wait_ms,
+            receiver_frame_local_commit_ms(best_row),
+            best_row.max_rss_mib
         ));
     }
     output.push('\n');
 
-    output.push_str("## Fastest Current V3 Rows\n\n");
-    output.push_str("| dataset | network | executor | threads | frame MiB | buffer KiB | manifest chunk KiB | ack records | ack KiB | total ms | total MiB/s | ack wait ms | max RSS MiB |\n");
-    output.push_str("| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
-    let v3_keys = rows
+    output.push_str("## Bottleneck Attribution for Fastest Rows\n\n");
+    output.push_str("| dataset | network | startup ms | manifest tail ms | sender ack wait ms | receiver manifest ms | receiver frame local ms | receiver frame network/decode ms | receiver finish ms |\n");
+    output.push_str("| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |\n");
+    for (dataset, network_profile) in rows
         .iter()
-        .filter(|row| row.scenario.protocol_runtime == "v3")
         .map(|row| {
             (
                 row.scenario.dataset.clone(),
                 row.scenario.network_profile.clone(),
             )
         })
-        .collect::<BTreeSet<_>>();
-    for (dataset, network_profile) in v3_keys {
-        let Some(best_v3) = rows
+        .collect::<BTreeSet<_>>()
+    {
+        let Some(best_row) = rows
             .iter()
             .filter(|row| {
-                row.scenario.dataset == dataset
-                    && row.scenario.network_profile == network_profile
-                    && row.scenario.protocol_runtime == "v3"
+                row.scenario.dataset == dataset && row.scenario.network_profile == network_profile
             })
             .min_by(|left, right| left.total_duration_ms.total_cmp(&right.total_duration_ms))
         else {
             continue;
         };
         output.push_str(&format!(
-            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {:.2} | {:.2} | {:.2} | {:.2} |\n",
-            best_v3.scenario.dataset,
-            best_v3.scenario.network_profile,
-            best_v3.scenario.executor,
-            best_v3.scenario.threads,
-            best_v3.scenario.frame_target_mb,
-            best_v3.scenario.read_buffer_kb,
-            best_v3.scenario.manifest_chunk_kb,
-            best_v3.scenario.manifest_ack_records,
-            best_v3.scenario.manifest_ack_kb,
-            best_v3.total_duration_ms,
-            best_v3.total_mib_s,
-            best_v3.ack_wait_ms,
-            best_v3.max_rss_mib
+            "| {} | {} | {:.2} | {:.2} | {:.2} | {:.2} | {:.2} | {:.2} | {:.2} |\n",
+            best_row.scenario.dataset,
+            best_row.scenario.network_profile,
+            best_row.time_to_first_frame_ms,
+            manifest_tail_after_first_frame_ms(best_row),
+            best_row.ack_wait_ms,
+            receiver_manifest_total_ms(best_row),
+            receiver_frame_local_commit_ms(best_row),
+            receiver_frame_network_decode_ms(best_row),
+            best_row.receiver_finish_duration_ms
         ));
     }
     output.push('\n');
@@ -764,7 +948,10 @@ pub(crate) fn load_raw_results(path: &Path) -> Result<Vec<RawResultRow>> {
     let mut rows = Vec::new();
     for (line_no, line) in content.lines().enumerate() {
         if line_no == 0 {
-            if line.trim() != RAW_HEADER && line.trim() != LEGACY_RAW_HEADER {
+            if line.trim() != RAW_HEADER
+                && line.trim() != PRE_RECEIVER_PROFILE_RAW_HEADER
+                && line.trim() != LEGACY_RAW_HEADER
+            {
                 bail!("unexpected raw results header in {}", path.display());
             }
             continue;
@@ -874,6 +1061,38 @@ pub(crate) fn aggregate_summary_rows(rows: &[RawResultRow]) -> Vec<SummaryRow> {
                 manifest_replay_records: sum_u64(|row| row.manifest_replay_records),
                 receiver_manifest_bytes: sum_u64(|row| row.receiver_manifest_bytes),
                 receiver_issue_tail_bytes: sum_u64(|row| row.receiver_issue_tail_bytes),
+                receiver_total_duration_ms: avg_f64(|row| row.receiver_total_duration_ms),
+                receiver_manifest_stage_duration_ms: avg_f64(|row| {
+                    row.receiver_manifest_stage_duration_ms
+                }),
+                receiver_manifest_commit_duration_ms: avg_f64(|row| {
+                    row.receiver_manifest_commit_duration_ms
+                }),
+                receiver_manifest_ack_flush_duration_ms: avg_f64(|row| {
+                    row.receiver_manifest_ack_flush_duration_ms
+                }),
+                receiver_frame_duration_ms: avg_f64(|row| row.receiver_frame_duration_ms),
+                receiver_frame_write_duration_ms: avg_f64(|row| {
+                    row.receiver_frame_write_duration_ms
+                }),
+                receiver_frame_sync_duration_ms: avg_f64(|row| row.receiver_frame_sync_duration_ms),
+                receiver_frame_journal_persist_duration_ms: avg_f64(|row| {
+                    row.receiver_frame_journal_persist_duration_ms
+                }),
+                receiver_frame_ack_flush_duration_ms: avg_f64(|row| {
+                    row.receiver_frame_ack_flush_duration_ms
+                }),
+                receiver_issue_tail_duration_ms: avg_f64(|row| row.receiver_issue_tail_duration_ms),
+                receiver_finish_duration_ms: avg_f64(|row| row.receiver_finish_duration_ms),
+                receiver_archive_finalize_duration_ms: avg_f64(|row| {
+                    row.receiver_archive_finalize_duration_ms
+                }),
+                receiver_issue_finalize_duration_ms: avg_f64(|row| {
+                    row.receiver_issue_finalize_duration_ms
+                }),
+                receiver_finish_ack_flush_duration_ms: avg_f64(|row| {
+                    row.receiver_finish_ack_flush_duration_ms
+                }),
                 disk_budget_wait_ms: avg_f64(|row| row.disk_budget_wait_ms),
                 time_to_first_frame_ms: avg_f64(|row| row.time_to_first_frame_ms),
                 overlap_efficiency_pct: avg_f64(|row| row.overlap_efficiency_pct),

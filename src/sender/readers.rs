@@ -131,6 +131,7 @@ pub(crate) mod test_hooks {
         *scheduled.entry(path_key(path)).or_default() += 1;
     }
 
+    #[allow(dead_code)]
     pub(crate) fn scheduled_reader_task_count(path: &Path) -> usize {
         scheduled_reader_tasks()
             .lock()
@@ -666,10 +667,6 @@ impl ReaderPool {
 
     pub(crate) fn prefetch_target(&self) -> usize {
         self.active_workers.max(1)
-    }
-
-    pub(crate) fn schedule(&mut self, file: InputFile) -> Result<()> {
-        self.schedule_with_attempt_limit(file, MAX_SNAPSHOT_ATTEMPTS)
     }
 
     pub(crate) fn schedule_with_attempt_limit(
@@ -1537,7 +1534,9 @@ mod tests {
         drop(task_rx);
         pool.task_tx = task_tx;
 
-        let error = pool.schedule(pending).unwrap_err();
+        let error = pool
+            .schedule_with_attempt_limit(pending, MAX_SNAPSHOT_ATTEMPTS)
+            .unwrap_err();
 
         assert!(
             error

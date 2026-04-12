@@ -10,8 +10,6 @@ use anyhow::{Context, Result, bail};
 use crossbeam_channel::{Receiver, Sender, TrySendError, bounded, unbounded};
 use log::debug;
 
-use crate::network::protocol::ResumeState;
-
 use super::PipelineProfileCollector;
 
 #[cfg(unix)]
@@ -28,6 +26,25 @@ const TEST_SENDER_MANIFEST_SPOOL_MAX_BYTES_ENV: &str =
 #[cfg(unix)]
 const MAX_CACHED_DIRFD_DEPTH: usize = 64;
 const DEFAULT_SENDER_MANIFEST_SPOOL_MAX_BYTES: u64 = 512 * 1024 * 1024;
+const DEFAULT_SENDER_FRESH_MANIFEST_CACHE_MAX_BYTES: usize = 64 * 1024 * 1024;
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FileResumeState {
+    pub last_committed_frame: u64,
+    // В active v3 это alias для committed work_ordinal; старое имя оставлено,
+    // чтобы не ломать существующий sender-side resume/scanner код за один шаг.
+    pub last_committed_file_index: u64,
+    // Для v3 это путь, соответствующий committed work_ordinal; поле сохраняем
+    // как compatibility alias для текущей валидации resume boundary.
+    pub last_committed_file_path: String,
+    pub archive_len: u64,
+}
+
+impl FileResumeState {
+    pub fn last_committed_work_ordinal(&self) -> u64 {
+        self.last_committed_file_index
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum InputFileKind {
@@ -503,10 +520,43 @@ pub struct SourceScanReport {
     pub final_file_path: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SenderWorkloadClass {
+    TinyHeavy,
+    Mixed,
+    LargeHeavy,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SenderSourceProbe {
+    pub(crate) workload_class: SenderWorkloadClass,
+    pub(crate) sampled_directories: usize,
+    pub(crate) sampled_regular_files: usize,
+    pub(crate) sampled_regular_bytes: u64,
+    pub(crate) small_regular_files: usize,
+    pub(crate) large_regular_files: usize,
+    pub(crate) max_regular_file_bytes: u64,
+}
+
+impl SenderSourceProbe {
+    pub(crate) fn average_regular_file_bytes(&self) -> u64 {
+        if self.sampled_regular_files == 0 {
+            return 0;
+        }
+
+        self.sampled_regular_bytes / self.sampled_regular_files as u64
+    }
+}
+
 const MANIFEST_CHECKPOINT_STRIDE_RECORDS: u64 = 4096;
 const MANIFEST_BUILDER_VERSION: &str = "manifest-builder-v3-live-v1";
+const SOURCE_PROBE_MAX_DIRECTORIES: usize = 128;
+const SOURCE_PROBE_MAX_REGULAR_FILES: usize = 64;
+const SOURCE_PROBE_SMALL_FILE_BYTES: u64 = 64 * 1024;
+const SOURCE_PROBE_LARGE_FILE_BYTES: u64 = 32 * 1024 * 1024;
+const SOURCE_PROBE_LARGE_AVG_FILE_BYTES: u64 = 16 * 1024 * 1024;
 
-// В v3 фиксируем grammar и spool format отдельно от текущего v2 source walker,
+// В v3 фиксируем grammar и spool format отдельно от текущего source walker,
 // чтобы дальнейшие задачи по durability и replay опирались на явную модель.
 pub(crate) mod manifest {
     #![allow(dead_code)]
@@ -521,7 +571,7 @@ pub(crate) mod manifest {
     use anyhow::{Context, Result, bail};
     use xxhash_rust::xxh3::xxh3_64;
 
-    use crate::network::protocol::ResumeState;
+    use crate::sender::FileResumeState;
 
     pub(crate) const MANIFEST_LOG_FILE_NAME: &str = "manifest.log.part";
     pub(crate) const MANIFEST_CHECKPOINT_FILE_NAME: &str = "manifest.ckpt.part";
@@ -1699,6 +1749,7 @@ pub(crate) mod manifest {
         pub(crate) meta: ManifestMeta,
         pub(crate) last_checkpoint: Option<ManifestCheckpoint>,
         pub(crate) recovery_events: Vec<ManifestRecoveryEvent>,
+        pub(crate) fresh_log_bytes: Option<Arc<[u8]>>,
     }
 
     impl ManifestSpoolState {
@@ -1730,6 +1781,7 @@ pub(crate) mod manifest {
                     meta,
                     last_checkpoint: None,
                     recovery_events,
+                    fresh_log_bytes: None,
                 });
             }
 
@@ -1936,6 +1988,7 @@ pub(crate) mod manifest {
                 meta: loaded_meta,
                 last_checkpoint,
                 recovery_events,
+                fresh_log_bytes: None,
             })
         }
 
@@ -1961,11 +2014,42 @@ pub(crate) mod manifest {
                 meta,
                 last_checkpoint: None,
                 recovery_events,
+                fresh_log_bytes: None,
             })
         }
 
         pub(crate) fn persist_meta(&self) -> Result<()> {
             self.meta.write_atomic(&self.paths.meta_path)
+        }
+
+        pub(crate) fn recover_manifest_prefix(&self) -> Result<ManifestRecoveryReport> {
+            if let Some(bytes) = &self.fresh_log_bytes {
+                let recovery = ManifestSpoolReader::recover_prefix_bytes(bytes.as_ref())?;
+                if recovery.truncate_to_len != bytes.len() as u64 {
+                    bail!(
+                        "sender cached manifest spool ended with a torn tail: {} < {} bytes",
+                        recovery.truncate_to_len,
+                        bytes.len()
+                    );
+                }
+                return Ok(recovery);
+            }
+
+            let log_bytes = fs::read(&self.paths.log_path).with_context(|| {
+                format!(
+                    "failed to read sender manifest spool {}",
+                    self.paths.log_path.display()
+                )
+            })?;
+            let recovery = ManifestSpoolReader::recover_prefix_bytes(&log_bytes)?;
+            if recovery.truncate_to_len != log_bytes.len() as u64 {
+                bail!(
+                    "sender sealed manifest spool ended with a torn tail: {} < {} bytes",
+                    recovery.truncate_to_len,
+                    log_bytes.len()
+                );
+            }
+            Ok(recovery)
         }
 
         pub(crate) fn recovery_issue_reasons(&self) -> Vec<ManifestDiscoverySkipReason> {
@@ -2075,20 +2159,130 @@ pub(crate) mod manifest {
         pub(crate) final_work_ordinal: Option<ManifestWorkOrdinal>,
     }
 
-    #[derive(Debug)]
+    type ManifestBuildWithCheckpoint = (ManifestBuildReport, Option<ManifestCheckpoint>);
+    type ManifestBuildWithCheckpointAndCache = (
+        ManifestBuildReport,
+        Option<ManifestCheckpoint>,
+        Option<Arc<[u8]>>,
+    );
+
+    #[derive(Debug, Clone, Default, PartialEq, Eq)]
+    struct ManifestCheckpointProgress {
+        stride: Option<u64>,
+        next_checkpoint_seq: u64,
+        last_checkpoint: Option<ManifestCheckpoint>,
+    }
+
+    impl ManifestCheckpointProgress {
+        fn disabled() -> Self {
+            Self {
+                stride: None,
+                next_checkpoint_seq: 1,
+                last_checkpoint: None,
+            }
+        }
+
+        fn enabled(stride: u64) -> Result<Self> {
+            if stride == 0 {
+                bail!("manifest checkpoint stride must be at least 1");
+            }
+            Ok(Self {
+                stride: Some(stride),
+                next_checkpoint_seq: 1,
+                last_checkpoint: None,
+            })
+        }
+
+        // Во время build нам нужен только самый свежий sparse checkpoint:
+        // recovery-path хранит один checkpoint-файл, поэтому держать весь список не нужно.
+        fn observe_record(&mut self, grammar: &ManifestGrammarState, log_offset: u64) {
+            let Some(stride) = self.stride else {
+                return;
+            };
+            let Some(last_record_seq) = grammar.last_record_seq() else {
+                return;
+            };
+            if last_record_seq.0 % stride != 0 {
+                return;
+            }
+            if let Some(checkpoint) =
+                grammar.snapshot_checkpoint(self.next_checkpoint_seq, log_offset)
+            {
+                self.last_checkpoint = Some(checkpoint);
+                self.next_checkpoint_seq = self.next_checkpoint_seq.saturating_add(1);
+            }
+        }
+
+        fn finish(
+            mut self,
+            grammar: &ManifestGrammarState,
+            log_offset: u64,
+        ) -> Option<ManifestCheckpoint> {
+            let _ = self.stride?;
+            let last_record_seq = grammar.last_record_seq()?;
+            let needs_final_checkpoint = self
+                .last_checkpoint
+                .as_ref()
+                .map(|checkpoint| checkpoint.last_record_seq != last_record_seq)
+                .unwrap_or(true);
+            if needs_final_checkpoint
+                && let Some(checkpoint) =
+                    grammar.snapshot_checkpoint(self.next_checkpoint_seq, log_offset)
+            {
+                self.last_checkpoint = Some(checkpoint);
+            }
+            self.last_checkpoint
+        }
+    }
+
+    #[derive(Debug, Default)]
+    struct ManifestLogCacheProgress {
+        max_bytes: usize,
+        cached_bytes: Option<Vec<u8>>,
+    }
+
+    impl ManifestLogCacheProgress {
+        fn disabled() -> Self {
+            Self::default()
+        }
+
+        fn enabled(max_bytes: usize) -> Self {
+            Self {
+                max_bytes,
+                cached_bytes: Some(Vec::new()),
+            }
+        }
+
+        fn observe_record(&mut self, encoded: &[u8]) {
+            let Some(cached_bytes) = self.cached_bytes.as_mut() else {
+                return;
+            };
+            if cached_bytes.len().saturating_add(encoded.len()) > self.max_bytes {
+                self.cached_bytes = None;
+                return;
+            }
+            cached_bytes.extend_from_slice(encoded);
+        }
+
+        fn finish(self) -> Option<Arc<[u8]>> {
+            self.cached_bytes.map(Arc::<[u8]>::from)
+        }
+    }
+
+    #[derive(Debug, Clone)]
     struct ManifestBuildDirectory {
         name_component: Box<str>,
         depth: u16,
     }
 
-    #[derive(Debug)]
+    #[derive(Debug, Clone)]
     struct ManifestBuildFrame {
         directory: Option<ManifestBuildDirectory>,
         depth: u16,
         entries: Vec<super::DiscoveredEntry>,
     }
 
-    #[derive(Debug)]
+    #[derive(Debug, Clone)]
     pub(crate) struct ManifestSpoolBuilder {
         source: PathBuf,
         listing_pool: super::DirectoryListingPool,
@@ -2134,6 +2328,35 @@ pub(crate) mod manifest {
             spool_path: &Path,
             max_bytes: u64,
         ) -> Result<ManifestBuildReport> {
+            let (report, _) =
+                Self::build_to_path_with_limit_and_checkpoint(source, spool_path, max_bytes, None)?;
+            Ok(report)
+        }
+
+        pub(crate) fn build_to_path_with_limit_and_checkpoint(
+            source: impl Into<PathBuf>,
+            spool_path: &Path,
+            max_bytes: u64,
+            checkpoint_stride: Option<u64>,
+        ) -> Result<ManifestBuildWithCheckpoint> {
+            let (report, last_checkpoint, _) =
+                Self::build_to_path_with_limit_and_checkpoint_and_cache(
+                    source,
+                    spool_path,
+                    max_bytes,
+                    checkpoint_stride,
+                    None,
+                )?;
+            Ok((report, last_checkpoint))
+        }
+
+        pub(crate) fn build_to_path_with_limit_and_checkpoint_and_cache(
+            source: impl Into<PathBuf>,
+            spool_path: &Path,
+            max_bytes: u64,
+            checkpoint_stride: Option<u64>,
+            cache_max_bytes: Option<usize>,
+        ) -> Result<ManifestBuildWithCheckpointAndCache> {
             if let Some(parent) = spool_path.parent() {
                 fs::create_dir_all(parent)?;
             }
@@ -2146,7 +2369,12 @@ pub(crate) mod manifest {
                     format!("failed to open manifest spool {}", spool_path.display())
                 })?;
             let mut builder = Self::new(source)?;
-            builder.build_into_with_limit(&mut file, max_bytes)
+            builder.build_into_with_limit_and_checkpoint_and_cache(
+                &mut file,
+                max_bytes,
+                checkpoint_stride,
+                cache_max_bytes,
+            )
         }
 
         pub(crate) fn build_into<W: Write>(
@@ -2161,11 +2389,45 @@ pub(crate) mod manifest {
             writer: &mut W,
             max_bytes: u64,
         ) -> Result<ManifestBuildReport> {
+            let (report, _) = self.build_into_with_limit_and_checkpoint(writer, max_bytes, None)?;
+            Ok(report)
+        }
+
+        fn build_into_with_limit_and_checkpoint<W: Write>(
+            &mut self,
+            writer: &mut W,
+            max_bytes: u64,
+            checkpoint_stride: Option<u64>,
+        ) -> Result<ManifestBuildWithCheckpoint> {
+            let (report, last_checkpoint, _) = self
+                .build_into_with_limit_and_checkpoint_and_cache(
+                    writer,
+                    max_bytes,
+                    checkpoint_stride,
+                    None,
+                )?;
+            Ok((report, last_checkpoint))
+        }
+
+        fn build_into_with_limit_and_checkpoint_and_cache<W: Write>(
+            &mut self,
+            writer: &mut W,
+            max_bytes: u64,
+            checkpoint_stride: Option<u64>,
+            cache_max_bytes: Option<usize>,
+        ) -> Result<ManifestBuildWithCheckpointAndCache> {
             if max_bytes == 0 {
                 bail!("sender manifest spool quota must be at least 1 byte");
             }
 
             let mut report = ManifestBuildReport::default();
+            let mut checkpoint_progress = match checkpoint_stride {
+                Some(stride) => ManifestCheckpointProgress::enabled(stride)?,
+                None => ManifestCheckpointProgress::disabled(),
+            };
+            let mut log_cache_progress = cache_max_bytes
+                .map(ManifestLogCacheProgress::enabled)
+                .unwrap_or_else(ManifestLogCacheProgress::disabled);
             while let Some(record) = self.next_record()? {
                 let encoded = ManifestSpoolWriter::encode_record(&record)?;
                 let next_total = report
@@ -2180,8 +2442,10 @@ pub(crate) mod manifest {
                     );
                 }
                 writer.write_all(&encoded)?;
+                log_cache_progress.observe_record(&encoded);
                 report.records_written = report.records_written.saturating_add(1);
                 report.spool_bytes_written = next_total;
+                checkpoint_progress.observe_record(&self.grammar, report.spool_bytes_written);
                 match record.kind {
                     ManifestRecordKind::File | ManifestRecordKind::Symlink => {
                         report.work_items_written = report.work_items_written.saturating_add(1);
@@ -2199,7 +2463,10 @@ pub(crate) mod manifest {
             }
             report.final_record_seq = self.grammar.last_record_seq();
             report.final_work_ordinal = self.grammar.last_work_ordinal();
-            Ok(report)
+            let last_checkpoint =
+                checkpoint_progress.finish(&self.grammar, report.spool_bytes_written);
+            let fresh_log_bytes = log_cache_progress.finish();
+            Ok((report, last_checkpoint, fresh_log_bytes))
         }
 
         fn next_record(&mut self) -> Result<Option<ManifestRecord>> {
@@ -2377,11 +2644,47 @@ pub(crate) mod manifest {
     #[derive(Debug)]
     pub(crate) struct ManifestPendingLeafWalker {
         pub(crate) state: ManifestSpoolState,
-        resume_state: ResumeState,
+        resume_state: FileResumeState,
         root_prefix: Arc<super::InputPathPrefix>,
         current_offset: u64,
         prefix_stack: Vec<Arc<super::InputPathPrefix>>,
         current_file: Option<File>,
+        profile: Option<super::PipelineProfileCollector>,
+        discovery_issues: Vec<super::SourceDiscoveryIssue>,
+        discovery_issue_summary: super::SourceDiscoveryIssueSummary,
+        resume_validated: bool,
+        exhausted: bool,
+        last_boundary_file: Option<super::InputFile>,
+    }
+
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    pub(crate) struct ManifestChunkPlan {
+        pub(crate) bytes: Vec<u8>,
+        pub(crate) last_record_seq: Option<u64>,
+        pub(crate) last_work_ordinal: Option<u64>,
+        pub(crate) record_count: u64,
+    }
+
+    #[derive(Debug)]
+    pub(crate) struct ProgressiveManifestPendingLeafWalker {
+        pub(crate) state: ManifestSpoolState,
+        builder: ManifestSpoolBuilder,
+        resume_state: FileResumeState,
+        root_prefix: Arc<super::InputPathPrefix>,
+        prefix_stack: Vec<Arc<super::InputPathPrefix>>,
+        spool_file: Option<File>,
+        spool_len: u64,
+        spool_max_bytes: u64,
+        manifest_chunk_bytes: usize,
+        manifest_chunk_records: u64,
+        ready_chunks: VecDeque<ManifestChunkPlan>,
+        current_chunk_bytes: Vec<u8>,
+        current_chunk_last_record_seq: Option<u64>,
+        current_chunk_last_work_ordinal: Option<u64>,
+        current_chunk_record_count: u64,
+        carried_last_work_ordinal: Option<u64>,
+        produced_last_record_seq: Option<u64>,
+        produced_last_work_ordinal: Option<u64>,
         profile: Option<super::PipelineProfileCollector>,
         discovery_issues: Vec<super::SourceDiscoveryIssue>,
         discovery_issue_summary: super::SourceDiscoveryIssueSummary,
@@ -2409,10 +2712,440 @@ pub(crate) mod manifest {
         }
     }
 
+    impl Clone for ProgressiveManifestPendingLeafWalker {
+        fn clone(&self) -> Self {
+            Self {
+                state: self.state.clone(),
+                builder: self.builder.clone(),
+                resume_state: self.resume_state.clone(),
+                root_prefix: self.root_prefix.clone(),
+                prefix_stack: self.prefix_stack.clone(),
+                spool_file: None,
+                spool_len: self.spool_len,
+                spool_max_bytes: self.spool_max_bytes,
+                manifest_chunk_bytes: self.manifest_chunk_bytes,
+                manifest_chunk_records: self.manifest_chunk_records,
+                ready_chunks: self.ready_chunks.clone(),
+                current_chunk_bytes: self.current_chunk_bytes.clone(),
+                current_chunk_last_record_seq: self.current_chunk_last_record_seq,
+                current_chunk_last_work_ordinal: self.current_chunk_last_work_ordinal,
+                current_chunk_record_count: self.current_chunk_record_count,
+                carried_last_work_ordinal: self.carried_last_work_ordinal,
+                produced_last_record_seq: self.produced_last_record_seq,
+                produced_last_work_ordinal: self.produced_last_work_ordinal,
+                profile: self.profile.clone(),
+                discovery_issues: self.discovery_issues.clone(),
+                discovery_issue_summary: self.discovery_issue_summary,
+                resume_validated: self.resume_validated,
+                exhausted: self.exhausted,
+                last_boundary_file: self.last_boundary_file.clone(),
+            }
+        }
+    }
+
+    impl ProgressiveManifestPendingLeafWalker {
+        #[allow(clippy::too_many_arguments)]
+        pub(crate) fn new(
+            source_root: impl Into<PathBuf>,
+            resume_state: &FileResumeState,
+            state: ManifestSpoolState,
+            base_manifest: &crate::network::protocol::ManifestBoundary,
+            spool_max_bytes: u64,
+            manifest_chunk_bytes: usize,
+            manifest_chunk_records: u64,
+            profile: Option<&super::PipelineProfileCollector>,
+        ) -> Result<Self> {
+            if manifest_chunk_bytes == 0 {
+                bail!("manifest chunk bytes must be at least 1");
+            }
+            if manifest_chunk_records == 0 {
+                bail!("manifest chunk records must be at least 1");
+            }
+            if spool_max_bytes == 0 {
+                bail!("progressive manifest spool quota must be at least 1");
+            }
+
+            let source_root = source_root.into();
+            let root_prefix = super::InputPathPrefix::root(source_root.clone());
+            let discovery_issues = super::collect_source_discovery_issues(&state)?;
+            let discovery_issue_summary =
+                super::summarize_source_discovery_issues(&discovery_issues);
+            Ok(Self {
+                state,
+                builder: ManifestSpoolBuilder::new(source_root)?,
+                resume_state: resume_state.clone(),
+                root_prefix,
+                prefix_stack: Vec::new(),
+                spool_file: None,
+                spool_len: 0,
+                spool_max_bytes,
+                manifest_chunk_bytes,
+                manifest_chunk_records,
+                ready_chunks: VecDeque::new(),
+                current_chunk_bytes: Vec::new(),
+                current_chunk_last_record_seq: None,
+                current_chunk_last_work_ordinal: None,
+                current_chunk_record_count: 0,
+                carried_last_work_ordinal: base_manifest.last_work_ordinal,
+                produced_last_record_seq: None,
+                produced_last_work_ordinal: None,
+                profile: profile.cloned(),
+                discovery_issues,
+                discovery_issue_summary,
+                resume_validated: resume_state.last_committed_file_index == 0,
+                exhausted: false,
+                last_boundary_file: None,
+            })
+        }
+
+        pub(crate) fn next_pending_file(&mut self) -> Result<Option<super::InputFile>> {
+            if self.exhausted {
+                return Ok(None);
+            }
+
+            loop {
+                let Some(record) = self.next_manifest_record()? else {
+                    self.finish_walk()?;
+                    return Ok(None);
+                };
+
+                match record.kind {
+                    ManifestRecordKind::DirectoryEnter => {
+                        let prefix = super::InputPathPrefix::child(
+                            &self.current_prefix(),
+                            record.name_component.as_ref(),
+                        );
+                        self.prefix_stack.push(prefix);
+                    }
+                    ManifestRecordKind::DirectoryLeave => {
+                        let Some(current) = self.prefix_stack.pop() else {
+                            bail!(
+                                "progressive manifest replay encountered DirectoryLeave without open directory"
+                            );
+                        };
+                        if current.name_component().unwrap_or("") != record.name_component.as_ref()
+                        {
+                            bail!(
+                                "progressive manifest replay encountered mismatched DirectoryLeave: expected {} got {}",
+                                current.name_component().unwrap_or(""),
+                                record.name_component
+                            );
+                        }
+                    }
+                    ManifestRecordKind::DiscoverySkip => {
+                        let ManifestRecordPayload::DiscoverySkip { reason } = record.payload else {
+                            bail!("manifest discovery skip record is missing discovery payload");
+                        };
+                        self.discovery_issues.push(super::SourceDiscoveryIssue {
+                            record_seq: Some(record.record_seq.0),
+                            path: super::source_discovery_issue_path(
+                                &self.path_stack_components(),
+                                record.depth,
+                                record.name_component.as_ref(),
+                            )?,
+                            scope: super::SourceDiscoveryIssueScope::Entry,
+                            reason: super::source_discovery_reason_from_manifest_skip(&reason),
+                        });
+                        self.discovery_issue_summary =
+                            super::summarize_source_discovery_issues(&self.discovery_issues);
+                    }
+                    ManifestRecordKind::SubtreeSkip => {
+                        let ManifestRecordPayload::SubtreeSkip { reason } = record.payload else {
+                            bail!("manifest subtree skip record is missing subtree payload");
+                        };
+                        self.discovery_issues.push(super::SourceDiscoveryIssue {
+                            record_seq: Some(record.record_seq.0),
+                            path: super::source_discovery_issue_path(
+                                &self.path_stack_components(),
+                                record.depth,
+                                record.name_component.as_ref(),
+                            )?,
+                            scope: super::SourceDiscoveryIssueScope::Subtree,
+                            reason: super::source_discovery_reason_from_subtree_skip(&reason),
+                        });
+                        self.discovery_issue_summary =
+                            super::summarize_source_discovery_issues(&self.discovery_issues);
+                    }
+                    ManifestRecordKind::File | ManifestRecordKind::Symlink => {
+                        let work_ordinal = record
+                            .work_ordinal
+                            .ok_or_else(|| {
+                                anyhow::anyhow!("manifest leaf record is missing work_ordinal")
+                            })?
+                            .0;
+                        let file = match record.payload {
+                            ManifestRecordPayload::None => super::InputFile::regular_from_prefix(
+                                work_ordinal,
+                                self.current_prefix(),
+                                record.name_component,
+                            ),
+                            ManifestRecordPayload::SymlinkTarget { target } => {
+                                super::InputFile::symlink_from_prefix(
+                                    work_ordinal,
+                                    self.current_prefix(),
+                                    record.name_component,
+                                    PathBuf::from(target.as_ref()),
+                                )
+                            }
+                            payload => {
+                                bail!(
+                                    "manifest leaf record carried unexpected payload: {payload:?}"
+                                )
+                            }
+                        };
+                        self.last_boundary_file = Some(file.clone());
+
+                        if !self.resume_validated {
+                            if work_ordinal < self.resume_state.last_committed_file_index {
+                                continue;
+                            }
+                            if work_ordinal == self.resume_state.last_committed_file_index {
+                                if file.rel_path() != self.resume_state.last_committed_file_path {
+                                    bail!(
+                                        "sender source no longer matches resume state at file index {}: expected {} got {}",
+                                        self.resume_state.last_committed_file_index,
+                                        self.resume_state.last_committed_file_path,
+                                        file.rel_path()
+                                    );
+                                }
+                                self.resume_validated = true;
+                                continue;
+                            }
+                            bail!(
+                                "sender source no longer matches resume state: committed file index {} is missing before {} in progressive manifest",
+                                self.resume_state.last_committed_file_index,
+                                file.rel_path()
+                            );
+                        }
+
+                        return Ok(Some(file));
+                    }
+                }
+            }
+        }
+
+        pub(crate) fn pop_manifest_chunk(
+            &mut self,
+            force_flush: bool,
+        ) -> Result<Option<ManifestChunkPlan>> {
+            if force_flush {
+                self.flush_current_chunk();
+            }
+            Ok(self.ready_chunks.pop_front())
+        }
+
+        pub(crate) fn produced_manifest_work_ordinal(&self) -> u64 {
+            self.produced_last_work_ordinal.unwrap_or(0)
+        }
+
+        pub(crate) fn manifest_exhausted(&self) -> bool {
+            self.exhausted
+        }
+
+        pub(crate) fn produced_manifest_boundary(&self) -> (Option<u64>, Option<u64>) {
+            (
+                self.produced_last_record_seq,
+                self.produced_last_work_ordinal,
+            )
+        }
+
+        pub(crate) fn final_manifest_boundary(&self) -> Result<(Option<u64>, Option<u64>)> {
+            if !self.exhausted {
+                bail!("progressive manifest build has not finished yet");
+            }
+            Ok((
+                self.produced_last_record_seq,
+                self.produced_last_work_ordinal,
+            ))
+        }
+
+        pub(crate) fn final_boundary(&self) -> Result<(u64, String)> {
+            if !self.exhausted {
+                bail!("progressive sender pending file walker has not finished discovery yet");
+            }
+            Ok(self.current_boundary())
+        }
+
+        pub(crate) fn last_discovered_boundary(&self) -> (u64, String) {
+            self.current_boundary()
+        }
+
+        pub(crate) fn discovery_issues(&self) -> &[super::SourceDiscoveryIssue] {
+            &self.discovery_issues
+        }
+
+        pub(crate) fn discovery_issue_summary(&self) -> super::SourceDiscoveryIssueSummary {
+            self.discovery_issue_summary
+        }
+
+        fn next_manifest_record(&mut self) -> Result<Option<ManifestRecord>> {
+            let Some(record) = self.builder.next_record()? else {
+                return Ok(None);
+            };
+            self.append_record(&record)?;
+            Ok(Some(record))
+        }
+
+        fn append_record(&mut self, record: &ManifestRecord) -> Result<()> {
+            let append_started = Instant::now();
+            let encoded = ManifestSpoolWriter::encode_record(record)?;
+            if encoded.len() > self.manifest_chunk_bytes {
+                bail!(
+                    "manifest record {} exceeds configured manifest chunk window: {} > {} bytes",
+                    record.record_seq.0,
+                    encoded.len(),
+                    self.manifest_chunk_bytes
+                );
+            }
+            let next_spool_len = self.spool_len.saturating_add(encoded.len() as u64);
+            if next_spool_len > self.spool_max_bytes {
+                bail!(
+                    "sender manifest spool build failed within quota {} bytes",
+                    self.spool_max_bytes
+                );
+            }
+
+            let log_path = self.state.paths.log_path.clone();
+            {
+                let file = self.current_spool_file()?;
+                file.write_all(&encoded).with_context(|| {
+                    format!(
+                        "failed to append progressive manifest record {} into {}",
+                        record.record_seq.0,
+                        log_path.display()
+                    )
+                })?;
+            }
+            self.spool_len = next_spool_len;
+            if let Some(profile) = &self.profile {
+                profile.record_manifest_build(encoded.len() as u64, append_started.elapsed());
+            }
+            self.produced_last_record_seq = Some(record.record_seq.0);
+            if let Some(work_ordinal) = record.work_ordinal {
+                self.produced_last_work_ordinal = Some(work_ordinal.0);
+            }
+
+            if !self.current_chunk_bytes.is_empty()
+                && (self.current_chunk_bytes.len().saturating_add(encoded.len())
+                    > self.manifest_chunk_bytes
+                    || self.current_chunk_record_count >= self.manifest_chunk_records)
+            {
+                self.flush_current_chunk();
+            }
+            if self.current_chunk_record_count == 0 {
+                self.current_chunk_last_work_ordinal = self.carried_last_work_ordinal;
+            }
+            self.current_chunk_bytes.extend_from_slice(&encoded);
+            self.current_chunk_last_record_seq = Some(record.record_seq.0);
+            if let Some(work_ordinal) = record.work_ordinal {
+                self.current_chunk_last_work_ordinal = Some(work_ordinal.0);
+            }
+            self.current_chunk_record_count = self.current_chunk_record_count.saturating_add(1);
+            Ok(())
+        }
+
+        fn flush_current_chunk(&mut self) {
+            if self.current_chunk_bytes.is_empty() {
+                return;
+            }
+
+            let chunk = ManifestChunkPlan {
+                bytes: std::mem::take(&mut self.current_chunk_bytes),
+                last_record_seq: self.current_chunk_last_record_seq.take(),
+                last_work_ordinal: self.current_chunk_last_work_ordinal.take(),
+                record_count: std::mem::take(&mut self.current_chunk_record_count),
+            };
+            self.carried_last_work_ordinal = chunk.last_work_ordinal;
+            self.ready_chunks.push_back(chunk);
+        }
+
+        fn current_spool_file(&mut self) -> Result<&mut File> {
+            if self.spool_file.is_none() {
+                if let Some(parent) = self.state.paths.log_path.parent() {
+                    fs::create_dir_all(parent)?;
+                }
+                let mut file = OpenOptions::new()
+                    .create(true)
+                    .read(true)
+                    .truncate(false)
+                    .write(true)
+                    .open(&self.state.paths.log_path)
+                    .with_context(|| {
+                        format!(
+                            "failed to open progressive manifest spool {}",
+                            self.state.paths.log_path.display()
+                        )
+                    })?;
+                let current_len = file.metadata()?.len();
+                if current_len != self.spool_len {
+                    file.set_len(self.spool_len).with_context(|| {
+                        format!(
+                            "failed to truncate progressive manifest spool {} to {} bytes",
+                            self.state.paths.log_path.display(),
+                            self.spool_len
+                        )
+                    })?;
+                }
+                file.seek(SeekFrom::Start(self.spool_len))
+                    .with_context(|| {
+                        format!(
+                            "failed to seek progressive manifest spool {}",
+                            self.state.paths.log_path.display()
+                        )
+                    })?;
+                self.spool_file = Some(file);
+            }
+            self.spool_file.as_mut().ok_or_else(|| {
+                anyhow::anyhow!("progressive manifest spool file was not initialized")
+            })
+        }
+
+        fn current_prefix(&self) -> Arc<super::InputPathPrefix> {
+            self.prefix_stack
+                .last()
+                .cloned()
+                .unwrap_or_else(|| self.root_prefix.clone())
+        }
+
+        fn path_stack_components(&self) -> Vec<Box<str>> {
+            self.prefix_stack
+                .iter()
+                .filter_map(|prefix| {
+                    prefix
+                        .name_component()
+                        .map(|component| component.to_owned().into_boxed_str())
+                })
+                .collect()
+        }
+
+        fn finish_walk(&mut self) -> Result<()> {
+            self.exhausted = true;
+            if !self.resume_validated {
+                bail!(
+                    "sender source no longer matches resume state: committed file index {} is missing from progressive manifest",
+                    self.resume_state.last_committed_file_index
+                );
+            }
+            Ok(())
+        }
+
+        fn current_boundary(&self) -> (u64, String) {
+            self.last_boundary_file
+                .as_ref()
+                .map(|file| (file.index, file.rel_path_string()))
+                .unwrap_or_else(|| {
+                    (
+                        self.resume_state.last_committed_file_index,
+                        self.resume_state.last_committed_file_path.clone(),
+                    )
+                })
+        }
+    }
+
     impl ManifestPendingLeafWalker {
         pub(crate) fn new(
             source_root: impl Into<PathBuf>,
-            resume_state: &ResumeState,
+            resume_state: &FileResumeState,
             state: ManifestSpoolState,
             profile: Option<&super::PipelineProfileCollector>,
         ) -> Result<Self> {
@@ -2586,6 +3319,27 @@ pub(crate) mod manifest {
         ) -> Result<Option<(ManifestRecord, u64, std::time::Duration)>> {
             let offset = self.current_offset;
             let read_started = Instant::now();
+            if let Some(bytes) = self.state.fresh_log_bytes.as_deref() {
+                let offset_usize = usize::try_from(offset).with_context(|| {
+                    format!("manifest replay offset does not fit usize: {}", offset)
+                })?;
+                let Some((record, next_offset)) = (match decode_record_at(bytes, offset_usize)? {
+                    ManifestDecodedRecord::Complete {
+                        record,
+                        next_cursor,
+                    } => Some((record, next_cursor as u64)),
+                    ManifestDecodedRecord::TornTail { .. } => None,
+                }) else {
+                    return Ok(None);
+                };
+                self.current_offset = next_offset;
+                let read_duration = read_started.elapsed();
+                return Ok(Some((
+                    record,
+                    next_offset.saturating_sub(offset),
+                    read_duration,
+                )));
+            }
             let file = self.current_file()?;
             let Some((record, next_offset)) = read_record_from_file(file, offset)? else {
                 return Ok(None);
@@ -3533,7 +4287,7 @@ pub(crate) mod manifest {
             let candidate = ManifestSourceIdentity::new(
                 "/src",
                 "dev:42",
-                "builder-v2",
+                "builder-legacy-snapshot-v1",
                 ManifestSourceKind::Snapshot,
             )
             .unwrap();
@@ -3988,6 +4742,36 @@ pub(crate) mod manifest {
                     final_record_seq: Some(ManifestRecordSeq(6)),
                     final_work_ordinal: Some(ManifestWorkOrdinal(2)),
                 }
+            );
+
+            let _ = fs::remove_dir_all(&temp_root);
+        }
+
+        #[test]
+        fn spool_builder_single_pass_checkpoint_matches_reader_checkpoint_pass() {
+            let temp_root = temp_state_root("manifest-builder-checkpoint");
+            let source = temp_root.join("source");
+            fs::create_dir_all(source.join("alpha").join("beta")).unwrap();
+            fs::write(source.join("alpha").join("beta").join("gamma.txt"), b"1").unwrap();
+            fs::write(source.join("alpha").join("delta.txt"), b"2").unwrap();
+            fs::write(source.join("root.txt"), b"3").unwrap();
+            let spool_path = temp_root.join(MANIFEST_LOG_FILE_NAME);
+
+            let (report, single_pass_checkpoint) =
+                ManifestSpoolBuilder::build_to_path_with_limit_and_checkpoint(
+                    &source,
+                    &spool_path,
+                    u64::MAX,
+                    Some(2),
+                )
+                .unwrap();
+            let bytes = fs::read(&spool_path).unwrap();
+            let second_pass = ManifestSpoolReader::build_sparse_checkpoints(&bytes, 2).unwrap();
+
+            assert_eq!(report.spool_bytes_written, bytes.len() as u64);
+            assert_eq!(
+                single_pass_checkpoint,
+                second_pass.checkpoints.last().cloned()
             );
 
             let _ = fs::remove_dir_all(&temp_root);
@@ -4870,8 +5654,10 @@ fn linux_virtual_filesystem_kind_from_mountinfo_fs_type(fs_type: &str) -> Option
 
 #[derive(Debug, Clone)]
 enum PendingFileWalkerMode {
+    #[cfg(test)]
     Live(LivePendingFileWalker),
     Manifest(Box<manifest::ManifestPendingLeafWalker>),
+    Progressive(Box<manifest::ProgressiveManifestPendingLeafWalker>),
 }
 
 #[derive(Debug, Clone)]
@@ -4879,9 +5665,10 @@ pub(crate) struct PendingFileWalker {
     mode: PendingFileWalkerMode,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone)]
 struct LivePendingFileWalker {
-    resume_state: ResumeState,
+    resume_state: FileResumeState,
     listing_pool: DirectoryListingPool,
     stack: Vec<DirectoryFrame>,
     next_index: u64,
@@ -5028,10 +5815,10 @@ fn validate_source_directory(source: &Path) -> Result<()> {
 }
 
 // Этот helper оставлен для диагностического materialized scan:
-// production sender path и buffered prepare_dump больше не зависят от полного pending-list.
+// production sender path no longer depends on the full pending-list.
 pub(crate) fn collect_pending_files(
     source: impl Into<PathBuf>,
-    resume_state: &ResumeState,
+    resume_state: &FileResumeState,
     threads: u32,
     frame_target_bytes: u64,
 ) -> Result<(Vec<InputFile>, u64, String)> {
@@ -5288,12 +6075,11 @@ fn collect_source_discovery_issues(
         })
         .collect::<Vec<_>>();
 
-    if !state.paths.log_path.exists() {
+    if !state.paths.log_path.exists() && state.fresh_log_bytes.is_none() {
         return Ok(issues);
     }
 
-    let recovery =
-        manifest::ManifestSpoolReader::recover_prefix(File::open(&state.paths.log_path)?)?;
+    let recovery = state.recover_manifest_prefix()?;
     let mut path_stack = Vec::<Box<str>>::new();
     for record in recovery.records {
         match record.kind {
@@ -5391,49 +6177,43 @@ pub(crate) fn ensure_sealed_manifest_state(
 
     let build_started = Instant::now();
     let spool_max_bytes = sender_manifest_spool_max_bytes();
-    let report = match manifest::ManifestSpoolBuilder::build_to_path_with_limit(
-        source.path().to_path_buf(),
-        &state.paths.log_path,
-        spool_max_bytes,
-    ) {
-        Ok(report) => report,
-        Err(error) => {
-            if state.paths.log_path.exists() {
-                fs::remove_file(&state.paths.log_path).with_context(|| {
-                    format!(
-                        "failed to remove partial manifest spool {}",
-                        state.paths.log_path.display()
-                    )
-                })?;
+    let (report, last_checkpoint, fresh_log_bytes) =
+        match manifest::ManifestSpoolBuilder::build_to_path_with_limit_and_checkpoint_and_cache(
+            source.path().to_path_buf(),
+            &state.paths.log_path,
+            spool_max_bytes,
+            Some(MANIFEST_CHECKPOINT_STRIDE_RECORDS),
+            Some(DEFAULT_SENDER_FRESH_MANIFEST_CACHE_MAX_BYTES),
+        ) {
+            Ok(result) => result,
+            Err(error) => {
+                if state.paths.log_path.exists() {
+                    fs::remove_file(&state.paths.log_path).with_context(|| {
+                        format!(
+                            "failed to remove partial manifest spool {}",
+                            state.paths.log_path.display()
+                        )
+                    })?;
+                }
+                if state.paths.checkpoint_path.exists() {
+                    fs::remove_file(&state.paths.checkpoint_path).with_context(|| {
+                        format!(
+                            "failed to remove stale manifest checkpoint {}",
+                            state.paths.checkpoint_path.display()
+                        )
+                    })?;
+                }
+                return Err(error.context(format!(
+                    "sender manifest spool build failed within quota {} bytes",
+                    spool_max_bytes
+                )));
             }
-            if state.paths.checkpoint_path.exists() {
-                fs::remove_file(&state.paths.checkpoint_path).with_context(|| {
-                    format!(
-                        "failed to remove stale manifest checkpoint {}",
-                        state.paths.checkpoint_path.display()
-                    )
-                })?;
-            }
-            return Err(error.context(format!(
-                "sender manifest spool build failed within quota {} bytes",
-                spool_max_bytes
-            )));
-        }
-    };
+        };
+    state.fresh_log_bytes = fresh_log_bytes;
     if let Some(profile) = profile {
         profile.record_manifest_build(report.spool_bytes_written, build_started.elapsed());
     }
-    let log_bytes = fs::read(&state.paths.log_path).with_context(|| {
-        format!(
-            "failed to read manifest spool after build {}",
-            state.paths.log_path.display()
-        )
-    })?;
-    let checkpoints = manifest::ManifestSpoolReader::build_sparse_checkpoints(
-        &log_bytes,
-        MANIFEST_CHECKPOINT_STRIDE_RECORDS,
-    )?;
-    if let Some(checkpoint) = checkpoints.checkpoints.last().cloned() {
+    if let Some(checkpoint) = last_checkpoint {
         checkpoint.write_atomic(&state.paths.checkpoint_path)?;
         state.meta.commit_checkpoint(
             checkpoint.last_record_seq,
@@ -5466,29 +6246,71 @@ pub(crate) fn ensure_sealed_manifest_state(
     Ok(state)
 }
 
+fn prepare_progressive_manifest_state(
+    source: &SenderSource,
+    dump_id: &str,
+) -> Result<manifest::ManifestSpoolState> {
+    let root_source_path = manifest_root_identity_path(source.path())?;
+    let source_identity = sender_manifest_source_identity(source)?;
+    let mut state = manifest::ManifestSpoolState::open_or_recover(
+        &sender_manifest_state_root(),
+        dump_id,
+        source_identity,
+        &root_source_path,
+    )?;
+
+    if state.paths.log_path.exists() {
+        fs::remove_file(&state.paths.log_path).with_context(|| {
+            format!(
+                "failed to remove stale progressive manifest spool {}",
+                state.paths.log_path.display()
+            )
+        })?;
+    }
+    if state.paths.checkpoint_path.exists() {
+        fs::remove_file(&state.paths.checkpoint_path).with_context(|| {
+            format!(
+                "failed to remove stale progressive manifest checkpoint {}",
+                state.paths.checkpoint_path.display()
+            )
+        })?;
+    }
+    state
+        .meta
+        .invalidate(manifest::ManifestInvalidationReason::RebuildRequested);
+    state.persist_meta()?;
+    state.last_checkpoint = None;
+    state.recovery_events.clear();
+    state.fresh_log_bytes = None;
+    Ok(state)
+}
+
 impl PendingFileWalker {
     #[cfg(test)]
-    pub(crate) fn new(source: impl Into<PathBuf>, resume_state: &ResumeState) -> Result<Self> {
+    pub(crate) fn new(source: impl Into<PathBuf>, resume_state: &FileResumeState) -> Result<Self> {
         Self::new_live_with_profile(source, resume_state, None)
     }
 
-    pub(crate) fn new_with_profile(
-        source: impl Into<PathBuf>,
-        resume_state: &ResumeState,
-        profile: Option<&PipelineProfileCollector>,
-    ) -> Result<Self> {
-        Self::new_live_with_profile(source, resume_state, profile)
-    }
-
+    #[cfg_attr(not(test), allow(dead_code))]
     pub(crate) fn new_with_manifest(
         source: impl Into<SenderSource>,
         dump_id: &str,
-        resume_state: &ResumeState,
+        resume_state: &FileResumeState,
+        profile: Option<&PipelineProfileCollector>,
+    ) -> Result<Self> {
+        let source = source.into();
+        let state = ensure_sealed_manifest_state(&source, dump_id, profile)?;
+        Self::new_with_manifest_state(source, resume_state, state, profile)
+    }
+
+    pub(crate) fn new_with_manifest_state(
+        source: impl Into<SenderSource>,
+        resume_state: &FileResumeState,
+        state: manifest::ManifestSpoolState,
         profile: Option<&PipelineProfileCollector>,
     ) -> Result<Self> {
         let source = source.into();
         validate_source_directory(source.path())?;
-        let state = ensure_sealed_manifest_state(&source, dump_id, profile)?;
         Ok(Self {
             mode: PendingFileWalkerMode::Manifest(Box::new(
                 manifest::ManifestPendingLeafWalker::new(
@@ -5501,9 +6323,39 @@ impl PendingFileWalker {
         })
     }
 
+    pub(crate) fn new_progressive(
+        source: impl Into<SenderSource>,
+        dump_id: &str,
+        resume_state: &FileResumeState,
+        base_manifest: &crate::network::protocol::ManifestBoundary,
+        manifest_chunk_bytes: usize,
+        manifest_chunk_records: u64,
+        profile: Option<&PipelineProfileCollector>,
+    ) -> Result<Self> {
+        let source = source.into();
+        validate_source_directory(source.path())?;
+        let state = prepare_progressive_manifest_state(&source, dump_id)?;
+        let spool_max_bytes = sender_manifest_spool_max_bytes();
+        Ok(Self {
+            mode: PendingFileWalkerMode::Progressive(Box::new(
+                manifest::ProgressiveManifestPendingLeafWalker::new(
+                    source.path().to_path_buf(),
+                    resume_state,
+                    state,
+                    base_manifest,
+                    spool_max_bytes,
+                    manifest_chunk_bytes,
+                    manifest_chunk_records,
+                    profile,
+                )?,
+            )),
+        })
+    }
+
+    #[cfg(test)]
     fn new_live_with_profile(
         source: impl Into<PathBuf>,
-        resume_state: &ResumeState,
+        resume_state: &FileResumeState,
         profile: Option<&PipelineProfileCollector>,
     ) -> Result<Self> {
         let source = source.into();
@@ -5531,47 +6383,127 @@ impl PendingFileWalker {
     // как только пройден committed prefix. Это убирает необходимость в полном pending-list.
     pub(crate) fn next_pending_file(&mut self) -> Result<Option<InputFile>> {
         match &mut self.mode {
+            #[cfg(test)]
             PendingFileWalkerMode::Live(walker) => walker.next_pending_file(),
             PendingFileWalkerMode::Manifest(walker) => walker.next_pending_file(),
+            PendingFileWalkerMode::Progressive(walker) => walker.next_pending_file(),
         }
     }
 
     pub(crate) fn final_boundary(&self) -> Result<(u64, String)> {
         match &self.mode {
+            #[cfg(test)]
             PendingFileWalkerMode::Live(walker) => walker.final_boundary(),
             PendingFileWalkerMode::Manifest(walker) => walker.final_boundary(),
+            PendingFileWalkerMode::Progressive(walker) => walker.final_boundary(),
         }
     }
 
     pub(crate) fn last_discovered_boundary(&self) -> (u64, String) {
         match &self.mode {
+            #[cfg(test)]
             PendingFileWalkerMode::Live(walker) => walker.last_discovered_boundary(),
             PendingFileWalkerMode::Manifest(walker) => walker.last_discovered_boundary(),
+            PendingFileWalkerMode::Progressive(walker) => walker.last_discovered_boundary(),
         }
     }
 
     pub(crate) fn discovery_issues(&self) -> Vec<SourceDiscoveryIssue> {
         match &self.mode {
+            #[cfg(test)]
             PendingFileWalkerMode::Live(_) => Vec::new(),
             PendingFileWalkerMode::Manifest(walker) => walker.discovery_issues().to_vec(),
+            PendingFileWalkerMode::Progressive(walker) => walker.discovery_issues().to_vec(),
         }
     }
 
     pub(crate) fn discovery_issue_summary(&self) -> SourceDiscoveryIssueSummary {
         match &self.mode {
+            #[cfg(test)]
             PendingFileWalkerMode::Live(_) => SourceDiscoveryIssueSummary::default(),
             PendingFileWalkerMode::Manifest(walker) => walker.discovery_issue_summary(),
+            PendingFileWalkerMode::Progressive(walker) => walker.discovery_issue_summary(),
         }
     }
 
     pub(crate) fn cleanup_after_finish(&self) -> Result<()> {
         match &self.mode {
+            #[cfg(test)]
             PendingFileWalkerMode::Live(_) => Ok(()),
             PendingFileWalkerMode::Manifest(walker) => walker.state.cleanup_after_finish(),
+            PendingFileWalkerMode::Progressive(walker) => walker.state.cleanup_after_finish(),
+        }
+    }
+
+    pub(crate) fn pop_manifest_chunk(
+        &mut self,
+        force_flush: bool,
+    ) -> Result<Option<manifest::ManifestChunkPlan>> {
+        match &mut self.mode {
+            PendingFileWalkerMode::Progressive(walker) => walker.pop_manifest_chunk(force_flush),
+            _ => Ok(None),
+        }
+    }
+
+    pub(crate) fn produced_manifest_work_ordinal(&self) -> u64 {
+        match &self.mode {
+            PendingFileWalkerMode::Progressive(walker) => walker.produced_manifest_work_ordinal(),
+            _ => 0,
+        }
+    }
+
+    pub(crate) fn manifest_exhausted(&self) -> bool {
+        match &self.mode {
+            PendingFileWalkerMode::Progressive(walker) => walker.manifest_exhausted(),
+            PendingFileWalkerMode::Manifest(_) => false,
+            #[cfg(test)]
+            PendingFileWalkerMode::Live(_) => false,
+        }
+    }
+
+    pub(crate) fn produced_manifest_boundary(&self) -> (Option<u64>, Option<u64>) {
+        match &self.mode {
+            PendingFileWalkerMode::Progressive(walker) => walker.produced_manifest_boundary(),
+            PendingFileWalkerMode::Manifest(walker) => {
+                let recovery = walker.state.recover_manifest_prefix();
+                match recovery {
+                    Ok(recovery) => (
+                        recovery.records.last().map(|record| record.record_seq.0),
+                        recovery
+                            .records
+                            .iter()
+                            .filter_map(|record| record.work_ordinal.map(|value| value.0))
+                            .next_back(),
+                    ),
+                    Err(_) => (None, None),
+                }
+            }
+            #[cfg(test)]
+            PendingFileWalkerMode::Live(_) => (None, None),
+        }
+    }
+
+    pub(crate) fn final_manifest_boundary(&self) -> Result<(Option<u64>, Option<u64>)> {
+        match &self.mode {
+            PendingFileWalkerMode::Progressive(walker) => walker.final_manifest_boundary(),
+            PendingFileWalkerMode::Manifest(walker) => {
+                let recovery = walker.state.recover_manifest_prefix()?;
+                Ok((
+                    recovery.records.last().map(|record| record.record_seq.0),
+                    recovery
+                        .records
+                        .iter()
+                        .filter_map(|record| record.work_ordinal.map(|value| value.0))
+                        .next_back(),
+                ))
+            }
+            #[cfg(test)]
+            PendingFileWalkerMode::Live(_) => Ok((None, None)),
         }
     }
 }
 
+#[cfg(test)]
 impl LivePendingFileWalker {
     fn next_pending_file(&mut self) -> Result<Option<InputFile>> {
         if self.exhausted {
@@ -5682,7 +6614,7 @@ impl LivePendingFileWalker {
 // он изолирует deterministic scan/resume-валидацию от чтения файлов и компрессии.
 pub fn scan_source(
     source: impl Into<PathBuf>,
-    resume_state: &ResumeState,
+    resume_state: &FileResumeState,
 ) -> Result<SourceScanReport> {
     let (pending, final_file_index, final_file_path) =
         collect_pending_files(source, resume_state, 1, 1)?;
@@ -5708,6 +6640,105 @@ pub fn scan_source(
         final_file_index,
         final_file_path,
     })
+}
+
+pub(crate) fn probe_source_workload(source: &SenderSource) -> Result<SenderSourceProbe> {
+    validate_source_directory(source.path())?;
+
+    let classifier = EntryClassifier::new();
+    let mut stack = vec![DirectoryFrame {
+        entries: read_sorted_entries(source.path(), &classifier, source.path())?,
+    }];
+    let mut probe = SenderSourceProbe {
+        workload_class: SenderWorkloadClass::Mixed,
+        sampled_directories: 1,
+        sampled_regular_files: 0,
+        sampled_regular_bytes: 0,
+        small_regular_files: 0,
+        large_regular_files: 0,
+        max_regular_file_bytes: 0,
+    };
+
+    while probe.sampled_regular_files < SOURCE_PROBE_MAX_REGULAR_FILES {
+        let Some(frame) = stack.last_mut() else {
+            break;
+        };
+        let Some(entry) = frame.entries.pop() else {
+            stack.pop();
+            continue;
+        };
+
+        match entry.kind {
+            DiscoveredEntryKind::Directory => {
+                if probe.sampled_directories >= SOURCE_PROBE_MAX_DIRECTORIES {
+                    continue;
+                }
+
+                let entries = read_sorted_entries(source.path(), &classifier, &entry.abs_path)?;
+                stack.push(DirectoryFrame { entries });
+                probe.sampled_directories += 1;
+            }
+            DiscoveredEntryKind::Regular => {
+                record_probe_regular_file(&mut probe, &entry.abs_path);
+            }
+            DiscoveredEntryKind::Symlink { .. } | DiscoveredEntryKind::Skipped(_) => {}
+        }
+    }
+
+    probe.workload_class = classify_probe_workload(&probe);
+    Ok(probe)
+}
+
+fn record_probe_regular_file(probe: &mut SenderSourceProbe, path: &Path) {
+    let metadata = match metadata_path(path) {
+        Ok(metadata) => metadata,
+        Err(error) => {
+            debug!(
+                "sender adaptive probe skipped unreadable metadata {}: {}",
+                path.display(),
+                error
+            );
+            return;
+        }
+    };
+    let file_bytes = metadata.len();
+
+    probe.sampled_regular_files += 1;
+    probe.sampled_regular_bytes = probe.sampled_regular_bytes.saturating_add(file_bytes);
+    probe.max_regular_file_bytes = probe.max_regular_file_bytes.max(file_bytes);
+    if file_bytes <= SOURCE_PROBE_SMALL_FILE_BYTES {
+        probe.small_regular_files += 1;
+    }
+    if file_bytes >= SOURCE_PROBE_LARGE_FILE_BYTES {
+        probe.large_regular_files += 1;
+    }
+}
+
+fn classify_probe_workload(probe: &SenderSourceProbe) -> SenderWorkloadClass {
+    if probe.sampled_regular_files == 0 {
+        return SenderWorkloadClass::TinyHeavy;
+    }
+
+    let average_file_bytes = probe.average_regular_file_bytes();
+    let sampled_regular_files = probe.sampled_regular_files;
+    if average_file_bytes >= SOURCE_PROBE_LARGE_AVG_FILE_BYTES
+        && (sampled_regular_files <= 16
+            || probe.large_regular_files.saturating_mul(2) >= sampled_regular_files)
+    {
+        return SenderWorkloadClass::LargeHeavy;
+    }
+    if probe.max_regular_file_bytes >= SOURCE_PROBE_LARGE_FILE_BYTES.saturating_mul(4)
+        && sampled_regular_files <= 8
+    {
+        return SenderWorkloadClass::LargeHeavy;
+    }
+    if average_file_bytes <= SOURCE_PROBE_SMALL_FILE_BYTES
+        && probe.small_regular_files.saturating_mul(3) >= sampled_regular_files.saturating_mul(2)
+    {
+        return SenderWorkloadClass::TinyHeavy;
+    }
+
+    SenderWorkloadClass::Mixed
 }
 
 fn warn_skipped_entry(path: &Path, reason: &SkippedEntryReason) {
@@ -5792,7 +6823,7 @@ fn classify_unsupported_entry_kind(_file_type: &fs::FileType) -> UnsupportedEntr
 
 fn validate_resume_state_against_files(
     files: &[InputFile],
-    resume_state: &ResumeState,
+    resume_state: &FileResumeState,
 ) -> Result<()> {
     if resume_state.last_committed_file_index == 0 {
         return Ok(());
@@ -5943,12 +6974,13 @@ mod tests {
     use std::time::{SystemTime, UNIX_EPOCH};
 
     use super::{
-        InputFile, PendingFileWalker, PipelineProfileCollector, collect_pending_files,
-        discover_files, normalize_relative_path, scan_source,
+        InputFile, PendingFileWalker, PipelineProfileCollector, SenderWorkloadClass,
+        collect_pending_files, discover_files, normalize_relative_path, probe_source_workload,
+        scan_source,
     };
     #[cfg(target_os = "linux")]
     use super::{LinuxMountTable, parse_linux_mountinfo_path};
-    use crate::network::protocol::ResumeState;
+    use crate::sender::FileResumeState;
 
     struct TestDir {
         path: PathBuf,
@@ -6008,8 +7040,8 @@ mod tests {
         InputFile::regular(index, path, rel_path.replace('\\', "/"))
     }
 
-    fn empty_resume_state() -> ResumeState {
-        ResumeState {
+    fn empty_resume_state() -> FileResumeState {
+        FileResumeState {
             last_committed_frame: 0,
             last_committed_file_index: 0,
             last_committed_file_path: String::new(),
@@ -6176,7 +7208,7 @@ mod tests {
         fs::write(temp.path().join("dir").join("one.txt"), b"111").unwrap();
         fs::write(temp.path().join("dir").join("two.txt"), b"222").unwrap();
 
-        let resume_state = ResumeState {
+        let resume_state = FileResumeState {
             last_committed_frame: 1,
             last_committed_file_index: 1,
             last_committed_file_path: "dir/one.txt".to_owned(),
@@ -6199,7 +7231,7 @@ mod tests {
         fs::create_dir_all(temp.path().join("dir")).unwrap();
         fs::write(temp.path().join("dir").join("one.txt"), b"111").unwrap();
         fs::write(temp.path().join("dir").join("two.txt"), b"222").unwrap();
-        let resume_state = ResumeState {
+        let resume_state = FileResumeState {
             last_committed_frame: 1,
             last_committed_file_index: 2,
             last_committed_file_path: "dir/two.txt".to_owned(),
@@ -6218,7 +7250,7 @@ mod tests {
     fn collect_pending_files_rejects_resume_when_committed_file_is_missing_from_current_tree() {
         let temp = TestDir::new();
 
-        let resume_state = ResumeState {
+        let resume_state = FileResumeState {
             last_committed_frame: 3,
             last_committed_file_index: 2,
             last_committed_file_path: "dir/two.txt".to_owned(),
@@ -6242,7 +7274,7 @@ mod tests {
         fs::write(temp.path().join("dir").join("replacement.txt"), b"111").unwrap();
         fs::write(temp.path().join("dir").join("two.txt"), b"222").unwrap();
 
-        let resume_state = ResumeState {
+        let resume_state = FileResumeState {
             last_committed_frame: 1,
             last_committed_file_index: 1,
             last_committed_file_path: "dir/one.txt".to_owned(),
@@ -6446,6 +7478,7 @@ mod tests {
                 event: super::manifest::ManifestSenderStateEvent::Rebuilt,
                 detail: "recovered from corrupted spool".into(),
             }],
+            fresh_log_bytes: None,
         };
 
         let issues = super::collect_source_discovery_issues(&state).unwrap();
@@ -6550,7 +7583,7 @@ mod tests {
         fs::create_dir_all(temp.path().join("dir")).unwrap();
         fs::write(temp.path().join("dir").join("one.txt"), b"111").unwrap();
         fs::write(temp.path().join("dir").join("two.txt"), b"222").unwrap();
-        let resume_state = ResumeState {
+        let resume_state = FileResumeState {
             last_committed_frame: 1,
             last_committed_file_index: 2,
             last_committed_file_path: "dir/two.txt".to_owned(),
@@ -6574,7 +7607,7 @@ mod tests {
         fs::write(temp.path().join("aaa.txt"), b"111").unwrap();
         fs::write(temp.path().join("zzz").join("later.txt"), b"222").unwrap();
         super::test_hooks::fail_next_read_dir(&temp.path().join("zzz"));
-        let resume_state = ResumeState {
+        let resume_state = FileResumeState {
             last_committed_frame: 1,
             last_committed_file_index: 1,
             last_committed_file_path: "wrong.txt".to_owned(),
@@ -6650,7 +7683,7 @@ mod tests {
         assert!(state_paths.state_dir.exists());
 
         super::test_hooks::fail_next_read_dir(&temp.path().join("zzz"));
-        let resume_state = ResumeState {
+        let resume_state = FileResumeState {
             last_committed_frame: 1,
             last_committed_file_index: 1,
             last_committed_file_path: "aaa.txt".to_owned(),
@@ -6675,6 +7708,38 @@ mod tests {
 
         walker.cleanup_after_finish().unwrap();
         assert!(!state_paths.state_dir.exists());
+    }
+
+    #[test]
+    fn ensure_sealed_manifest_state_keeps_small_fresh_spool_in_memory() {
+        let temp = TestDir::new();
+        fs::create_dir_all(temp.path().join("nested")).unwrap();
+        fs::write(temp.path().join("alpha.txt"), b"111").unwrap();
+        fs::write(temp.path().join("nested").join("beta.txt"), b"222").unwrap();
+        let dump_id = format!(
+            "manifest-fresh-cache-{}",
+            temp.path().file_name().unwrap().to_string_lossy()
+        );
+
+        let state = super::ensure_sealed_manifest_state(
+            &super::SenderSource::ordinary_path(temp.path().to_path_buf()),
+            &dump_id,
+            None,
+        )
+        .unwrap();
+        let cached_len = state
+            .fresh_log_bytes
+            .as_ref()
+            .map(|bytes| bytes.len())
+            .unwrap();
+        fs::remove_file(&state.paths.log_path).unwrap();
+
+        let recovery = state.recover_manifest_prefix().unwrap();
+
+        assert_eq!(recovery.truncate_to_len, cached_len as u64);
+        assert_eq!(recovery.records.len(), 4);
+
+        state.cleanup_after_finish().unwrap();
     }
 
     #[test]
@@ -6733,12 +7798,12 @@ mod tests {
         while build_walker.next_pending_file().unwrap().is_some() {}
         let build_metrics = build_profile.finish();
         assert!(build_metrics.manifest_build.bytes > 0);
-        assert!(build_metrics.manifest_spool_read.bytes > 0);
+        assert_eq!(build_metrics.manifest_spool_read.bytes, 0);
         assert_eq!(build_metrics.manifest_replay.bytes, 0);
         drop(build_walker);
 
         let replay_profile = PipelineProfileCollector::default();
-        let resume_state = ResumeState {
+        let resume_state = FileResumeState {
             last_committed_frame: 1,
             last_committed_file_index: 1,
             last_committed_file_path: "alpha.txt".to_owned(),
@@ -6761,5 +7826,74 @@ mod tests {
         assert!(replay_metrics.manifest_replay_records > 0);
 
         replay_walker.cleanup_after_finish().unwrap();
+    }
+
+    #[test]
+    fn probe_source_workload_classifies_tiny_heavy_tree() {
+        let temp = TestDir::new();
+        fs::create_dir_all(temp.path().join("nested")).unwrap();
+        for index in 0..24 {
+            fs::write(
+                temp.path()
+                    .join("nested")
+                    .join(format!("file-{index:02}.txt")),
+                b"tiny payload",
+            )
+            .unwrap();
+        }
+
+        let probe =
+            probe_source_workload(&super::SenderSource::ordinary_path(temp.path())).unwrap();
+
+        assert_eq!(probe.workload_class, SenderWorkloadClass::TinyHeavy);
+        assert!(probe.sampled_regular_files >= 24);
+        assert_eq!(probe.large_regular_files, 0);
+    }
+
+    #[test]
+    fn probe_source_workload_classifies_large_heavy_tree() {
+        let temp = TestDir::new();
+        fs::create_dir_all(temp.path().join("nested")).unwrap();
+        for index in 0..4 {
+            let path = temp
+                .path()
+                .join("nested")
+                .join(format!("blob-{index:02}.bin"));
+            let file = fs::File::create(path).unwrap();
+            file.set_len(64 * 1024 * 1024).unwrap();
+        }
+
+        let probe =
+            probe_source_workload(&super::SenderSource::ordinary_path(temp.path())).unwrap();
+
+        assert_eq!(probe.workload_class, SenderWorkloadClass::LargeHeavy);
+        assert_eq!(probe.sampled_regular_files, 4);
+        assert_eq!(probe.large_regular_files, 4);
+        assert_eq!(probe.max_regular_file_bytes, 64 * 1024 * 1024);
+    }
+
+    #[test]
+    fn probe_source_workload_classifies_mixed_tree() {
+        let temp = TestDir::new();
+        fs::create_dir_all(temp.path().join("deep")).unwrap();
+        for (name, size) in [
+            ("alpha.bin", 256 * 1024_u64),
+            ("beta.bin", 1024 * 1024_u64),
+            ("deep/gamma.bin", 4 * 1024 * 1024_u64),
+        ] {
+            let path = temp.path().join(name);
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).unwrap();
+            }
+            let file = fs::File::create(path).unwrap();
+            file.set_len(size).unwrap();
+        }
+
+        let probe =
+            probe_source_workload(&super::SenderSource::ordinary_path(temp.path())).unwrap();
+
+        assert_eq!(probe.workload_class, SenderWorkloadClass::Mixed);
+        assert_eq!(probe.large_regular_files, 0);
+        assert_eq!(probe.small_regular_files, 0);
     }
 }

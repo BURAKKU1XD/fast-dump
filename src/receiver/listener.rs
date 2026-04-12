@@ -65,15 +65,27 @@ pub fn serve_listener(
     data_dir: impl Into<PathBuf>,
     max_sessions: usize,
     token: Option<String>,
+    manifest_ack_records: u64,
+    manifest_ack_bytes: usize,
 ) -> Result<()> {
     let data_dir = data_dir.into();
     debug!(
-        "receiver listener entering serve loop: addr={} data_dir={} max_sessions={}",
+        "receiver listener entering serve loop: addr={} data_dir={} max_sessions={} manifest_ack_records={} manifest_ack_bytes={}",
         listener.local_addr(),
         data_dir.display(),
-        max_sessions
+        max_sessions,
+        manifest_ack_records,
+        manifest_ack_bytes
     );
-    let _ = serve_listener_until(listener, data_dir, max_sessions, token, None)?;
+    let _ = serve_listener_until(
+        listener,
+        data_dir,
+        max_sessions,
+        token,
+        manifest_ack_records,
+        manifest_ack_bytes,
+        None,
+    )?;
     Ok(())
 }
 
@@ -82,6 +94,8 @@ pub(crate) fn serve_listener_until(
     data_dir: PathBuf,
     max_sessions: usize,
     token: Option<String>,
+    manifest_ack_records: u64,
+    manifest_ack_bytes: usize,
     stop_after_terminated_sessions: Option<usize>,
 ) -> Result<usize> {
     if max_sessions == 0 {
@@ -89,10 +103,12 @@ pub(crate) fn serve_listener_until(
     }
 
     debug!(
-        "receiver listener configured: addr={} data_dir={} max_sessions={}",
+        "receiver listener configured: addr={} data_dir={} max_sessions={} manifest_ack_records={} manifest_ack_bytes={}",
         listener.local_addr(),
         data_dir.display(),
-        max_sessions
+        max_sessions,
+        manifest_ack_records,
+        manifest_ack_bytes
     );
     listener.set_nonblocking(true)?;
     let active_sessions = Arc::new(AtomicUsize::new(0));
@@ -134,14 +150,21 @@ pub(crate) fn serve_listener_until(
                 let session_active = active_sessions.clone();
                 let session_terminated_tx = terminated_tx.clone();
                 let session_token = token.clone();
+                let session_manifest_ack_records = manifest_ack_records;
+                let session_manifest_ack_bytes = manifest_ack_bytes;
                 thread::spawn(move || {
                     let _slot_guard = SessionSlotGuard {
                         active_sessions: session_active,
                         terminated_tx: session_terminated_tx,
                     };
-                    if let Err(error) =
-                        run_listener_session(stream, peer_addr, session_data_dir, session_token)
-                    {
+                    if let Err(error) = run_listener_session(
+                        stream,
+                        peer_addr,
+                        session_data_dir,
+                        session_token,
+                        session_manifest_ack_records,
+                        session_manifest_ack_bytes,
+                    ) {
                         eprintln!("receiver session {} failed: {error:#}", peer_addr);
                     }
                 });
@@ -171,6 +194,8 @@ fn run_listener_session(
     peer_addr: std::net::SocketAddr,
     data_dir: PathBuf,
     token: Option<String>,
+    manifest_ack_records: u64,
+    manifest_ack_bytes: usize,
 ) -> Result<()> {
     debug!("receiver listener session establishing transport for peer={peer_addr}");
     let mut session = transport::establish_stream_session(
@@ -184,6 +209,8 @@ fn run_listener_session(
         &mut session.stream,
         data_dir,
         session.peer_dump_id.as_deref(),
+        manifest_ack_records,
+        manifest_ack_bytes,
     )?;
     debug!(
         "receiver listener session completed: peer={} dump_id={} final_archive={}",
@@ -193,16 +220,16 @@ fn run_listener_session(
     );
 
     println!(
-        "{} connected to {} at {}; dump_id={}; resume frame={} file={} archive_len={}; final frame={} file={} archive={}",
+        "{} connected to {} at {}; dump_id={}; resume frame={} work_ordinal={:?} archive_len={}; final frame={} work_ordinal={:?} archive={}",
         session.local_role,
         session.peer_role,
         session.peer_addr,
         report.state.paths.dump_id(),
-        report.resume_state.last_committed_frame,
-        report.resume_state.last_committed_file_index,
-        report.resume_state.archive_len,
+        report.resume_state.archive.last_committed_frame,
+        report.resume_state.archive.last_committed_work_ordinal,
+        report.resume_state.archive.archive_len,
         report.finish.final_frame_no,
-        report.finish.final_file_path,
+        report.finish.final_work_ordinal,
         report.final_archive_path.display()
     );
 
@@ -220,13 +247,24 @@ mod tests {
 
     #[test]
     fn serve_listener_rejects_new_session_when_max_sessions_is_reached() {
+        let _guard = FsFailureGuard::new();
         let listener = BoundListener::bind("127.0.0.1:0".parse().unwrap()).unwrap();
         let addr = listener.local_addr();
         let receiver_dir = TestDir::new();
         let receiver_path = receiver_dir.path().to_path_buf();
 
         let server = thread::spawn(move || {
-            serve_listener_until(listener, receiver_path, 1, None, Some(1)).unwrap()
+            let options = sample_send_options();
+            serve_listener_until(
+                listener,
+                receiver_path,
+                1,
+                None,
+                options.manifest_ack_records,
+                options.manifest_ack_bytes,
+                Some(1),
+            )
+            .unwrap()
         });
 
         let blocker = connect_once(Role::Sender, addr, Some("dump-blocker"), None).unwrap();
@@ -245,6 +283,7 @@ mod tests {
 
     #[test]
     fn serve_listener_reuses_freed_session_slot_for_next_sender() {
+        let _guard = FsFailureGuard::new();
         let listener = BoundListener::bind("127.0.0.1:0".parse().unwrap()).unwrap();
         let addr = listener.local_addr();
         let receiver_dir = TestDir::new();
@@ -257,7 +296,17 @@ mod tests {
         fs::write(source_b.path().join("nested").join("beta.txt"), b"beta").unwrap();
 
         let server = thread::spawn(move || {
-            serve_listener_until(listener, receiver_path, 1, None, Some(2)).unwrap()
+            let options = sample_send_options();
+            serve_listener_until(
+                listener,
+                receiver_path,
+                1,
+                None,
+                options.manifest_ack_records,
+                options.manifest_ack_bytes,
+                Some(2),
+            )
+            .unwrap()
         });
 
         let mut first_sender = connect_once(Role::Sender, addr, Some("dump-10"), None).unwrap();
@@ -293,11 +342,21 @@ mod tests {
 
     #[test]
     fn serve_listener_rejects_zero_max_sessions() {
+        let _guard = FsFailureGuard::new();
         let listener = BoundListener::bind("127.0.0.1:0".parse().unwrap()).unwrap();
         let temp = TestDir::new();
+        let options = sample_send_options();
 
-        let error = serve_listener_until(listener, temp.path().to_path_buf(), 0, None, Some(0))
-            .unwrap_err();
+        let error = serve_listener_until(
+            listener,
+            temp.path().to_path_buf(),
+            0,
+            None,
+            options.manifest_ack_records,
+            options.manifest_ack_bytes,
+            Some(0),
+        )
+        .unwrap_err();
 
         assert!(
             error

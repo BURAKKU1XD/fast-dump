@@ -96,6 +96,20 @@ fn sample_row(repeat_index: u32, total_duration_ms: f64, sent_frames: u64) -> Ra
         manifest_replay_records: 20 + repeat_index as u64,
         receiver_manifest_bytes: 99_000,
         receiver_issue_tail_bytes: 123,
+        receiver_total_duration_ms: 111.0 + repeat_index as f64,
+        receiver_manifest_stage_duration_ms: 12.0 + repeat_index as f64,
+        receiver_manifest_commit_duration_ms: 13.0 + repeat_index as f64,
+        receiver_manifest_ack_flush_duration_ms: 14.0 + repeat_index as f64,
+        receiver_frame_duration_ms: 15.0 + repeat_index as f64,
+        receiver_frame_write_duration_ms: 16.0 + repeat_index as f64,
+        receiver_frame_sync_duration_ms: 17.0 + repeat_index as f64,
+        receiver_frame_journal_persist_duration_ms: 18.0 + repeat_index as f64,
+        receiver_frame_ack_flush_duration_ms: 19.0 + repeat_index as f64,
+        receiver_issue_tail_duration_ms: 20.0 + repeat_index as f64,
+        receiver_finish_duration_ms: 21.0 + repeat_index as f64,
+        receiver_archive_finalize_duration_ms: 22.0 + repeat_index as f64,
+        receiver_issue_finalize_duration_ms: 23.0 + repeat_index as f64,
+        receiver_finish_ack_flush_duration_ms: 24.0 + repeat_index as f64,
         disk_budget_wait_ms: 81.0 + repeat_index as f64,
         time_to_first_frame_ms: 91.0 + repeat_index as f64,
         overlap_efficiency_pct: 42.0 + repeat_index as f64,
@@ -161,6 +175,20 @@ fn raw_results_roundtrip_preserves_duration_and_wire_metrics() {
     assert_eq!(parsed.manifest_replay_records, 21);
     assert_eq!(parsed.receiver_manifest_bytes, 99_000);
     assert_eq!(parsed.receiver_issue_tail_bytes, 123);
+    assert_eq!(parsed.receiver_total_duration_ms, 112.0);
+    assert_eq!(parsed.receiver_manifest_stage_duration_ms, 13.0);
+    assert_eq!(parsed.receiver_manifest_commit_duration_ms, 14.0);
+    assert_eq!(parsed.receiver_manifest_ack_flush_duration_ms, 15.0);
+    assert_eq!(parsed.receiver_frame_duration_ms, 16.0);
+    assert_eq!(parsed.receiver_frame_write_duration_ms, 17.0);
+    assert_eq!(parsed.receiver_frame_sync_duration_ms, 18.0);
+    assert_eq!(parsed.receiver_frame_journal_persist_duration_ms, 19.0);
+    assert_eq!(parsed.receiver_frame_ack_flush_duration_ms, 20.0);
+    assert_eq!(parsed.receiver_issue_tail_duration_ms, 21.0);
+    assert_eq!(parsed.receiver_finish_duration_ms, 22.0);
+    assert_eq!(parsed.receiver_archive_finalize_duration_ms, 23.0);
+    assert_eq!(parsed.receiver_issue_finalize_duration_ms, 24.0);
+    assert_eq!(parsed.receiver_finish_ack_flush_duration_ms, 25.0);
     assert_eq!(parsed.disk_budget_wait_ms, 82.0);
     assert_eq!(parsed.time_to_first_frame_ms, 92.0);
     assert_eq!(parsed.overlap_efficiency_pct, 43.0);
@@ -206,6 +234,20 @@ fn aggregate_summary_rows_averages_new_schema_fields() {
     assert_eq!(summary.manifest_replay_records, 21);
     assert_eq!(summary.receiver_manifest_bytes, 99_000);
     assert_eq!(summary.receiver_issue_tail_bytes, 123);
+    assert_eq!(summary.receiver_total_duration_ms, 112.5);
+    assert_eq!(summary.receiver_manifest_stage_duration_ms, 13.5);
+    assert_eq!(summary.receiver_manifest_commit_duration_ms, 14.5);
+    assert_eq!(summary.receiver_manifest_ack_flush_duration_ms, 15.5);
+    assert_eq!(summary.receiver_frame_duration_ms, 16.5);
+    assert_eq!(summary.receiver_frame_write_duration_ms, 17.5);
+    assert_eq!(summary.receiver_frame_sync_duration_ms, 18.5);
+    assert_eq!(summary.receiver_frame_journal_persist_duration_ms, 19.5);
+    assert_eq!(summary.receiver_frame_ack_flush_duration_ms, 20.5);
+    assert_eq!(summary.receiver_issue_tail_duration_ms, 21.5);
+    assert_eq!(summary.receiver_finish_duration_ms, 22.5);
+    assert_eq!(summary.receiver_archive_finalize_duration_ms, 23.5);
+    assert_eq!(summary.receiver_issue_finalize_duration_ms, 24.5);
+    assert_eq!(summary.receiver_finish_ack_flush_duration_ms, 25.5);
     assert_eq!(summary.disk_budget_wait_ms, 82.5);
     assert_eq!(summary.time_to_first_frame_ms, 92.5);
     assert_eq!(summary.overlap_efficiency_pct, 43.5);

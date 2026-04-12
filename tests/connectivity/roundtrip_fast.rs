@@ -251,6 +251,6 @@ fn sender_and_receiver_binaries_persist_issue_journal_for_terminal_skip() {
     let issue_journal = fs::read_to_string(&issue_journal_path).unwrap();
 
     assert!(issue_journal_path.exists());
-    assert!(issue_journal.contains("file_index\tattempts\treason\tfile_path\tlast_error"));
-    assert!(issue_journal.contains("open_failed\tlocked.bin"));
+    assert!(issue_journal.contains("scope\trecord_seq\twork_ordinal\tattempts\tcode\tpath"));
+    assert!(issue_journal.contains("\topen_failed\tlocked.bin\t"));
 }

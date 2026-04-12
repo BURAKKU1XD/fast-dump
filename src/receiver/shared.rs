@@ -1,10 +1,10 @@
 use std::fmt;
-use std::fs::{self, OpenOptions};
+use std::fs::{self, File, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use anyhow::{Context, Result, anyhow};
+use anyhow::{Context, Result, anyhow, bail};
 use log::debug;
 
 use crate::network::protocol::{self, Message};
@@ -126,6 +126,161 @@ impl std::error::Error for ReceiverTempStorageError {
     }
 }
 
+#[derive(Debug)]
+pub(crate) struct ReceiverTempFileAppender {
+    path: PathBuf,
+    kind: ReceiverTempFileKind,
+    file: File,
+    current_len: u64,
+}
+
+impl ReceiverTempFileAppender {
+    pub(crate) fn open(path: &Path, kind: ReceiverTempFileKind) -> Result<Self> {
+        let current_len = receiver_temp_file_len(path)?;
+        let file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+            .map_err(|error| receiver_temp_storage_io_error(kind, path, "open", error))?;
+        Ok(Self {
+            path: path.to_path_buf(),
+            kind,
+            file,
+            current_len,
+        })
+    }
+
+    pub(crate) fn current_len(&self) -> u64 {
+        self.current_len
+    }
+
+    pub(crate) fn append(&mut self, payload: &[u8]) -> Result<u64> {
+        if payload.is_empty() {
+            return Ok(self.current_len);
+        }
+
+        let next_len = self
+            .current_len
+            .checked_add(payload.len() as u64)
+            .context("receiver temp file length overflow")?;
+        let quota_bytes = receiver_temp_file_quota_bytes(self.kind);
+        if next_len > quota_bytes {
+            return Err(anyhow!(ReceiverTempStorageError::QuotaExceeded {
+                kind: self.kind,
+                path: self.path.clone(),
+                limit_bytes: quota_bytes,
+                attempted_bytes: next_len,
+            }));
+        }
+
+        test_hooks::before_append(&self.path, self.kind, self.current_len, payload.len())?;
+        if let Err(error) = self
+            .file
+            .write_all(payload)
+            .map_err(|error| receiver_temp_storage_io_error(self.kind, &self.path, "append", error))
+        {
+            return Err(rollback_after_append_error(
+                &self.path,
+                self.kind,
+                self.current_len,
+                error,
+            ));
+        }
+        self.current_len = next_len;
+        Ok(self.current_len)
+    }
+
+    pub(crate) fn sync_after_append(&mut self, previous_len: u64) -> Result<()> {
+        if previous_len > self.current_len {
+            bail!(
+                "receiver temp sync base {} exceeds current length {}",
+                previous_len,
+                self.current_len
+            );
+        }
+        let appended_len = usize::try_from(self.current_len.saturating_sub(previous_len))
+            .context("receiver temp sync delta does not fit into usize")?;
+        if let Err(error) =
+            test_hooks::after_append_before_sync(&self.path, self.kind, previous_len, appended_len)
+        {
+            return Err(receiver_temp_storage_io_error(
+                self.kind, &self.path, "sync", error,
+            ));
+        }
+        self.file
+            .sync_all()
+            .map_err(|error| receiver_temp_storage_io_error(self.kind, &self.path, "sync", error))
+    }
+
+    pub(crate) fn rollback_to(&mut self, target_len: u64) -> Result<()> {
+        if target_len > self.current_len {
+            bail!(
+                "receiver temp rollback target {} exceeds current length {}",
+                target_len,
+                self.current_len
+            );
+        }
+        if self.current_len == target_len {
+            return Ok(());
+        }
+
+        let rollback_file = OpenOptions::new()
+            .write(true)
+            .open(&self.path)
+            .with_context(|| {
+                format!(
+                    "failed to reopen {} {} for rollback to {} bytes",
+                    self.kind.display_name(),
+                    self.path.display(),
+                    target_len
+                )
+            })?;
+        rollback_file.set_len(target_len).with_context(|| {
+            format!(
+                "failed to roll back {} {} to {} bytes",
+                self.kind.display_name(),
+                self.path.display(),
+                target_len
+            )
+        })?;
+        rollback_file.sync_all().with_context(|| {
+            format!(
+                "failed to sync rolled back {} {}",
+                self.kind.display_name(),
+                self.path.display()
+            )
+        })?;
+        self.current_len = target_len;
+        Ok(())
+    }
+}
+
+fn receiver_temp_file_len(path: &Path) -> Result<u64> {
+    match fs::metadata(path) {
+        Ok(metadata) => Ok(metadata.len()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(0),
+        Err(error) => Err(anyhow!(error))
+            .with_context(|| format!("failed to inspect receiver temp file {}", path.display())),
+    }
+}
+
+pub(crate) fn rollback_appender_to(
+    appender: &mut ReceiverTempFileAppender,
+    target_len: u64,
+    error: anyhow::Error,
+) -> anyhow::Error {
+    match appender.rollback_to(target_len) {
+        Ok(()) => error,
+        Err(rollback_error) => error.context(format!(
+            "failed to roll back {} {} to {} bytes after error: {}",
+            appender.kind.display_name(),
+            appender.path.display(),
+            target_len,
+            rollback_error
+        )),
+    }
+}
+
 pub(crate) fn rename_path(from: &Path, to: &Path) -> std::io::Result<()> {
     test_hooks::before_rename(from, to)?;
     fs::rename(from, to)
@@ -180,55 +335,12 @@ pub(crate) fn append_temp_file_payload(
     payload: &[u8],
     kind: ReceiverTempFileKind,
 ) -> Result<u64> {
-    let current_len = match fs::metadata(path) {
-        Ok(metadata) => metadata.len(),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => 0,
-        Err(error) => {
-            return Err(anyhow!(error))
-                .with_context(|| format!("failed to inspect {}", path.display()));
-        }
-    };
-    let next_len = current_len
-        .checked_add(payload.len() as u64)
-        .context("receiver temp file length overflow")?;
-    let quota_bytes = receiver_temp_file_quota_bytes(kind);
-    if next_len > quota_bytes {
-        return Err(anyhow!(ReceiverTempStorageError::QuotaExceeded {
-            kind,
-            path: path.to_path_buf(),
-            limit_bytes: quota_bytes,
-            attempted_bytes: next_len,
-        }));
+    let mut appender = ReceiverTempFileAppender::open(path, kind)?;
+    let previous_len = appender.current_len();
+    let next_len = appender.append(payload)?;
+    if let Err(error) = appender.sync_after_append(previous_len) {
+        return Err(rollback_appender_to(&mut appender, previous_len, error));
     }
-
-    test_hooks::before_append(path, kind, current_len, payload.len())?;
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-        .map_err(|error| receiver_temp_storage_io_error(kind, path, "open", error))?;
-    if let Err(error) = file
-        .write_all(payload)
-        .map_err(|error| receiver_temp_storage_io_error(kind, path, "append", error))
-    {
-        return Err(rollback_after_append_error(path, kind, current_len, error));
-    }
-    if let Err(error) = test_hooks::after_append_before_sync(path, kind, current_len, payload.len())
-    {
-        return Err(rollback_after_append_error(
-            path,
-            kind,
-            current_len,
-            receiver_temp_storage_io_error(kind, path, "sync", error),
-        ));
-    }
-    if let Err(error) = file
-        .sync_all()
-        .map_err(|error| receiver_temp_storage_io_error(kind, path, "sync", error))
-    {
-        return Err(rollback_after_append_error(path, kind, current_len, error));
-    }
-
     Ok(next_len)
 }
 
@@ -392,6 +504,7 @@ pub(crate) mod test_hooks {
         lock_unpoisoned(failures()).insert(rename_key(from, to), 1);
     }
 
+    #[allow(dead_code)]
     pub(crate) fn fail_next_remove_file(path: &Path) {
         lock_unpoisoned(failures()).insert(remove_key(path), 1);
     }

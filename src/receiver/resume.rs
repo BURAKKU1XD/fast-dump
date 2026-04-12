@@ -4,13 +4,11 @@ use std::path::PathBuf;
 use anyhow::{Context, Result, bail};
 use log::debug;
 
-use crate::network::protocol::{self, Message, V3Message};
+use crate::network::protocol::{self, Message};
 
 use super::ReceiverState;
-use super::shared::send_protocol_error;
 
-// После handshake receiver ждёт от sender явный ResumeQuery.
-// Здесь мы открываем локальное состояние и сразу отвечаем ResumeState.
+#[cfg_attr(not(test), allow(dead_code))]
 pub fn respond_resume_query<T>(
     stream: &mut T,
     data_dir: impl Into<PathBuf>,
@@ -19,17 +17,6 @@ where
     T: Read + Write,
 {
     respond_resume_query_checked(stream, data_dir, None)
-}
-
-#[cfg_attr(not(test), allow(dead_code))]
-pub fn respond_resume_query_v3<T>(
-    stream: &mut T,
-    data_dir: impl Into<PathBuf>,
-) -> Result<ReceiverState>
-where
-    T: Read + Write,
-{
-    respond_resume_query_v3_checked(stream, data_dir, None)
 }
 
 // В normal runtime receiver уже знает dump_id из Hello и может
@@ -45,85 +32,12 @@ where
     let query = match protocol::read_message(stream)? {
         Message::ResumeQuery(query) => query,
         Message::Error(error) => {
-            bail!("peer aborted before resume query: {}", error.message);
-        }
-        unexpected => {
-            protocol::write_message(
-                stream,
-                &Message::Error(protocol::ErrorMessage {
-                    message: "expected resume query".to_owned(),
-                }),
-            )?;
-            stream
-                .flush()
-                .context("failed to flush error response for invalid resume query")?;
-            bail!(
-                "unexpected message before resume query: {:?}",
-                unexpected.kind()
-            );
-        }
-    };
-
-    if let Err(error) = validate_resume_query_dump_id(&query.dump_id, expected_dump_id) {
-        let message = error.to_string();
-        send_protocol_error(stream, &message)?;
-        return Err(error);
-    }
-    debug!(
-        "receiver resume query accepted: dump_id={} expected_dump_id={:?}",
-        query.dump_id, expected_dump_id
-    );
-
-    let state = match ReceiverState::open(data_dir, query.dump_id) {
-        Ok(state) => state,
-        Err(error) => {
-            let message = error.to_string();
-            protocol::write_message(
-                stream,
-                &Message::Error(protocol::ErrorMessage {
-                    message: message.clone(),
-                }),
-            )?;
-            stream
-                .flush()
-                .context("failed to flush receiver error for resume query")?;
-            return Err(error.context("failed to open receiver state for resume query"));
-        }
-    };
-
-    protocol::write_message(stream, &Message::ResumeState(state.resume_state()))?;
-    stream
-        .flush()
-        .context("failed to flush resume state to peer")?;
-    debug!(
-        "receiver resume state sent: dump_id={} frame={} file_index={} archive_len={}",
-        state.paths.dump_id(),
-        state.journal.last_committed_frame,
-        state.journal.last_committed_file_index,
-        state.journal.archive_len
-    );
-
-    Ok(state)
-}
-
-#[cfg_attr(not(test), allow(dead_code))]
-pub fn respond_resume_query_v3_checked<T>(
-    stream: &mut T,
-    data_dir: impl Into<PathBuf>,
-    expected_dump_id: Option<&str>,
-) -> Result<ReceiverState>
-where
-    T: Read + Write,
-{
-    let query = match protocol::read_message_v3(stream)? {
-        V3Message::ResumeQuery(query) => query,
-        V3Message::Error(error) => {
             bail!("peer aborted before v3 resume query: {}", error.message);
         }
         unexpected => {
-            protocol::write_message_v3(
+            protocol::write_message(
                 stream,
-                &V3Message::Error(protocol::ErrorMessage {
+                &Message::Error(protocol::ErrorMessage {
                     message: "expected v3 resume query".to_owned(),
                 }),
             )?;
@@ -139,10 +53,7 @@ where
 
     if let Err(error) = validate_resume_query_dump_id(&query.dump_id, expected_dump_id) {
         let message = error.to_string();
-        protocol::write_message_v3(
-            stream,
-            &V3Message::Error(protocol::ErrorMessage { message }),
-        )?;
+        protocol::write_message(stream, &Message::Error(protocol::ErrorMessage { message }))?;
         stream
             .flush()
             .context("failed to flush error response for invalid v3 resume query")?;
@@ -157,9 +68,9 @@ where
         Ok(state) => state,
         Err(error) => {
             let message = error.to_string();
-            protocol::write_message_v3(
+            protocol::write_message(
                 stream,
-                &V3Message::Error(protocol::ErrorMessage {
+                &Message::Error(protocol::ErrorMessage {
                     message: message.clone(),
                 }),
             )?;
@@ -170,7 +81,7 @@ where
         }
     };
 
-    protocol::write_message_v3(stream, &V3Message::ResumeState(state.resume_state_v3()))?;
+    protocol::write_message(stream, &Message::ResumeState(state.resume_state()))?;
     stream
         .flush()
         .context("failed to flush v3 resume state to peer")?;
@@ -209,26 +120,24 @@ mod tests {
     use std::{io::Cursor, path::PathBuf};
 
     use super::*;
-    use crate::network::protocol::{
-        ErrorMessage, Message, ResumeQuery, V3Message, read_message_v3,
-    };
-    use crate::receiver::test_support::*;
+    use crate::network::protocol::{ErrorMessage, Message, ResumeQuery, read_message};
+    use crate::receiver::test_support::TestDir;
 
-    fn encode_message_v3(message: &V3Message) -> Vec<u8> {
+    fn encode_message(message: &Message) -> Vec<u8> {
         let mut bytes = Vec::new();
-        protocol::write_message_v3(&mut bytes, message).unwrap();
+        protocol::write_message(&mut bytes, message).unwrap();
         bytes
     }
 
-    fn decode_reply_v3(bytes: &[u8], request_len: usize) -> V3Message {
-        read_message_v3(&mut Cursor::new(bytes[request_len..].to_vec())).unwrap()
+    fn decode_reply(bytes: &[u8], request_len: usize) -> Message {
+        read_message(&mut Cursor::new(bytes[request_len..].to_vec())).unwrap()
     }
 
     #[test]
     fn respond_resume_query_replies_with_resume_state_on_success() {
         let temp = TestDir::new();
         let request = encode_message(&Message::ResumeQuery(ResumeQuery {
-            dump_id: "dump-01".to_owned(),
+            dump_id: "dump-v3".to_owned(),
         }));
         let request_len = request.len();
         let mut stream = Cursor::new(request);
@@ -236,7 +145,7 @@ mod tests {
         let state = respond_resume_query(&mut stream, temp.path().to_path_buf()).unwrap();
         let bytes = stream.into_inner();
 
-        assert_eq!(state.paths.dump_id(), "dump-01");
+        assert_eq!(state.paths.dump_id(), "dump-v3");
         assert_eq!(
             decode_reply(&bytes, request_len),
             Message::ResumeState(state.resume_state())
@@ -282,12 +191,12 @@ mod tests {
         assert!(
             error
                 .to_string()
-                .contains("unexpected message before resume query")
+                .contains("unexpected v3 message before resume query")
         );
         assert_eq!(
             decode_reply(&bytes, request_len),
             Message::Error(ErrorMessage {
-                message: "expected resume query".to_owned(),
+                message: "expected v3 resume query".to_owned(),
             })
         );
     }
@@ -306,7 +215,7 @@ mod tests {
         assert!(
             error
                 .to_string()
-                .contains("peer aborted before resume query: cancelled")
+                .contains("peer aborted before v3 resume query: cancelled")
         );
         assert_eq!(bytes.len(), request_len);
     }
@@ -326,61 +235,12 @@ mod tests {
         assert!(
             error
                 .to_string()
-                .contains("failed to open receiver state for resume query")
+                .contains("failed to open receiver state for v3 resume query")
         );
         assert_eq!(
             decode_reply(&bytes, request_len),
             Message::Error(ErrorMessage {
                 message: "dump_id must be a single safe path component".to_owned(),
-            })
-        );
-    }
-
-    #[test]
-    fn respond_resume_query_v3_replies_with_resume_state_on_success() {
-        let temp = TestDir::new();
-        let request = encode_message_v3(&V3Message::ResumeQuery(ResumeQuery {
-            dump_id: "dump-v3".to_owned(),
-        }));
-        let request_len = request.len();
-        let mut stream = Cursor::new(request);
-
-        let state = respond_resume_query_v3(&mut stream, temp.path().to_path_buf()).unwrap();
-        let bytes = stream.into_inner();
-
-        assert_eq!(state.paths.dump_id(), "dump-v3");
-        assert_eq!(
-            decode_reply_v3(&bytes, request_len),
-            V3Message::ResumeState(state.resume_state_v3())
-        );
-    }
-
-    #[test]
-    fn respond_resume_query_v3_rejects_dump_id_mismatch_with_hello_and_emits_error() {
-        let temp = TestDir::new();
-        let request = encode_message_v3(&V3Message::ResumeQuery(ResumeQuery {
-            dump_id: "dump-02".to_owned(),
-        }));
-        let request_len = request.len();
-        let mut stream = Cursor::new(request);
-
-        let error = respond_resume_query_v3_checked(
-            &mut stream,
-            temp.path().to_path_buf(),
-            Some("dump-01"),
-        )
-        .unwrap_err();
-        let bytes = stream.into_inner();
-
-        assert!(error.to_string().contains(
-            "resume dump_id mismatch: hello announced dump-01 but resume query requested dump-02"
-        ));
-        assert_eq!(
-            decode_reply_v3(&bytes, request_len),
-            V3Message::Error(ErrorMessage {
-                message:
-                    "resume dump_id mismatch: hello announced dump-01 but resume query requested dump-02"
-                        .to_owned(),
             })
         );
     }

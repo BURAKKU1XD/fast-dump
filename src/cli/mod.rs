@@ -13,9 +13,9 @@ const DEFAULT_MIN_READERS: usize = 2;
 const DEFAULT_MAX_READERS: usize = 8;
 const DEFAULT_READ_BUFFER_KB: usize = 1024;
 const DEFAULT_FRAME_TARGET_MB: u64 = 64;
-const DEFAULT_MANIFEST_CHUNK_KB: usize = 256;
-const DEFAULT_MANIFEST_ACK_RECORDS: u64 = 4096;
-const DEFAULT_MANIFEST_ACK_KB: usize = 1024;
+const DEFAULT_MANIFEST_CHUNK_KB: usize = 512;
+const DEFAULT_MANIFEST_ACK_RECORDS: u64 = 4_096;
+const DEFAULT_MANIFEST_ACK_KB: usize = 8192;
 const DEFAULT_MAX_SESSIONS: usize = 1;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,6 +32,12 @@ pub struct SenderRuntimeOptions {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ReceiverRuntimeOptions {
+    pub manifest_ack_records: u64,
+    pub manifest_ack_bytes: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ThreadCountArg {
     Auto,
     Fixed(u32),
@@ -123,18 +129,17 @@ pub struct SenderArgs {
     #[arg(
         short = 't',
         long,
-        default_value = "auto",
         value_parser = parse_thread_count_arg
     )]
-    pub threads: ThreadCountArg,
+    pub threads: Option<ThreadCountArg>,
     #[arg(long, default_value_t = DEFAULT_MIN_READERS)]
     pub min_readers: usize,
     #[arg(long, default_value_t = DEFAULT_MAX_READERS)]
     pub max_readers: usize,
-    #[arg(long, default_value_t = DEFAULT_READ_BUFFER_KB)]
-    pub read_buffer_kb: usize,
-    #[arg(long, default_value_t = DEFAULT_FRAME_TARGET_MB)]
-    pub frame_target_mb: u64,
+    #[arg(long)]
+    pub read_buffer_kb: Option<usize>,
+    #[arg(long)]
+    pub frame_target_mb: Option<u64>,
     #[arg(long, default_value_t = DEFAULT_MANIFEST_CHUNK_KB)]
     pub manifest_chunk_kb: usize,
     #[arg(long, default_value_t = DEFAULT_MANIFEST_ACK_RECORDS)]
@@ -156,6 +161,10 @@ pub struct ReceiverArgs {
     pub token: Option<String>,
     #[arg(long, default_value_t = DEFAULT_MAX_SESSIONS)]
     pub max_sessions: usize,
+    #[arg(long, default_value_t = DEFAULT_MANIFEST_ACK_RECORDS)]
+    pub manifest_ack_records: u64,
+    #[arg(long, default_value_t = DEFAULT_MANIFEST_ACK_KB)]
+    pub manifest_ack_kb: usize,
 }
 
 // Невалидные комбинации `--listen/--connect` лучше отсекать ещё на этапе
@@ -188,6 +197,17 @@ impl TransportArgs {
 }
 
 impl SenderArgs {
+    fn resolved_threads_arg(&self) -> ThreadCountArg {
+        self.threads.unwrap_or(ThreadCountArg::Auto)
+    }
+
+    fn resolved_read_buffer_kb(&self) -> usize {
+        self.read_buffer_kb.unwrap_or(DEFAULT_READ_BUFFER_KB)
+    }
+
+    fn resolved_frame_target_mb(&self) -> u64 {
+        self.frame_target_mb.unwrap_or(DEFAULT_FRAME_TARGET_MB)
+    }
     // Пока dump_id нужен уже на этапе bootstrap-resume, а отдельного генератора
     // идентификаторов ещё нет. Поэтому безопасный fallback берём из имени source.
     pub fn resolve_dump_id(&self) -> Result<String> {
@@ -208,7 +228,9 @@ impl SenderArgs {
     // Здесь CLI-значения приводятся к runtime-настройкам sender и сразу валидируются,
     // чтобы остальной код не таскал по стеку сырой clap-состояние.
     pub fn runtime_options(&self) -> Result<SenderRuntimeOptions> {
-        let threads = self.threads.resolve();
+        let threads = self.resolved_threads_arg().resolve();
+        let read_buffer_kb = self.resolved_read_buffer_kb();
+        let frame_target_mb = self.resolved_frame_target_mb();
         if threads == 0 {
             bail!("threads must be at least 1");
         }
@@ -225,10 +247,10 @@ impl SenderArgs {
                 self.max_readers
             );
         }
-        if self.read_buffer_kb == 0 {
+        if read_buffer_kb == 0 {
             bail!("read_buffer_kb must be at least 1");
         }
-        if self.frame_target_mb == 0 {
+        if frame_target_mb == 0 {
             bail!("frame_target_mb must be at least 1");
         }
         if self.manifest_chunk_kb == 0 {
@@ -241,12 +263,10 @@ impl SenderArgs {
             bail!("manifest_ack_kb must be at least 1");
         }
 
-        let read_buffer_bytes = self
-            .read_buffer_kb
+        let read_buffer_bytes = read_buffer_kb
             .checked_mul(1024)
             .context("read_buffer_kb is too large")?;
-        let frame_target_bytes = self
-            .frame_target_mb
+        let frame_target_bytes = frame_target_mb
             .checked_mul(1024 * 1024)
             .context("frame_target_mb is too large")?;
         let manifest_chunk_bytes = self
@@ -257,11 +277,11 @@ impl SenderArgs {
             .manifest_ack_kb
             .checked_mul(1024)
             .context("manifest_ack_kb is too large")?;
-        if manifest_chunk_bytes > protocol::MAX_MANIFEST_CHUNK_BYTES {
+        if manifest_chunk_bytes > protocol::MAX_MANIFEST_CHUNK_PAYLOAD_BYTES {
             bail!(
                 "manifest_chunk_kb exceeds protocol cap: {} > {} KiB",
                 self.manifest_chunk_kb,
-                protocol::MAX_MANIFEST_CHUNK_BYTES / 1024
+                protocol::MAX_MANIFEST_CHUNK_PAYLOAD_BYTES / 1024
             );
         }
         if self.manifest_ack_records > protocol::MAX_UNACKED_MANIFEST_RECORDS {
@@ -313,6 +333,41 @@ impl ReceiverArgs {
 
         Ok(self.max_sessions)
     }
+
+    // Для active v3 receiver локально выбирает cadence durable ManifestAck.
+    // Эти значения должны быть валидны по hard caps протокола и не могут быть нулевыми.
+    pub fn runtime_options(&self) -> Result<ReceiverRuntimeOptions> {
+        if self.manifest_ack_records == 0 {
+            bail!("manifest_ack_records must be at least 1");
+        }
+        if self.manifest_ack_kb == 0 {
+            bail!("manifest_ack_kb must be at least 1");
+        }
+
+        let manifest_ack_bytes = self
+            .manifest_ack_kb
+            .checked_mul(1024)
+            .context("manifest_ack_kb is too large")?;
+        if self.manifest_ack_records > protocol::MAX_UNACKED_MANIFEST_RECORDS {
+            bail!(
+                "manifest_ack_records exceeds protocol cap: {} > {}",
+                self.manifest_ack_records,
+                protocol::MAX_UNACKED_MANIFEST_RECORDS
+            );
+        }
+        if manifest_ack_bytes > protocol::MAX_UNACKED_MANIFEST_BYTES {
+            bail!(
+                "manifest_ack_kb exceeds protocol cap: {} > {} KiB",
+                self.manifest_ack_kb,
+                protocol::MAX_UNACKED_MANIFEST_BYTES / 1024
+            );
+        }
+
+        Ok(ReceiverRuntimeOptions {
+            manifest_ack_records: self.manifest_ack_records,
+            manifest_ack_bytes,
+        })
+    }
 }
 
 #[cfg(test)]
@@ -321,7 +376,7 @@ mod tests {
 
     use clap::{Parser, error::ErrorKind};
 
-    use super::{Cli, Command, TransportArgs};
+    use super::{Cli, Command, ThreadCountArg, TransportArgs};
     use crate::network::transport::TransportMode;
     use crate::role::Role;
     use crate::sender::SenderSourceKind;
@@ -410,6 +465,9 @@ mod tests {
         };
         let runtime = args.runtime_options().unwrap();
 
+        assert_eq!(args.threads, None);
+        assert_eq!(args.read_buffer_kb, None);
+        assert_eq!(args.frame_target_mb, None);
         assert_eq!(runtime.level, 3);
         assert_eq!(
             runtime.threads,
@@ -421,9 +479,9 @@ mod tests {
         assert_eq!(runtime.max_readers, 8);
         assert_eq!(runtime.read_buffer_bytes, 1024 * 1024);
         assert_eq!(runtime.frame_target_bytes, 64 * 1024 * 1024);
-        assert_eq!(runtime.manifest_chunk_bytes, 256 * 1024);
-        assert_eq!(runtime.manifest_ack_records, 4096);
-        assert_eq!(runtime.manifest_ack_bytes, 1024 * 1024);
+        assert_eq!(runtime.manifest_chunk_bytes, 512 * 1024);
+        assert_eq!(runtime.manifest_ack_records, 4_096);
+        assert_eq!(runtime.manifest_ack_bytes, 8 * 1024 * 1024);
     }
 
     #[test]
@@ -482,6 +540,9 @@ mod tests {
         };
         let runtime = args.runtime_options().unwrap();
 
+        assert_eq!(args.threads, Some(ThreadCountArg::Fixed(4)));
+        assert_eq!(args.read_buffer_kb, Some(2048));
+        assert_eq!(args.frame_target_mb, Some(5));
         assert_eq!(runtime.level, 7);
         assert_eq!(runtime.threads, 4);
         assert_eq!(runtime.min_readers, 3);
@@ -541,7 +602,7 @@ mod tests {
             "--source",
             "input",
             "--manifest-chunk-kb",
-            "2048",
+            "1024",
         ])
         .unwrap();
 
@@ -642,6 +703,31 @@ mod tests {
         };
         let error = args.validated_max_sessions().unwrap_err();
         assert!(error.to_string().contains("max_sessions"));
+    }
+
+    #[test]
+    fn sender_cli_keeps_explicit_auto_threads_distinct_from_omitted_default() {
+        let cli = Cli::try_parse_from([
+            "fast-dump",
+            "sender",
+            "--connect",
+            "127.0.0.1:7018",
+            "--source",
+            "input",
+            "--threads",
+            "auto",
+        ])
+        .unwrap();
+
+        let Command::Sender(args) = cli.command else {
+            panic!("expected sender command");
+        };
+
+        assert_eq!(args.threads, Some(ThreadCountArg::Auto));
+        assert_eq!(
+            args.runtime_options().unwrap().threads,
+            ThreadCountArg::Auto.resolve()
+        );
     }
 
     #[test]

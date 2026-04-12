@@ -14,17 +14,12 @@ use std::{
 };
 
 use anyhow::{Result, bail};
-use fast_dump::network::protocol::{
-    FrameChunk, FrameEnd, FrameStart, Message, ResumeState, write_message,
-};
 use fast_dump::network::transport::{
     BoundListener, Session, TransportMode, connect_once, establish_session,
 };
-use fast_dump::receiver::{ReceiveReport, ReceiveReportV3, receive_dump, receive_dump_v3};
+use fast_dump::receiver::{ReceiveReport, receive_dump};
 use fast_dump::role::Role;
-use fast_dump::sender::{
-    PipelineProfile, PreparedFrame, SendOptions, SendReport, send_dump_profile_v3,
-};
+use fast_dump::sender::{PipelineProfile, SendOptions, SendReport, send_dump_profile};
 use xxhash_rust::xxh3::Xxh3Default;
 
 // Параллельные интеграционные тесты могут стартовать в один и тот же тик системных часов,
@@ -300,11 +295,11 @@ pub(crate) struct BinaryRoundtripResult {
     pub(crate) receiver_output: Output,
 }
 
-pub(crate) struct V3RoundtripResult {
+pub(crate) struct RoundtripResult {
     pub(crate) _receiver_dir: TestDir,
     pub(crate) sender_report: SendReport,
     pub(crate) sender_profile: PipelineProfile,
-    pub(crate) receive_report: ReceiveReportV3,
+    pub(crate) receive_report: ReceiveReport,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -330,15 +325,6 @@ impl SenderBinaryOptions {
     }
 }
 
-pub(crate) fn empty_resume_state() -> ResumeState {
-    ResumeState {
-        last_committed_frame: 0,
-        last_committed_file_index: 0,
-        last_committed_file_path: String::new(),
-        archive_len: 0,
-    }
-}
-
 pub(crate) fn default_send_options(frame_target_bytes: u64) -> SendOptions {
     SendOptions {
         level: 3,
@@ -347,9 +333,9 @@ pub(crate) fn default_send_options(frame_target_bytes: u64) -> SendOptions {
         min_readers: 2,
         max_readers: 4,
         read_buffer_bytes: 1024 * 1024,
-        manifest_chunk_bytes: 256 * 1024,
-        manifest_ack_records: 4096,
-        manifest_ack_bytes: 1024 * 1024,
+        manifest_chunk_bytes: 512 * 1024,
+        manifest_ack_records: 4_096,
+        manifest_ack_bytes: 8 * 1024 * 1024,
     }
 }
 
@@ -491,155 +477,17 @@ pub(crate) fn run_push_roundtrip_via_binaries(
     )
 }
 
-pub(crate) fn send_prepared_frame_without_waiting_for_ack<T>(stream: &mut T, frame: &PreparedFrame)
-where
-    T: Write,
-{
-    write_message(
-        stream,
-        &Message::FrameStart(FrameStart {
-            frame_no: frame.outbound.frame_no,
-            first_file_index: frame.outbound.first_file_index,
-            first_file_path: frame.outbound.first_file_path.clone(),
-            level: frame.outbound.level,
-            threads: frame.outbound.threads,
-        }),
-    )
-    .unwrap();
-
-    let mut hasher = Xxh3Default::new();
-    let mut compressed_len = 0_u64;
-    for chunk in &frame.chunks {
-        write_message(
-            stream,
-            &Message::FrameChunk(FrameChunk {
-                bytes: chunk.clone(),
-            }),
-        )
-        .unwrap();
-        hasher.update(chunk);
-        compressed_len += chunk.len() as u64;
-    }
-
-    write_message(
-        stream,
-        &Message::FrameEnd(FrameEnd {
-            frame_no: frame.outbound.frame_no,
-            last_file_index: frame.outbound.last_file_index,
-            last_file_path: frame.outbound.last_file_path.clone(),
-            compressed_len,
-            compressed_xxh3_64: hasher.digest(),
-        }),
-    )
-    .unwrap();
-    stream.flush().unwrap();
-}
-
-pub(crate) fn send_partial_prepared_frame<T>(
-    stream: &mut T,
-    frame: &PreparedFrame,
-    chunk_count: usize,
-) where
-    T: Write,
-{
-    assert!(chunk_count > 0, "chunk_count must be at least 1");
-    assert!(
-        chunk_count <= frame.chunks.len(),
-        "chunk_count must not exceed prepared chunk count"
-    );
-
-    write_message(
-        stream,
-        &Message::FrameStart(FrameStart {
-            frame_no: frame.outbound.frame_no,
-            first_file_index: frame.outbound.first_file_index,
-            first_file_path: frame.outbound.first_file_path.clone(),
-            level: frame.outbound.level,
-            threads: frame.outbound.threads,
-        }),
-    )
-    .unwrap();
-
-    for chunk in frame.chunks.iter().take(chunk_count) {
-        write_message(
-            stream,
-            &Message::FrameChunk(FrameChunk {
-                bytes: chunk.clone(),
-            }),
-        )
-        .unwrap();
-    }
-    stream.flush().unwrap();
-}
-
-pub(crate) fn send_prepared_frame_with_bad_checksum<T>(stream: &mut T, frame: &PreparedFrame)
-where
-    T: Write,
-{
-    write_message(
-        stream,
-        &Message::FrameStart(FrameStart {
-            frame_no: frame.outbound.frame_no,
-            first_file_index: frame.outbound.first_file_index,
-            first_file_path: frame.outbound.first_file_path.clone(),
-            level: frame.outbound.level,
-            threads: frame.outbound.threads,
-        }),
-    )
-    .unwrap();
-
-    let mut hasher = Xxh3Default::new();
-    let mut compressed_len = 0_u64;
-    for chunk in &frame.chunks {
-        write_message(
-            stream,
-            &Message::FrameChunk(FrameChunk {
-                bytes: chunk.clone(),
-            }),
-        )
-        .unwrap();
-        hasher.update(chunk);
-        compressed_len += chunk.len() as u64;
-    }
-
-    write_message(
-        stream,
-        &Message::FrameEnd(FrameEnd {
-            frame_no: frame.outbound.frame_no,
-            last_file_index: frame.outbound.last_file_index,
-            last_file_path: frame.outbound.last_file_path.clone(),
-            compressed_len,
-            compressed_xxh3_64: hasher.digest().wrapping_add(1),
-        }),
-    )
-    .unwrap();
-    stream.flush().unwrap();
-}
-
 pub(crate) fn spawn_receiver_dump_once(
     data_dir: &Path,
+    manifest_ack_records: u64,
+    manifest_ack_bytes: usize,
 ) -> (SocketAddr, thread::JoinHandle<Result<ReceiveReport>>) {
     let listener = BoundListener::bind("127.0.0.1:0".parse().unwrap()).unwrap();
     let addr = listener.local_addr();
     let receiver_path = data_dir.to_path_buf();
     let handle = thread::spawn(move || {
         let mut session = listener.accept(Role::Receiver, None, None).unwrap();
-        receive_dump(&mut session.stream, receiver_path)
-    });
-    (addr, handle)
-}
-
-pub(crate) fn spawn_receiver_dump_once_v3(
-    data_dir: &Path,
-    manifest_ack_records: u64,
-    manifest_ack_bytes: usize,
-) -> (SocketAddr, thread::JoinHandle<Result<ReceiveReportV3>>) {
-    let listener = BoundListener::bind("127.0.0.1:0".parse().unwrap()).unwrap();
-    let addr = listener.local_addr();
-    let receiver_path = data_dir.to_path_buf();
-    let handle = thread::spawn(move || {
-        let mut session = listener.accept(Role::Receiver, None, None).unwrap();
-        receive_dump_v3(
+        receive_dump(
             &mut session.stream,
             receiver_path,
             manifest_ack_records,
@@ -649,20 +497,20 @@ pub(crate) fn spawn_receiver_dump_once_v3(
     (addr, handle)
 }
 
-pub(crate) fn run_push_roundtrip_v3_with_options(
+pub(crate) fn run_push_roundtrip_with_options(
     source: &Path,
     dump_id: &str,
     options: SendOptions,
-) -> V3RoundtripResult {
+) -> RoundtripResult {
     let receiver_dir = TestDir::new();
-    let (addr, receiver) = spawn_receiver_dump_once_v3(
+    let (addr, receiver) = spawn_receiver_dump_once(
         receiver_dir.path(),
         options.manifest_ack_records,
         options.manifest_ack_bytes,
     );
     let mut sender = connect_once(Role::Sender, addr, Some(dump_id), None).unwrap();
     let sender_result =
-        send_dump_profile_v3(&mut sender.stream, source.to_path_buf(), dump_id, &options);
+        send_dump_profile(&mut sender.stream, source.to_path_buf(), dump_id, &options);
     let (sender_report, sender_profile) = match sender_result {
         Ok(result) => result,
         Err(error) => {
@@ -672,7 +520,7 @@ pub(crate) fn run_push_roundtrip_v3_with_options(
         }
     };
     let receive_report = receiver.join().unwrap().unwrap();
-    V3RoundtripResult {
+    RoundtripResult {
         _receiver_dir: receiver_dir,
         sender_report,
         sender_profile,

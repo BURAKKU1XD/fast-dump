@@ -2,8 +2,8 @@ use std::borrow::Cow;
 use std::collections::VecDeque;
 use std::env;
 use std::fs;
-use std::io::{self, Read, Write};
-use std::path::{Path, PathBuf};
+use std::io::{Read, Write};
+use std::path::Path;
 use std::str;
 use std::time::Instant;
 
@@ -11,17 +11,13 @@ use anyhow::{Context, Result};
 use log::debug;
 use tar::{EntryType, Header};
 
-use crate::network::protocol::{self, ResumeState};
-
 use super::readers::{IN_MEMORY_SNAPSHOT_THRESHOLD_BYTES, start_long_read_watchdog};
-use super::source::{SourceDiscoveryIssue, SourceDiscoveryIssueSummary};
+use super::source::{self, SourceDiscoveryIssue, SourceDiscoveryIssueSummary};
 use super::{
-    DirectFileStream, FileDisposition, FileReadOutcome, FileSkipReason, InputFile, InputFileKind,
-    PendingFileWalker, PipelineProfile, PipelineProfileCollector, ReadEvent, ReaderPool,
-    SnapshotStorage,
+    DirectFileStream, FileDisposition, FileSkipReason, InputFile, InputFileKind, PendingFileWalker,
+    PipelineProfileCollector, ReaderPool, SnapshotStorage,
 };
 
-const DEFAULT_READ_BUFFER_BYTES: usize = 1024 * 1024;
 const TAR_HEADER_BYTES: u64 = 512;
 const DEFAULT_MAX_FILES_PER_FRAME: usize = 4096;
 pub(crate) const DEFAULT_LARGE_FILE_SINGLE_FRAME_THRESHOLD_BYTES: u64 = 16 * 1024 * 1024;
@@ -52,35 +48,10 @@ impl std::error::Error for RetryableStreamFailure {}
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct OutboundFrame {
     pub frame_no: u64,
-    pub first_file_index: u64,
-    pub first_file_path: String,
-    pub last_file_index: u64,
-    pub last_file_path: String,
-    pub level: i32,
-    pub threads: u32,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct OutboundFrameV3 {
-    pub frame_no: u64,
     pub first_work_ordinal: u64,
     pub last_work_ordinal: u64,
     pub level: i32,
     pub threads: u32,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PreparedFrame {
-    pub outbound: OutboundFrame,
-    pub chunks: Vec<Vec<u8>>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PreparedDump {
-    pub frames: Vec<PreparedFrame>,
-    pub final_frame_no: u64,
-    pub final_file_index: u64,
-    pub final_file_path: String,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -131,19 +102,6 @@ impl FrameBuildStats {
             }
         }
     }
-}
-
-pub(crate) struct PreparedFrameBuild {
-    pub(crate) frame: PreparedFrame,
-    pub(crate) stats: FrameBuildStats,
-}
-
-#[derive(Clone, Copy)]
-pub(crate) struct FrameBuildConfig<'a> {
-    pub(crate) level: i32,
-    pub(crate) threads: u32,
-    pub(crate) frame_target_bytes: u64,
-    pub(crate) profile: Option<&'a PipelineProfileCollector>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -231,7 +189,7 @@ impl FramePolicy {
         self.isolate_retried_files && progress.files_with_payload == 1 && current_retries > 0
     }
 
-    fn is_probably_large(&self, file: &InputFile) -> bool {
+    pub(crate) fn is_probably_large(&self, file: &InputFile) -> bool {
         // Это эвристика только для выбора границы frame. Корректность tar header
         // и retry-семантика по-прежнему опираются на metadata открытого handle.
         if !file.is_regular() {
@@ -275,6 +233,7 @@ fn resolve_large_file_single_frame_threshold_bytes(explicit_threshold: Option<u6
 pub(crate) struct PendingFrameFiles {
     walker: PendingFileWalker,
     queued: VecDeque<InputFile>,
+    scheduled_prefix: usize,
     exhausted: bool,
 }
 
@@ -294,6 +253,7 @@ pub(crate) mod test_hooks {
         path.to_string_lossy().into_owned()
     }
 
+    #[allow(dead_code)]
     pub(crate) fn fail_stream_after_next_write(path: &Path, after_bytes: u64) {
         stream_failures()
             .lock()
@@ -322,6 +282,7 @@ pub(crate) mod test_hooks {
         false
     }
 
+    #[allow(dead_code)]
     pub(crate) fn clear() {
         stream_failures().lock().unwrap().clear();
     }
@@ -332,22 +293,13 @@ impl PendingFrameFiles {
         Self {
             walker,
             queued: VecDeque::new(),
+            scheduled_prefix: 0,
             exhausted: false,
         }
     }
 
     // Очередь pending-файлов держит только уже запланированное окно.
     // Остальные пути остаются на стороне walker и открываются по мере надобности.
-    pub(crate) fn prefetch(&mut self, readers: &mut ReaderPool) -> Result<(usize, bool)> {
-        self.prefetch_with(readers, |pool, file| {
-            if file.is_regular() {
-                pool.schedule(file)
-            } else {
-                Ok(())
-            }
-        })
-    }
-
     pub(crate) fn prefetch_with<F>(
         &mut self,
         readers: &mut ReaderPool,
@@ -357,11 +309,34 @@ impl PendingFrameFiles {
         F: FnMut(&mut ReaderPool, InputFile) -> Result<()>,
     {
         let target = readers.prefetch_target();
+        self.prefetch_with_target(target, |file| schedule(readers, file))
+    }
+
+    pub(crate) fn prefetch_with_target<F>(
+        &mut self,
+        target: usize,
+        mut schedule: F,
+    ) -> Result<(usize, bool)>
+    where
+        F: FnMut(InputFile) -> Result<()>,
+    {
+        let schedule_target = target.min(self.queued.len());
+        while self.scheduled_prefix < schedule_target {
+            let file = self
+                .queued
+                .get(self.scheduled_prefix)
+                .cloned()
+                .context("sender pending queue lost a scheduled prefix file")?;
+            schedule(file)?;
+            self.scheduled_prefix = self.scheduled_prefix.saturating_add(1);
+        }
+
         while self.queued.len() < target && !self.exhausted {
             match self.walker.next_pending_file()? {
                 Some(file) => {
-                    schedule(readers, file.clone())?;
+                    schedule(file.clone())?;
                     self.queued.push_back(file);
+                    self.scheduled_prefix = self.scheduled_prefix.saturating_add(1);
                 }
                 None => {
                     self.exhausted = true;
@@ -371,12 +346,31 @@ impl PendingFrameFiles {
         Ok((self.queued.len(), !self.exhausted))
     }
 
+    pub(crate) fn discover_ahead(&mut self, target: usize) -> Result<(usize, bool)> {
+        while self.queued.len() < target && !self.exhausted {
+            match self.walker.next_pending_file()? {
+                Some(file) => self.queued.push_back(file),
+                None => {
+                    self.exhausted = true;
+                }
+            }
+        }
+        Ok((self.queued.len(), !self.exhausted))
+    }
+
+    pub(crate) fn grow_discovery_window(&mut self, additional: usize) -> Result<(usize, bool)> {
+        let target = self.queued.len().saturating_add(additional.max(1));
+        self.discover_ahead(target)
+    }
+
     pub(crate) fn next_expected(&self) -> Option<&InputFile> {
         self.queued.front()
     }
 
     pub(crate) fn consume_expected(&mut self) -> Option<InputFile> {
-        self.queued.pop_front()
+        let file = self.queued.pop_front()?;
+        self.scheduled_prefix = self.scheduled_prefix.saturating_sub(1);
+        Some(file)
     }
 
     pub(crate) fn is_drained(&self) -> bool {
@@ -408,324 +402,49 @@ impl PendingFrameFiles {
     pub(crate) fn discovery_issue_summary(&self) -> SourceDiscoveryIssueSummary {
         self.walker.discovery_issue_summary()
     }
-}
 
-struct ChunkCollector {
-    chunk_limit: usize,
-    current: Vec<u8>,
-    chunks: Vec<Vec<u8>>,
-    total_written: u64,
-}
-
-impl ChunkCollector {
-    fn new(chunk_limit: usize) -> Self {
-        Self {
-            chunk_limit,
-            current: Vec::with_capacity(chunk_limit),
-            chunks: Vec::new(),
-            total_written: 0,
-        }
+    pub(crate) fn pop_manifest_chunk(
+        &mut self,
+        force_flush: bool,
+    ) -> Result<Option<source::manifest::ManifestChunkPlan>> {
+        self.walker.pop_manifest_chunk(force_flush)
     }
 
-    fn finish(mut self) -> Vec<Vec<u8>> {
-        if !self.current.is_empty() {
-            self.chunks.push(std::mem::take(&mut self.current));
-        }
-        self.chunks
-    }
-}
-
-impl Write for ChunkCollector {
-    fn write(&mut self, mut buf: &[u8]) -> io::Result<usize> {
-        let original_len = buf.len();
-        while !buf.is_empty() {
-            if self.current.len() == self.chunk_limit {
-                self.chunks.push(std::mem::take(&mut self.current));
-                self.current = Vec::with_capacity(self.chunk_limit);
-            }
-            let remaining = self.chunk_limit - self.current.len();
-            let take = remaining.min(buf.len());
-            self.current.extend_from_slice(&buf[..take]);
-            self.total_written += take as u64;
-            buf = &buf[take..];
-        }
-        Ok(original_len)
+    pub(crate) fn produced_manifest_work_ordinal(&self) -> u64 {
+        self.walker.produced_manifest_work_ordinal()
     }
 
-    fn flush(&mut self) -> io::Result<()> {
-        Ok(())
+    pub(crate) fn queued_manifest_target_work_ordinal(&self) -> Option<u64> {
+        self.queued.back().map(|file| file.index)
+    }
+
+    pub(crate) fn queued_manifest_target_work_ordinal_with_limit(
+        &self,
+        max_files: usize,
+    ) -> Option<u64> {
+        self.queued
+            .iter()
+            .take(max_files.max(1))
+            .next_back()
+            .map(|file| file.index)
+    }
+
+    pub(crate) fn manifest_exhausted(&self) -> bool {
+        self.walker.manifest_exhausted()
+    }
+
+    pub(crate) fn produced_manifest_boundary(&self) -> (Option<u64>, Option<u64>) {
+        self.walker.produced_manifest_boundary()
+    }
+
+    pub(crate) fn final_manifest_boundary(&self) -> Result<(Option<u64>, Option<u64>)> {
+        self.walker.final_manifest_boundary()
     }
 }
 
 // Этот helper остаётся буферизованным путём для тестов и диагностики:
 // он собирает готовые zstd-frame-ы в память, но теперь использует ту же
 // streaming discovery-модель, что и production sender path.
-pub fn prepare_dump(
-    source: impl Into<PathBuf>,
-    resume_state: &ResumeState,
-    level: i32,
-    threads: u32,
-    frame_target_bytes: u64,
-) -> Result<PreparedDump> {
-    prepare_dump_impl(
-        source,
-        resume_state,
-        level,
-        threads,
-        frame_target_bytes,
-        None,
-    )
-}
-
-// Этот вариант нужен бенчмаркам и профилировке sender-пайплайна:
-// он возвращает тот же dump, но вместе с детализацией по стадиям.
-pub fn prepare_dump_profile(
-    source: impl Into<PathBuf>,
-    resume_state: &ResumeState,
-    level: i32,
-    threads: u32,
-    frame_target_bytes: u64,
-) -> Result<(PreparedDump, PipelineProfile)> {
-    let profile = PipelineProfileCollector::default();
-    let dump = prepare_dump_impl(
-        source,
-        resume_state,
-        level,
-        threads,
-        frame_target_bytes,
-        Some(&profile),
-    )?;
-    Ok((dump, profile.finish()))
-}
-
-fn prepare_dump_impl(
-    source: impl Into<PathBuf>,
-    resume_state: &ResumeState,
-    level: i32,
-    threads: u32,
-    frame_target_bytes: u64,
-    profile: Option<&PipelineProfileCollector>,
-) -> Result<PreparedDump> {
-    let prepare_started = Instant::now();
-    let source = source.into();
-    let mut sent_raw_bytes = 0_u64;
-    let walker = PendingFileWalker::new_with_profile(source.clone(), resume_state, profile)?;
-    let mut pending = PendingFrameFiles::new(walker);
-    debug!(
-        "sender prepare_dump started: source={} level={} threads={} frame_target_bytes={}",
-        source.display(),
-        level,
-        threads,
-        frame_target_bytes
-    );
-
-    let mut frames = Vec::new();
-    let mut next_frame_no = resume_state.last_committed_frame;
-    let mut readers = ReaderPool::new(1, 1, 1, DEFAULT_READ_BUFFER_BYTES, profile.cloned());
-    loop {
-        let Some(build) = prepare_buffered_frame(
-            &mut pending,
-            next_frame_no.saturating_add(1),
-            &mut readers,
-            FrameBuildConfig {
-                level,
-                threads,
-                frame_target_bytes,
-                profile,
-            },
-        )?
-        else {
-            break;
-        };
-        sent_raw_bytes = sent_raw_bytes.saturating_add(build.stats.bytes_sent_raw);
-        next_frame_no = build.frame.outbound.frame_no;
-        frames.push(build.frame);
-    }
-    readers.finish();
-    let (final_file_index, final_file_path) = pending.final_boundary()?;
-    if let Some(profile) = profile {
-        profile.record_total(sent_raw_bytes, prepare_started.elapsed());
-    }
-    debug!(
-        "sender prepare_dump completed: frames={} final_frame_no={} final_file_index={} elapsed_ms={}",
-        frames.len(),
-        next_frame_no,
-        final_file_index,
-        prepare_started.elapsed().as_millis()
-    );
-
-    Ok(PreparedDump {
-        frames,
-        final_frame_no: next_frame_no,
-        final_file_index,
-        final_file_path,
-    })
-}
-
-fn next_buffered_file(pending: &PendingFrameFiles) -> Result<InputFile> {
-    pending
-        .next_expected()
-        .cloned()
-        .context("buffered sender frame lost its scheduled file before processing")
-}
-
-fn consume_buffered_file(pending: &mut PendingFrameFiles) -> Result<InputFile> {
-    pending
-        .consume_expected()
-        .context("buffered sender frame lost its scheduled file after processing")
-}
-
-fn prepare_buffered_frame(
-    pending: &mut PendingFrameFiles,
-    frame_no: u64,
-    readers: &mut ReaderPool,
-    config: FrameBuildConfig<'_>,
-) -> Result<Option<PreparedFrameBuild>> {
-    let _ = pending.prefetch(readers)?;
-    let Some(first) = pending.next_expected().cloned() else {
-        return Ok(None);
-    };
-
-    let build_started = Instant::now();
-    let policy = FramePolicy::from_frame_target_bytes(config.frame_target_bytes);
-    let mut stats = FrameBuildStats::default();
-    let mut progress = FrameProgress::default();
-    let mut last_completed: Option<InputFile> = None;
-    let mut encoder = zstd::stream::write::Encoder::new(
-        ChunkCollector::new(protocol::MAX_FRAME_CHUNK_BYTES),
-        config.level,
-    )
-    .context("failed to create zstd encoder for sender frame")?;
-    encoder
-        .multithread(config.threads)
-        .context("failed to configure zstd worker threads for sender frame")?;
-
-    let last = loop {
-        let file = next_buffered_file(pending)?;
-        if let Some(last) = &last_completed
-            && policy.should_close_before_next(progress, &file, 0)
-        {
-            break last.clone();
-        }
-        let mut completed_payload = None;
-        if file.is_regular() {
-            match readers.next_for_with_scheduler(file.index, |pool| pending.prefetch(pool))? {
-                ReadEvent::Ready(FileReadOutcome::Snapshot(snapshot)) => {
-                    let header_started = Instant::now();
-                    append_tar_file_header(&mut encoder, &snapshot.file, snapshot.size_at_open)?;
-                    if let Some(profile) = config.profile {
-                        profile.record_compress(
-                            tar_header_bytes_for_file(&snapshot.file),
-                            header_started.elapsed(),
-                        );
-                    }
-                    stream_staged_snapshot(&mut encoder, &snapshot, config.profile)?;
-                    let padding_bytes = tar_padding_bytes(snapshot.size_at_open) as u64;
-                    let padding_started = Instant::now();
-                    append_tar_file_padding(&mut encoder, &snapshot.file, snapshot.size_at_open)?;
-                    if let Some(profile) = config.profile {
-                        profile.record_compress(padding_bytes, padding_started.elapsed());
-                    }
-                    stats.note_snapshot(
-                        &snapshot.file,
-                        snapshot.disposition,
-                        snapshot.size_at_open,
-                        snapshot.retries,
-                    );
-                    completed_payload = Some((snapshot.size_at_open, snapshot.retries));
-                }
-                ReadEvent::Ready(FileReadOutcome::Direct(mut direct)) => {
-                    let header_started = Instant::now();
-                    append_tar_file_header(&mut encoder, &direct.file, direct.size_at_open)?;
-                    if let Some(profile) = config.profile {
-                        profile.record_compress(
-                            tar_header_bytes_for_file(&direct.file),
-                            header_started.elapsed(),
-                        );
-                    }
-                    stream_direct_file(&mut encoder, &mut direct, config.profile)?;
-                    let padding_bytes = tar_padding_bytes(direct.size_at_open) as u64;
-                    let padding_started = Instant::now();
-                    append_tar_file_padding(&mut encoder, &direct.file, direct.size_at_open)?;
-                    if let Some(profile) = config.profile {
-                        profile.record_compress(padding_bytes, padding_started.elapsed());
-                    }
-                    stats.note_snapshot(
-                        &direct.file,
-                        direct.disposition,
-                        direct.size_at_open,
-                        direct.retries,
-                    );
-                    completed_payload = Some((direct.size_at_open, direct.retries));
-                }
-                ReadEvent::Ready(FileReadOutcome::Skip(skipped)) => {
-                    stats.note_skip(skipped.reason, skipped.retries);
-                }
-                ReadEvent::Fatal { message, .. } => anyhow::bail!("{message}"),
-            }
-        } else {
-            let header_started = Instant::now();
-            append_tar_file_header(&mut encoder, &file, 0)?;
-            if let Some(profile) = config.profile {
-                profile.record_compress(tar_header_bytes_for_file(&file), header_started.elapsed());
-            }
-            stats.note_snapshot(&file, FileDisposition::Clean, 0, 0);
-            completed_payload = Some((0, 0));
-        }
-        let last = consume_buffered_file(pending)?;
-        last_completed = Some(last.clone());
-        let _ = pending.prefetch(readers)?;
-        if let Some((size_at_open, retries)) = completed_payload {
-            progress.note_payload_file(&last, size_at_open);
-            if policy.should_close_after_current(
-                progress,
-                size_at_open,
-                retries,
-                pending.next_expected().is_some(),
-            ) {
-                break last;
-            }
-        } else if pending.next_expected().is_none() {
-            break last;
-        }
-    };
-
-    let finish_started = Instant::now();
-    let collector = encoder
-        .finish()
-        .context("failed to finish sender zstd frame")?;
-    if let Some(profile) = config.profile {
-        profile.record_flush();
-        profile.record_compress(0, finish_started.elapsed());
-    }
-    let chunks = collector.finish();
-    let compressed_bytes = chunks.iter().map(|chunk| chunk.len() as u64).sum::<u64>();
-    debug!(
-        "sender prepare_frame completed: frame_no={} first_file={} last_file={} compressed_bytes={} chunks={} elapsed_ms={}",
-        frame_no,
-        first.rel_path(),
-        last.rel_path(),
-        compressed_bytes,
-        chunks.len(),
-        build_started.elapsed().as_millis()
-    );
-    Ok(Some(PreparedFrameBuild {
-        frame: PreparedFrame {
-            outbound: OutboundFrame {
-                frame_no,
-                first_file_index: first.index,
-                first_file_path: first.rel_path().to_owned(),
-                last_file_index: last.index,
-                last_file_path: last.rel_path().to_owned(),
-                level: config.level,
-                threads: config.threads,
-            },
-            chunks,
-        },
-        stats,
-    }))
-}
-
 pub(crate) fn tar_entry_bytes(rel_path: &str, size_at_open: u64) -> u64 {
     tar_header_bytes(rel_path) + size_at_open + tar_padding_bytes(size_at_open) as u64
 }
@@ -1171,12 +890,10 @@ mod tests {
     use tar::{Archive, EntryType};
 
     use super::{
-        DEFAULT_LARGE_FILE_SINGLE_FRAME_THRESHOLD_BYTES, IN_MEMORY_SNAPSHOT_THRESHOLD_BYTES,
-        append_tar_file_header, append_tar_file_padding, prepare_dump,
+        IN_MEMORY_SNAPSHOT_THRESHOLD_BYTES, append_tar_file_header, append_tar_file_padding,
         resolve_large_file_single_frame_threshold_bytes, stream_direct_file,
         tar_entry_bytes_for_file,
     };
-    use crate::network::protocol::ResumeState;
     use crate::sender::{DirectFileStream, FileDisposition, InputFile, PipelineProfileCollector};
 
     struct TestDir {
@@ -1243,101 +960,6 @@ mod tests {
         let mut bytes = vec![0_u8; size];
         generator.fill(&mut bytes);
         fs::write(path, bytes).unwrap();
-    }
-
-    fn write_sized_file(path: &Path, size: u64) {
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent).unwrap();
-        }
-        let file = File::create(path).unwrap();
-        file.set_len(size).unwrap();
-    }
-
-    #[test]
-    fn prepare_dump_walks_files_in_deterministic_order_and_splits_frames() {
-        let temp = TestDir::new();
-        fs::create_dir_all(temp.path().join("b")).unwrap();
-        fs::create_dir_all(temp.path().join("a")).unwrap();
-        fs::write(temp.path().join("b").join("second.txt"), b"222").unwrap();
-        fs::write(temp.path().join("a").join("first.txt"), b"111").unwrap();
-        fs::write(temp.path().join("root.txt"), b"333").unwrap();
-
-        let dump = prepare_dump(
-            temp.path().to_path_buf(),
-            &ResumeState {
-                last_committed_frame: 0,
-                last_committed_file_index: 0,
-                last_committed_file_path: String::new(),
-                archive_len: 0,
-            },
-            3,
-            1,
-            1,
-        )
-        .unwrap();
-
-        assert_eq!(dump.frames.len(), 3);
-        assert_eq!(dump.frames[0].outbound.first_file_path, "a/first.txt");
-        assert_eq!(dump.frames[0].outbound.last_file_path, "a/first.txt");
-        assert_eq!(dump.frames[1].outbound.first_file_path, "b/second.txt");
-        assert_eq!(dump.frames[2].outbound.first_file_path, "root.txt");
-        assert_eq!(dump.final_frame_no, 3);
-        assert_eq!(dump.final_file_index, 3);
-        assert_eq!(dump.final_file_path, "root.txt");
-    }
-
-    #[test]
-    fn prepare_dump_skips_committed_prefix_on_resume() {
-        let temp = TestDir::new();
-        fs::create_dir_all(temp.path().join("dir")).unwrap();
-        fs::write(temp.path().join("dir").join("one.txt"), b"111").unwrap();
-        fs::write(temp.path().join("dir").join("two.txt"), b"222").unwrap();
-
-        let dump = prepare_dump(
-            temp.path().to_path_buf(),
-            &ResumeState {
-                last_committed_frame: 1,
-                last_committed_file_index: 1,
-                last_committed_file_path: "dir/one.txt".to_owned(),
-                archive_len: 123,
-            },
-            3,
-            1,
-            1024 * 1024,
-        )
-        .unwrap();
-
-        assert_eq!(dump.frames.len(), 1);
-        assert_eq!(dump.frames[0].outbound.frame_no, 2);
-        assert_eq!(dump.frames[0].outbound.first_file_index, 2);
-        assert_eq!(dump.frames[0].outbound.first_file_path, "dir/two.txt");
-        assert_eq!(dump.final_frame_no, 2);
-        assert_eq!(dump.final_file_index, 2);
-        assert_eq!(dump.final_file_path, "dir/two.txt");
-    }
-
-    #[test]
-    fn prepare_dump_supports_empty_source_directory() {
-        let temp = TestDir::new();
-
-        let dump = prepare_dump(
-            temp.path().to_path_buf(),
-            &ResumeState {
-                last_committed_frame: 0,
-                last_committed_file_index: 0,
-                last_committed_file_path: String::new(),
-                archive_len: 0,
-            },
-            3,
-            1,
-            1024 * 1024,
-        )
-        .unwrap();
-
-        assert!(dump.frames.is_empty());
-        assert_eq!(dump.final_frame_no, 0);
-        assert_eq!(dump.final_file_index, 0);
-        assert_eq!(dump.final_file_path, "");
     }
 
     #[test]
@@ -1414,116 +1036,6 @@ mod tests {
             "../target.txt"
         );
         assert_eq!(entry.header().entry_type(), EntryType::new(b'2'));
-    }
-
-    #[test]
-    fn prepare_dump_keeps_truly_large_file_isolated_with_soft_frame_policy() {
-        let source_dir = TestDir::new();
-        let payload_path = source_dir.path().join("payload.bin");
-        let payload_size = DEFAULT_LARGE_FILE_SINGLE_FRAME_THRESHOLD_BYTES + 4096;
-        write_sized_file(&payload_path, payload_size);
-        fs::write(source_dir.path().join("tail.txt"), b"tail").unwrap();
-        let payload_tar_bytes = tar_entry_bytes_for_file(
-            &InputFile::regular(1, PathBuf::from("payload.bin"), "payload.bin".to_owned()),
-            payload_size,
-        );
-
-        let below_target = prepare_dump(
-            source_dir.path().to_path_buf(),
-            &ResumeState {
-                last_committed_frame: 0,
-                last_committed_file_index: 0,
-                last_committed_file_path: String::new(),
-                archive_len: 0,
-            },
-            3,
-            1,
-            payload_tar_bytes.saturating_sub(1),
-        )
-        .unwrap();
-        assert_eq!(below_target.frames.len(), 2);
-        assert_eq!(
-            below_target.frames[0].outbound.first_file_path,
-            "payload.bin"
-        );
-        assert_eq!(
-            below_target.frames[0].outbound.last_file_path,
-            "payload.bin"
-        );
-        assert_eq!(below_target.frames[1].outbound.first_file_path, "tail.txt");
-
-        let exact_target = prepare_dump(
-            source_dir.path().to_path_buf(),
-            &ResumeState {
-                last_committed_frame: 0,
-                last_committed_file_index: 0,
-                last_committed_file_path: String::new(),
-                archive_len: 0,
-            },
-            3,
-            1,
-            payload_tar_bytes,
-        )
-        .unwrap();
-        assert_eq!(exact_target.frames.len(), 2);
-        assert_eq!(
-            exact_target.frames[0].outbound.last_file_path,
-            "payload.bin"
-        );
-        assert_eq!(exact_target.frames[1].outbound.first_file_path, "tail.txt");
-
-        let above_target = prepare_dump(
-            source_dir.path().to_path_buf(),
-            &ResumeState {
-                last_committed_frame: 0,
-                last_committed_file_index: 0,
-                last_committed_file_path: String::new(),
-                archive_len: 0,
-            },
-            3,
-            1,
-            payload_tar_bytes + 1,
-        )
-        .unwrap();
-        assert_eq!(above_target.frames.len(), 2);
-        assert_eq!(
-            above_target.frames[0].outbound.first_file_path,
-            "payload.bin"
-        );
-        assert_eq!(
-            above_target.frames[0].outbound.last_file_path,
-            "payload.bin"
-        );
-        assert_eq!(above_target.frames[1].outbound.first_file_path, "tail.txt");
-    }
-
-    #[test]
-    fn prepare_dump_keeps_medium_direct_stream_file_in_shared_frame() {
-        let source_dir = TestDir::new();
-        fs::write(source_dir.path().join("alpha.txt"), b"alpha").unwrap();
-        write_sized_file(
-            &source_dir.path().join("payload.bin"),
-            crate::sender::readers::IN_MEMORY_SNAPSHOT_THRESHOLD_BYTES + 4096,
-        );
-        fs::write(source_dir.path().join("zeta.txt"), b"tail").unwrap();
-
-        let dump = prepare_dump(
-            source_dir.path().to_path_buf(),
-            &ResumeState {
-                last_committed_frame: 0,
-                last_committed_file_index: 0,
-                last_committed_file_path: String::new(),
-                archive_len: 0,
-            },
-            3,
-            1,
-            16 * 1024 * 1024,
-        )
-        .unwrap();
-
-        assert_eq!(dump.frames.len(), 1);
-        assert_eq!(dump.frames[0].outbound.first_file_path, "alpha.txt");
-        assert_eq!(dump.frames[0].outbound.last_file_path, "zeta.txt");
     }
 
     #[test]
