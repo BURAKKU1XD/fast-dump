@@ -5,7 +5,6 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
 use clap::{CommandFactory, Parser, ValueEnum};
-use fast_dump::{network::protocol, sender::SendOptions};
 
 use super::results::{
     RawResultRow, ScenarioKey, aggregate_summary_rows, append_raw_result, completed_runs,
@@ -15,12 +14,12 @@ use super::results::{
 };
 use super::shared::{
     BIG_FILES_DATASET, DEFAULT_MEMORY_BUDGET_MIB, MANY_SMALL_FILES_DATASET, MIXED_DATASET,
-    MatrixDataset, benchmark_network_profile, benchmark_network_shape,
+    MatrixDataset, SendOptions, benchmark_network_profile, benchmark_network_shape,
     default_matrix_network_profiles, default_matrix_send_options, ensure_big_files_dataset,
     ensure_many_small_files_dataset, ensure_mixed_dataset, matrix_frame_target_values_mb,
     matrix_read_buffer_values_kb, matrix_thread_counts,
 };
-use super::stats::{LoopbackRunMetrics, run_loopback_scenario};
+use super::stats::{LoopbackRunMetrics, PROTOCOL_RUNTIME_LABEL, run_loopback_scenario};
 
 const DEFAULT_LARGE_FILE_SINGLE_FRAME_THRESHOLD_MIB: u64 = 16;
 const MIB: u64 = 1024 * 1024;
@@ -63,12 +62,6 @@ struct MatrixArgs {
     frames_mb: Vec<u64>,
     #[arg(long = "buffers", value_delimiter = ',', num_args = 1..)]
     buffers_kb: Vec<u64>,
-    #[arg(long = "manifest-chunk-kb", value_delimiter = ',', num_args = 1..)]
-    manifest_chunk_kb: Vec<usize>,
-    #[arg(long = "manifest-ack-records", value_delimiter = ',', num_args = 1..)]
-    manifest_ack_records: Vec<u64>,
-    #[arg(long = "manifest-ack-kb", value_delimiter = ',', num_args = 1..)]
-    manifest_ack_kb: Vec<usize>,
     #[arg(long)]
     resume: bool,
     #[arg(long, default_value_t = 1)]
@@ -262,20 +255,21 @@ fn run_matrix(args: MatrixArgs) -> Result<()> {
     let threads = resolve_values("threads", &matrix_thread_counts(), &args.threads)?;
     let frames_mb = resolve_values("frames", &matrix_frame_target_values_mb(), &args.frames_mb)?;
     let buffers_kb = resolve_values("buffers", &matrix_read_buffer_values_kb(), &args.buffers_kb)?;
-    let manifest_chunk_kb = resolve_manifest_chunk_values_kb(&args.manifest_chunk_kb)?;
-    let manifest_ack_records = resolve_manifest_ack_record_values(&args.manifest_ack_records)?;
-    let manifest_ack_kb = resolve_manifest_ack_values_kb(&args.manifest_ack_kb)?;
     let thresholds_mib = resolve_large_file_single_frame_thresholds_mib(
         &args.large_file_single_frame_thresholds_mib,
     )?;
     let executors = resolve_executor_modes(&args.executors)?;
+    let default_options = default_matrix_send_options();
+    let default_manifest_chunk_kb = default_options.manifest_chunk_bytes / 1024;
+    let default_manifest_ack_records = default_options.manifest_ack_records;
+    let default_manifest_ack_kb = default_options.manifest_ack_bytes / 1024;
     let shuffle_seed = args
         .shuffle_seed
         .unwrap_or_else(|| u64::from(std::process::id()) << 32 | u64::from(args.repeats));
 
     for dataset in datasets {
         eprintln!(
-            "[bench-matrix] dataset={} path={} scenarios={} repeats={} thresholds={} runtime=v3 networks={} executors={} resume={} shuffle={} plan={}",
+            "[bench-matrix] dataset={} path={} scenarios={} repeats={} thresholds={} networks={} executors={} resume={} shuffle={} plan={}",
             dataset.name,
             dataset.path.display(),
             network_profiles.len()
@@ -283,9 +277,6 @@ fn run_matrix(args: MatrixArgs) -> Result<()> {
                 * threads.len()
                 * frames_mb.len()
                 * buffers_kb.len()
-                * manifest_chunk_kb.len()
-                * manifest_ack_records.len()
-                * manifest_ack_kb.len()
                 * thresholds_mib.len(),
             args.repeats,
             join_values(&thresholds_mib),
@@ -304,41 +295,26 @@ fn run_matrix(args: MatrixArgs) -> Result<()> {
                 for threads in &threads {
                     for frame_target_mb in &frames_mb {
                         for read_buffer_kb in &buffers_kb {
-                            for manifest_chunk_kb in &manifest_chunk_kb {
-                                for manifest_ack_records in &manifest_ack_records {
-                                    for manifest_ack_kb in &manifest_ack_kb {
-                                        if *manifest_ack_kb < *manifest_chunk_kb {
-                                            bail!(
-                                                "manifest-ack-kb must not be smaller than manifest-chunk-kb: {} < {}",
-                                                manifest_ack_kb,
-                                                manifest_chunk_kb
-                                            );
-                                        }
-                                        for threshold_mib in &thresholds_mib {
-                                            for repeat_index in 1..=args.repeats {
-                                                planned_runs.push((
-                                                    *network_profile,
-                                                    *executor,
-                                                    ScenarioKey {
-                                                        dataset: dataset.name.to_owned(),
-                                                        protocol_runtime: "v3".to_owned(),
-                                                        network_profile: (*network_profile)
-                                                            .to_owned(),
-                                                        executor: executor.label().to_owned(),
-                                                        threads: *threads,
-                                                        frame_target_mb: *frame_target_mb,
-                                                        read_buffer_kb: *read_buffer_kb,
-                                                        manifest_chunk_kb: *manifest_chunk_kb,
-                                                        manifest_ack_records: *manifest_ack_records,
-                                                        manifest_ack_kb: *manifest_ack_kb,
-                                                        large_file_single_frame_threshold_mib:
-                                                            *threshold_mib,
-                                                    },
-                                                    repeat_index,
-                                                ));
-                                            }
-                                        }
-                                    }
+                            for threshold_mib in &thresholds_mib {
+                                for repeat_index in 1..=args.repeats {
+                                    planned_runs.push((
+                                        *network_profile,
+                                        *executor,
+                                        ScenarioKey {
+                                            dataset: dataset.name.to_owned(),
+                                            protocol_runtime: PROTOCOL_RUNTIME_LABEL.to_owned(),
+                                            network_profile: (*network_profile).to_owned(),
+                                            executor: executor.label().to_owned(),
+                                            threads: *threads,
+                                            frame_target_mb: *frame_target_mb,
+                                            read_buffer_kb: *read_buffer_kb,
+                                            manifest_chunk_kb: default_manifest_chunk_kb,
+                                            manifest_ack_records: default_manifest_ack_records,
+                                            manifest_ack_kb: default_manifest_ack_kb,
+                                            large_file_single_frame_threshold_mib: *threshold_mib,
+                                        },
+                                        repeat_index,
+                                    ));
                                 }
                             }
                         }
@@ -361,17 +337,13 @@ fn run_matrix(args: MatrixArgs) -> Result<()> {
             }
 
             eprintln!(
-                "[bench-matrix] run dataset={} runtime={} network={} executor={} threads={} frame={}MiB buffer={}KiB manifest_chunk={}KiB manifest_ack_records={} manifest_ack={}KiB isolate={}MiB repeat={}/{}",
+                "[bench-matrix] run dataset={} network={} executor={} threads={} frame={}MiB buffer={}KiB isolate={}MiB repeat={}/{}",
                 scenario.dataset,
-                scenario.protocol_runtime,
                 scenario.network_profile,
                 scenario.executor,
                 scenario.threads,
                 scenario.frame_target_mb,
                 scenario.read_buffer_kb,
-                scenario.manifest_chunk_kb,
-                scenario.manifest_ack_records,
-                scenario.manifest_ack_kb,
                 scenario.large_file_single_frame_threshold_mib,
                 repeat_index,
                 args.repeats
@@ -385,9 +357,6 @@ fn run_matrix(args: MatrixArgs) -> Result<()> {
                 scenario.threads,
                 scenario.frame_target_mb,
                 scenario.read_buffer_kb,
-                scenario.manifest_chunk_kb,
-                scenario.manifest_ack_records,
-                scenario.manifest_ack_kb,
             );
             let metrics = run_loopback_scenario(&dataset.path, &options, network_profile);
             let row = raw_row(scenario.clone(), repeat_index, metrics);
@@ -503,71 +472,6 @@ fn resolve_large_file_single_frame_thresholds_mib(requested: &[u64]) -> Result<V
     Ok(selected.into_iter().collect())
 }
 
-fn resolve_manifest_chunk_values_kb(requested: &[usize]) -> Result<Vec<usize>> {
-    let default_chunk_kb = default_matrix_send_options().manifest_chunk_bytes / 1024;
-    if requested.is_empty() {
-        return Ok(vec![default_chunk_kb]);
-    }
-
-    let max_chunk_kb = protocol::MAX_MANIFEST_CHUNK_PAYLOAD_BYTES / 1024;
-    let mut selected = BTreeSet::new();
-    for value in requested {
-        if *value == 0 {
-            bail!("manifest-chunk-kb must not contain 0");
-        }
-        if *value > max_chunk_kb {
-            bail!("manifest-chunk-kb exceeds protocol cap: {value} > {max_chunk_kb}");
-        }
-        selected.insert(*value);
-    }
-
-    Ok(selected.into_iter().collect())
-}
-
-fn resolve_manifest_ack_record_values(requested: &[u64]) -> Result<Vec<u64>> {
-    let default_ack_records = default_matrix_send_options().manifest_ack_records;
-    if requested.is_empty() {
-        return Ok(vec![default_ack_records]);
-    }
-
-    let mut selected = BTreeSet::new();
-    for value in requested {
-        if *value == 0 {
-            bail!("manifest-ack-records must not contain 0");
-        }
-        if *value > protocol::MAX_UNACKED_MANIFEST_RECORDS {
-            bail!(
-                "manifest-ack-records exceeds protocol cap: {value} > {}",
-                protocol::MAX_UNACKED_MANIFEST_RECORDS
-            );
-        }
-        selected.insert(*value);
-    }
-
-    Ok(selected.into_iter().collect())
-}
-
-fn resolve_manifest_ack_values_kb(requested: &[usize]) -> Result<Vec<usize>> {
-    let default_ack_kb = default_matrix_send_options().manifest_ack_bytes / 1024;
-    if requested.is_empty() {
-        return Ok(vec![default_ack_kb]);
-    }
-
-    let max_ack_kb = protocol::MAX_UNACKED_MANIFEST_BYTES / 1024;
-    let mut selected = BTreeSet::new();
-    for value in requested {
-        if *value == 0 {
-            bail!("manifest-ack-kb must not contain 0");
-        }
-        if *value > max_ack_kb {
-            bail!("manifest-ack-kb exceeds protocol cap: {value} > {max_ack_kb}");
-        }
-        selected.insert(*value);
-    }
-
-    Ok(selected.into_iter().collect())
-}
-
 fn dataset_shuffle_salt(dataset: &str) -> u64 {
     dataset.bytes().fold(0_u64, |acc, byte| {
         acc.wrapping_mul(131).wrapping_add(u64::from(byte))
@@ -602,21 +506,11 @@ where
 
 // В raw CSV фиксируем уже нормализованные runtime knobs, чтобы resume и summary
 // агрегировали именно тот sender-конфиг, который реально исполнялся.
-fn scenario_options(
-    threads: u32,
-    frame_target_mb: u64,
-    read_buffer_kb: u64,
-    manifest_chunk_kb: usize,
-    manifest_ack_records: u64,
-    manifest_ack_kb: usize,
-) -> SendOptions {
+fn scenario_options(threads: u32, frame_target_mb: u64, read_buffer_kb: u64) -> SendOptions {
     SendOptions {
         threads,
         frame_target_bytes: frame_target_mb * 1024 * 1024,
         read_buffer_bytes: (read_buffer_kb * 1024) as usize,
-        manifest_chunk_bytes: manifest_chunk_kb * 1024,
-        manifest_ack_records,
-        manifest_ack_bytes: manifest_ack_kb * 1024,
         ..default_matrix_send_options()
     }
 }

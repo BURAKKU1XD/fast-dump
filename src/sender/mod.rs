@@ -1,25 +1,24 @@
-mod frame;
-mod profile;
-mod readers;
-mod session;
-pub(crate) mod source;
+mod compress;
+#[cfg(feature = "bench-internals")]
+#[doc(hidden)]
+pub mod file_bench;
+mod network;
+mod plan;
+mod read;
+mod read_ahead;
+mod scan;
+mod stream;
+mod tar;
 
-// Этот модуль остаётся тонким фасадом sender и только реэкспортирует API.
-pub use frame::OutboundFrame;
-pub use profile::{FileReadProfile, PipelineProfile, StageProfile};
-pub use session::{
-    SendDiscoveryIssue, SendDiscoveryIssueReason, SendDiscoveryIssueScope, SendIssue,
-    SendIssueReason, SendOptions, SendReport, SendStatus, send_dump, send_dump_profile,
-    send_finish, send_frame, send_frame_abort,
-};
-pub use source::{FileResumeState, SenderSource, SenderSourceKind, SourceScanReport};
+pub use crate::profile::{SenderProfile, StageProfile};
+pub(crate) use compress::compress_tar_termination_frame;
+pub use network::{SendReport, send_dump, send_dump_profile};
+pub use plan::BundlePlanOptions;
+pub(crate) use plan::plan_dump;
+pub use scan::{SourceScanReport, SourceWalkReport, scan_source, walk_source};
 
-pub(crate) use frame::{FrameBuildStats, PendingFrameFiles};
-pub(crate) use profile::PipelineProfileCollector;
-pub(crate) use readers::{
-    DirectFileStream, FileDisposition, FileReadOutcome, FileSkipReason, FileSnapshot, ReadEvent,
-    ReaderPool, SnapshotStorage,
-};
-pub use source::scan_source;
-pub(crate) use source::{InputFile, InputFileKind, PendingFileWalker};
-pub(crate) use source::{SenderSourceProbe, SenderWorkloadClass, probe_source_workload};
+#[cfg(test)]
+pub(crate) use plan::prepare_dump;
+
+#[cfg(test)]
+pub(crate) use read::test_hooks;

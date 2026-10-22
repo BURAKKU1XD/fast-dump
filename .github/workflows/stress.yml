@@ -28,7 +28,13 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force -Path artifacts | Out-Null
-          cargo test --test integration sender_and_receiver_roundtrip_random_files_and_verify_hashes -- --ignored --nocapture 2>&1 | Tee-Object -FilePath artifacts/stress.log
+          $testName = 'connectivity::roundtrip_fast::sender_and_receiver_roundtrip_random_files_and_verify_hashes'
+          $tests = cargo test --release --test integration -- --list 2>&1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($tests -notcontains "${testName}: test") {
+            throw "Stress test is missing: $testName"
+          }
+          cargo test --release --test integration $testName -- --exact --ignored --nocapture 2>&1 | Tee-Object -FilePath artifacts/stress.log
           $exitCode = $LASTEXITCODE
           if ($exitCode -ne 0) {
             exit $exitCode

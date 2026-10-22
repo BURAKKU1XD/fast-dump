@@ -2,6 +2,11 @@
 name = "fast-dump"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.89"
+
+[features]
+bench-internals = ["windows-sys/Win32_System_ProcessStatus", "windows-sys/Win32_System_Threading", "windows-sys/Win32_System_WindowsProgramming"]
+bench-allocations = ["bench-internals"]
 
 [dependencies]
 anyhow = "1"
@@ -13,6 +18,9 @@ log = "0.4"
 tar = "0.4"
 xxhash-rust = { version = "0.8", features = ["xxh3"] }
 zstd = { version = "0.13", features = ["zstdmt"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
 
 [dev-dependencies]
 criterion = "0.5"
@@ -26,6 +34,11 @@ harness = false
 [[bench]]
 name = "scan_source"
 harness = false
+
+[[bench]]
+name = "file_pipeline"
+harness = false
+required-features = ["bench-internals"]
 
 [profile.release]
 lto = "thin"

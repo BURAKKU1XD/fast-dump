@@ -1,524 +1,293 @@
-use std::io::{Read, Write};
+use std::fs::{self, File};
 use std::path::PathBuf;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
-use anyhow::{Result, bail};
-use log::debug;
+use anyhow::{Context, Result, bail};
 
-use crate::network::protocol::{
-    self, Finish, ManifestChunk, ManifestSeal, ManifestStart, Message, ResumeState,
-};
+use crate::network::protocol::{BundleDescriptor, ResumeState, SkippedEntry, validate_dump_id};
 
-use super::finish::{
-    append_issue_journal_chunk, discard_issue_journal_temp, receive_finish_message,
-};
-use super::frame::receive_frame_event_v3_from_start;
-use super::journal::ReceiverManifestBoundary;
-use super::resume::respond_resume_query_checked;
-use super::shared::{
-    ReceiverTempFileAppender, ReceiverTempFileKind, receiver_storage_exhausted_protocol_message,
-};
-use super::{ReceiverProfile, ReceiverState};
+#[cfg(test)]
+use crate::network::protocol::PreparedBundle;
 
-#[cfg_attr(not(test), allow(dead_code))]
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ReceiveReport {
-    pub resume_state: ResumeState,
-    pub state: ReceiverState,
-    pub finish: Finish,
-    pub final_archive_path: PathBuf,
-    pub profile: ReceiverProfile,
+use super::archive::ArchiveAppender;
+use super::wal::{WalRecord, WalWriter, wal_record_from_descriptor};
+use super::{ReceiverPaths, catalog, recovery};
+
+#[derive(Debug, Clone)]
+pub(crate) struct OfflineReceiveReport {
+    pub(crate) final_archive_path: PathBuf,
+    pub(crate) issue_report_path: Option<PathBuf>,
+    pub(crate) resume_state: ResumeState,
 }
 
-#[derive(Debug)]
-struct ManifestReceiveState {
-    started: bool,
-    ack_records: u64,
-    ack_bytes: usize,
-    last_acked_record_seq: u64,
-    bytes_since_ack: usize,
-    appender: ReceiverTempFileAppender,
-    durable_boundary: ReceiverManifestBoundary,
-    staged_boundary: ReceiverManifestBoundary,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub(crate) struct FinalizeProfile {
+    pub(crate) total_duration: Duration,
+    pub(crate) archive_finalize_duration: Duration,
+    pub(crate) issue_finalize_duration: Duration,
 }
 
-fn receiver_manifest_boundary(state: &ReceiverState) -> protocol::ManifestBoundary {
-    let boundary = state.journal.manifest_boundary();
-    protocol::ManifestBoundary {
-        manifest_bytes_persisted: boundary.manifest_bytes_persisted,
-        last_record_seq: boundary.last_manifest_record_seq,
-        last_work_ordinal: boundary.last_manifest_work_ordinal,
-        sealed: boundary.manifest_sealed,
+struct FileLock(File);
+
+impl Drop for FileLock {
+    fn drop(&mut self) {
+        // После fork/try_clone другой fd может держать ту же open file description.
+        // Одного close недостаточно: освобождаем lock до закрытия нашего handle.
+        while let Err(error) = self.0.unlock() {
+            if error.kind() != std::io::ErrorKind::Interrupted {
+                break;
+            }
+        }
     }
 }
 
-fn send_protocol_error<T>(stream: &mut T, message: impl Into<String>) -> Result<()>
-where
-    T: Write,
-{
-    protocol::write_message(
-        stream,
-        &Message::Error(protocol::ErrorMessage {
-            message: message.into(),
-        }),
-    )
+pub(crate) struct ReceiverSession {
+    paths: ReceiverPaths,
+    archive: ArchiveAppender,
+    wal: WalWriter,
+    resume_state: ResumeState,
+    compression_level: i32,
+    // Последнее поле закрывается после archive/WAL; lock-файл не удаляем,
+    // иначе новый процесс может захватить другой inode под тем же именем.
+    _dump_lock: FileLock,
 }
 
-impl ManifestReceiveState {
-    fn new(state: &ReceiverState, ack_records: u64, ack_bytes: usize) -> Result<Self> {
-        if ack_records == 0 {
-            bail!("manifest ack cadence must require at least one record");
-        }
-        if ack_records > protocol::MAX_UNACKED_MANIFEST_RECORDS {
+impl ReceiverSession {
+    pub(crate) fn open(data_dir: PathBuf, dump_id: &str, compression_level: i32) -> Result<Self> {
+        validate_dump_id(dump_id)?;
+        let paths = ReceiverPaths::new(data_dir, dump_id);
+        fs::create_dir_all(&paths.data_dir).with_context(|| {
+            format!(
+                "failed to create v4 receiver directory {}",
+                paths.data_dir.display()
+            )
+        })?;
+        // Открытия сериализуются лишь до завершения migration/recovery: marker
+        // соседнего dump_id с суффиксом .v4 не должен появиться между проверкой
+        // старых имён и rename. Весь transfer держит только собственный dump lock.
+        let open_lock_path = paths.data_dir.join(".fast-dump-open-lock");
+        let open_lock = File::options()
+            .create(true)
+            .read(true)
+            .write(true)
+            .truncate(false)
+            .open(&open_lock_path)
+            .with_context(|| {
+                format!(
+                    "failed to open v4 receiver initialization lock {}",
+                    open_lock_path.display()
+                )
+            })?;
+        open_lock.lock().with_context(|| {
+            format!(
+                "failed to lock v4 receiver initialization {}",
+                open_lock_path.display()
+            )
+        })?;
+        let _open_lock = FileLock(open_lock);
+        let lock_path = paths.data_dir.join(format!("{dump_id}.lock"));
+        let dump_lock = File::options()
+            .create(true)
+            .read(true)
+            .write(true)
+            .truncate(false)
+            .open(&lock_path)
+            .with_context(|| format!("failed to open v4 dump lock {}", lock_path.display()))?;
+        // Межпроцессная блокировка должна предшествовать migration и truncate.
+        dump_lock.try_lock().with_context(|| {
+            format!(
+                "v4 dump is already active or cannot be locked: {}",
+                lock_path.display()
+            )
+        })?;
+        let dump_lock = FileLock(dump_lock);
+        paths.migrate_legacy_state()?;
+
+        if paths.final_archive_path.exists() {
             bail!(
-                "manifest ack record window exceeds protocol cap: {} > {}",
-                ack_records,
-                protocol::MAX_UNACKED_MANIFEST_RECORDS
-            );
-        }
-        if ack_bytes == 0 {
-            bail!("manifest ack cadence must require at least one byte");
-        }
-        if ack_bytes > protocol::MAX_UNACKED_MANIFEST_BYTES {
-            bail!(
-                "manifest ack byte window exceeds protocol cap: {} > {}",
-                ack_bytes,
-                protocol::MAX_UNACKED_MANIFEST_BYTES
+                "completed v4 dump already exists for {} at {}",
+                paths.dump_id,
+                paths.final_archive_path.display()
             );
         }
 
-        let durable_boundary = state.journal.manifest_boundary();
-        let appender = ReceiverTempFileAppender::open(
-            state.paths.manifest_path(),
-            ReceiverTempFileKind::Manifest,
-        )?;
-        if appender.current_len() != durable_boundary.manifest_bytes_persisted {
-            bail!(
-                "receiver manifest appender length {} does not match committed boundary {}",
-                appender.current_len(),
-                durable_boundary.manifest_bytes_persisted
-            );
-        }
+        let resume_state = recovery::recover(&paths)?;
+        let archive = ArchiveAppender::open(&paths, resume_state.archive_len)?;
+        let wal = WalWriter::open(&paths.wal_path)?;
+        // Первый durable commit требует сохранённых имён обоих partial-файлов.
+        catalog::sync_parent_directory(&paths.wal_path)?;
 
         Ok(Self {
-            started: false,
-            ack_records,
-            ack_bytes,
-            last_acked_record_seq: durable_boundary.last_manifest_record_seq.unwrap_or(0),
-            bytes_since_ack: 0,
-            appender,
-            durable_boundary,
-            staged_boundary: durable_boundary,
+            paths,
+            archive,
+            wal,
+            resume_state,
+            compression_level,
+            _dump_lock: dump_lock,
         })
     }
 
-    fn current_boundary(&self, state: &ReceiverState) -> protocol::ManifestBoundary {
-        receiver_manifest_boundary(state)
+    pub(crate) fn resume_state(&self) -> &ResumeState {
+        &self.resume_state
     }
 
-    fn handle_start<T>(
+    #[cfg(test)]
+    pub(crate) fn record_terminal_skips(&mut self, skips: &[SkippedEntry]) -> Result<()> {
+        self.record_terminal_skips_profiled(skips).map(|_| ())
+    }
+
+    pub(crate) fn record_terminal_skips_profiled(
         &mut self,
-        stream: &mut T,
-        state: &ReceiverState,
-        start: ManifestStart,
-    ) -> Result<protocol::ManifestBoundary>
-    where
-        T: Read + Write,
-    {
-        let current = self.current_boundary(state);
-        if start.base_manifest != current {
-            send_protocol_error(stream, "v3 manifest start base boundary mismatch")?;
-            bail!("v3 manifest start base boundary mismatch");
+        skips: &[SkippedEntry],
+    ) -> Result<Duration> {
+        let started = Instant::now();
+        self.resume_state.terminal_skips =
+            catalog::merge_terminal_skips(&self.paths.catalog_path, skips)?;
+        Ok(started.elapsed())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn stage_bundle(&mut self, bundle: &PreparedBundle) -> Result<()> {
+        self.archive.append_chunk(&bundle.compressed_payload)?;
+        self.archive.sync()?;
+        Ok(())
+    }
+
+    pub(crate) const fn current_archive_len(&self) -> u64 {
+        self.archive.current_len()
+    }
+
+    pub(crate) fn append_bundle_chunk(&mut self, bytes: &[u8]) -> Result<()> {
+        self.archive.append_chunk(bytes)
+    }
+
+    pub(crate) fn sync_archive(&mut self) -> Result<()> {
+        self.archive.sync()
+    }
+
+    pub(crate) fn sync_wal(&mut self) -> Result<()> {
+        self.wal.sync()
+    }
+
+    pub(crate) fn rollback_staged_bundle(&mut self, archive_len_before_append: u64) -> Result<()> {
+        self.archive.truncate_to(archive_len_before_append)
+    }
+
+    pub(crate) fn buffered_commit_record(
+        &mut self,
+        descriptor: &BundleDescriptor,
+        archive_len: u64,
+    ) -> Result<WalRecord> {
+        let record = wal_record_from_descriptor(descriptor, archive_len);
+        self.wal.append_commit_record(&record)?;
+        Ok(record)
+    }
+
+    pub(crate) fn apply_commit_record(&mut self, record: WalRecord) {
+        self.resume_state.last_committed_bundle_no = record.bundle_no;
+        self.resume_state.last_committed_work_ordinal = record.last_work_ordinal;
+        self.resume_state.last_committed_relative_path = record.last_relative_path;
+        self.resume_state.archive_len = record.archive_len;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn commit_bundle(&mut self, bundle: &PreparedBundle) -> Result<()> {
+        self.archive.append_chunk(&bundle.compressed_payload)?;
+        self.archive.sync()?;
+        let record = self.buffered_commit_record(&bundle.descriptor, self.archive.current_len())?;
+        self.sync_wal()?;
+        self.apply_commit_record(record);
+        Ok(())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn finalize(self) -> Result<OfflineReceiveReport> {
+        Ok(self.finalize_profiled()?.0)
+    }
+
+    pub(crate) fn finalize_profiled(mut self) -> Result<(OfflineReceiveReport, FinalizeProfile)> {
+        let total_started = Instant::now();
+        self.archive
+            .append_termination_frame(self.compression_level)?;
+        let issue_finalize_started = Instant::now();
+        let issue_report_path =
+            catalog::finalize_issue_report(&self.paths, &self.resume_state.terminal_skips)?;
+        let issue_finalize_duration = issue_finalize_started.elapsed();
+        let archive_finalize_started = Instant::now();
+        let final_archive_path = self.archive.finalize()?;
+        let archive_finalize_duration = archive_finalize_started.elapsed();
+        // WAL сохраняет возможность resume до появления готового архива.
+        // После rename оставшийся WAL означает лишь незавершённую уборку.
+        Self::cleanup_partial_state(&self.paths)?;
+        Ok((
+            OfflineReceiveReport {
+                final_archive_path,
+                issue_report_path,
+                resume_state: self.resume_state,
+            },
+            FinalizeProfile {
+                total_duration: total_started.elapsed(),
+                archive_finalize_duration,
+                issue_finalize_duration,
+            },
+        ))
+    }
+
+    fn cleanup_partial_state(paths: &ReceiverPaths) -> Result<()> {
+        for path in [
+            &paths.wal_path,
+            &paths.catalog_path,
+            &paths.issues_part_path,
+        ] {
+            if path.exists() {
+                fs::remove_file(path).with_context(|| {
+                    format!(
+                        "failed to remove stale v4 receiver state {}",
+                        path.display()
+                    )
+                })?;
+            }
         }
-        self.started = true;
-        self.last_acked_record_seq = current.last_record_seq.unwrap_or(0);
-        self.bytes_since_ack = 0;
-        Ok(current)
-    }
-
-    fn handle_chunk<T>(
-        &mut self,
-        stream: &mut T,
-        state: &mut ReceiverState,
-        chunk: ManifestChunk,
-        profile: &mut ReceiverProfile,
-    ) -> Result<protocol::ManifestBoundary>
-    where
-        T: Read + Write,
-    {
-        let stage_started = Instant::now();
-        let boundary = match state.stage_manifest_chunk_with_appender(
-            self.staged_boundary,
-            &mut self.appender,
-            &chunk.bytes,
-            chunk.last_record_seq,
-            chunk.last_work_ordinal,
-            false,
-        ) {
-            Ok(boundary) => boundary,
-            Err(error) => {
-                if let Some(message) = receiver_storage_exhausted_protocol_message(&error) {
-                    send_protocol_error(stream, message)?;
-                }
-                return Err(error);
-            }
-        };
-        profile.record_manifest_stage(chunk.bytes.len() as u64, stage_started.elapsed());
-        self.staged_boundary = boundary;
-        self.bytes_since_ack = self.bytes_since_ack.saturating_add(chunk.bytes.len());
-        let records_since_ack = self
-            .staged_boundary
-            .last_manifest_record_seq
-            .unwrap_or(self.last_acked_record_seq)
-            .saturating_sub(self.last_acked_record_seq);
-        if self.bytes_since_ack >= self.ack_bytes || records_since_ack >= self.ack_records {
-            let boundary = self.commit_staged_boundary(stream, state, profile)?;
-            self.last_acked_record_seq = boundary
-                .last_record_seq
-                .unwrap_or(self.last_acked_record_seq);
-            self.bytes_since_ack = 0;
-        }
-        Ok(protocol::ManifestBoundary {
-            manifest_bytes_persisted: self.staged_boundary.manifest_bytes_persisted,
-            last_record_seq: self.staged_boundary.last_manifest_record_seq,
-            last_work_ordinal: self.staged_boundary.last_manifest_work_ordinal,
-            sealed: self.staged_boundary.manifest_sealed,
-        })
-    }
-
-    fn handle_seal<T>(
-        &mut self,
-        stream: &mut T,
-        state: &mut ReceiverState,
-        seal: ManifestSeal,
-        profile: &mut ReceiverProfile,
-    ) -> Result<protocol::ManifestBoundary>
-    where
-        T: Read + Write,
-    {
-        let stage_started = Instant::now();
-        let boundary = match state.stage_manifest_chunk_with_appender(
-            self.staged_boundary,
-            &mut self.appender,
-            &[],
-            seal.final_record_seq,
-            seal.final_work_ordinal,
-            true,
-        ) {
-            Ok(boundary) => boundary,
-            Err(error) => {
-                if let Some(message) = receiver_storage_exhausted_protocol_message(&error) {
-                    send_protocol_error(stream, message)?;
-                }
-                return Err(error);
-            }
-        };
-        profile.record_manifest_stage(0, stage_started.elapsed());
-        self.staged_boundary = boundary;
-        let boundary = self.commit_staged_boundary(stream, state, profile)?;
-        self.last_acked_record_seq = boundary
-            .last_record_seq
-            .unwrap_or(self.last_acked_record_seq);
-        self.bytes_since_ack = 0;
-        Ok(boundary)
-    }
-
-    fn commit_staged_boundary<T>(
-        &mut self,
-        stream: &mut T,
-        state: &mut ReceiverState,
-        profile: &mut ReceiverProfile,
-    ) -> Result<protocol::ManifestBoundary>
-    where
-        T: Write,
-    {
-        let committed_bytes = self
-            .staged_boundary
-            .manifest_bytes_persisted
-            .saturating_sub(self.durable_boundary.manifest_bytes_persisted);
-        let commit_started = Instant::now();
-        let boundary = match state.commit_manifest_boundary_with_appender(
-            &mut self.appender,
-            self.durable_boundary,
-            self.staged_boundary,
-        ) {
-            Ok(boundary) => boundary,
-            Err(error) => {
-                if let Some(message) = receiver_storage_exhausted_protocol_message(&error) {
-                    send_protocol_error(stream, message)?;
-                }
-                return Err(error);
-            }
-        };
-        profile.record_manifest_commit(committed_bytes, commit_started.elapsed());
-        self.durable_boundary = boundary;
-        let boundary = protocol::ManifestBoundary {
-            manifest_bytes_persisted: boundary.manifest_bytes_persisted,
-            last_record_seq: boundary.last_manifest_record_seq,
-            last_work_ordinal: boundary.last_manifest_work_ordinal,
-            sealed: boundary.manifest_sealed,
-        };
-        let ack_started = Instant::now();
-        protocol::write_message(
-            stream,
-            &Message::ManifestAck(protocol::ManifestAck {
-                committed_manifest: boundary.clone(),
-            }),
-        )?;
-        profile.record_manifest_ack_flush(ack_started.elapsed());
-        Ok(boundary)
+        catalog::sync_parent_directory(&paths.wal_path)
     }
 }
 
-fn receive_issue_tail_from_chunk<T>(
-    stream: &mut T,
-    state: &ReceiverState,
-    first_chunk: protocol::IssueChunk,
-    profile: &mut ReceiverProfile,
-) -> Result<(usize, protocol::Message)>
-where
-    T: Read + Write,
-{
-    let issue_started = Instant::now();
-    discard_issue_journal_temp(state)?;
-    if let Err(error) = append_issue_journal_chunk(state, &first_chunk.entries) {
-        if let Some(message) = receiver_storage_exhausted_protocol_message(&error) {
-            let _ = discard_issue_journal_temp(state);
-            send_protocol_error(stream, message)?;
-        }
-        let _ = discard_issue_journal_temp(state);
-        return Err(error);
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tests::TestDir;
+
+    #[test]
+    fn session_drop_unlocks_even_while_inherited_descriptor_remains_open() {
+        let directory = TestDir::new();
+        let receiver = ReceiverSession::open(directory.path().to_path_buf(), "guard", 1).unwrap();
+        // try_clone моделирует fd, который другой thread унаследовал через fork.
+        let inherited = receiver._dump_lock.0.try_clone().unwrap();
+        assert!(ReceiverSession::open(directory.path().to_path_buf(), "guard", 1).is_err());
+        drop(receiver);
+
+        let reopened = ReceiverSession::open(directory.path().to_path_buf(), "guard", 1).unwrap();
+        assert!(inherited.metadata().is_ok());
+        assert_eq!(reopened.resume_state().last_committed_bundle_no, 0);
     }
 
-    let mut chunks_received = 1_usize;
-    loop {
-        match protocol::read_message(stream)? {
-            protocol::Message::IssueChunk(chunk) => {
-                if let Err(error) = append_issue_journal_chunk(state, &chunk.entries) {
-                    if let Some(message) = receiver_storage_exhausted_protocol_message(&error) {
-                        let _ = discard_issue_journal_temp(state);
-                        send_protocol_error(stream, message)?;
-                    }
-                    let _ = discard_issue_journal_temp(state);
-                    return Err(error);
-                }
-                chunks_received = chunks_received.saturating_add(1);
-            }
-            protocol::Message::Error(error) => {
-                let _ = discard_issue_journal_temp(state);
-                bail!("peer aborted during v3 issue tail: {}", error.message);
-            }
-            message => {
-                profile.record_issue_tail(chunks_received as u64, issue_started.elapsed());
-                return Ok((chunks_received, message));
-            }
-        }
-    }
-}
+    #[test]
+    fn initialization_guard_drop_unlocks_even_while_inherited_descriptor_remains_open() {
+        let directory = TestDir::new();
+        let path = directory.path().join(".fast-dump-open-lock");
+        let file = File::create(&path).unwrap();
+        file.lock().unwrap();
+        let guard = FileLock(file);
+        let inherited = guard.0.try_clone().unwrap();
+        let contender = File::options().read(true).write(true).open(&path).unwrap();
+        assert!(matches!(
+            contender.try_lock(),
+            Err(std::fs::TryLockError::WouldBlock)
+        ));
+        drop(guard);
 
-#[cfg_attr(not(test), allow(dead_code))]
-pub fn receive_dump<T>(
-    stream: &mut T,
-    data_dir: impl Into<PathBuf>,
-    manifest_ack_records: u64,
-    manifest_ack_bytes: usize,
-) -> Result<ReceiveReport>
-where
-    T: Read + Write,
-{
-    receive_dump_checked(
-        stream,
-        data_dir,
-        None,
-        manifest_ack_records,
-        manifest_ack_bytes,
-    )
-}
-
-#[cfg_attr(not(test), allow(dead_code))]
-pub fn receive_dump_checked<T>(
-    stream: &mut T,
-    data_dir: impl Into<PathBuf>,
-    expected_dump_id: Option<&str>,
-    manifest_ack_records: u64,
-    manifest_ack_bytes: usize,
-) -> Result<ReceiveReport>
-where
-    T: Read + Write,
-{
-    let session_started = Instant::now();
-    let mut state = respond_resume_query_checked(stream, data_dir, expected_dump_id)?;
-    let mut profile = ReceiverProfile::default();
-    let resume_state = state.resume_state();
-    let mut manifest = ManifestReceiveState::new(&state, manifest_ack_records, manifest_ack_bytes)?;
-    let mut manifest_started = false;
-    debug!(
-        "receiver v3 dump session ready: dump_id={} resume_frame={} resume_work_ordinal={:?} archive_len={} manifest_record_seq={:?} manifest_work_ordinal={:?} manifest_sealed={}",
-        state.paths.dump_id(),
-        resume_state.archive.last_committed_frame,
-        resume_state.archive.last_committed_work_ordinal,
-        resume_state.archive.archive_len,
-        resume_state.manifest.last_record_seq,
-        resume_state.manifest.last_work_ordinal,
-        resume_state.manifest.sealed
-    );
-
-    loop {
-        match protocol::read_message(stream)? {
-            Message::ManifestStart(start) => {
-                let boundary = manifest.handle_start(stream, &state, start)?;
-                manifest_started = true;
-                debug!(
-                    "receiver v3 manifest transfer started: dump_id={} record_seq={:?} work_ordinal={:?} sealed={}",
-                    state.paths.dump_id(),
-                    boundary.last_record_seq,
-                    boundary.last_work_ordinal,
-                    boundary.sealed
-                );
-            }
-            Message::ManifestChunk(chunk) => {
-                if !manifest_started {
-                    send_protocol_error(
-                        stream,
-                        "expected v3 manifest start before manifest chunk",
-                    )?;
-                    bail!("unexpected v3 manifest chunk before manifest start");
-                }
-                let boundary = manifest.handle_chunk(stream, &mut state, chunk, &mut profile)?;
-                debug!(
-                    "receiver v3 manifest boundary advanced: dump_id={} record_seq={:?} work_ordinal={:?} sealed={}",
-                    state.paths.dump_id(),
-                    boundary.last_record_seq,
-                    boundary.last_work_ordinal,
-                    boundary.sealed
-                );
-            }
-            Message::ManifestSeal(seal) => {
-                if !manifest_started {
-                    send_protocol_error(stream, "expected v3 manifest start before manifest seal")?;
-                    bail!("unexpected v3 manifest seal before manifest start");
-                }
-                let boundary = manifest.handle_seal(stream, &mut state, seal, &mut profile)?;
-                debug!(
-                    "receiver v3 manifest sealed: dump_id={} record_seq={:?} work_ordinal={:?}",
-                    state.paths.dump_id(),
-                    boundary.last_record_seq,
-                    boundary.last_work_ordinal
-                );
-            }
-            Message::FrameStart(frame_start) => {
-                if !manifest_started {
-                    send_protocol_error(stream, "expected v3 manifest start before frame start")?;
-                    bail!("unexpected v3 frame start before manifest start");
-                }
-                match receive_frame_event_v3_from_start(
-                    stream,
-                    &mut state,
-                    frame_start,
-                    &mut profile,
-                )? {
-                    super::frame::FrameReceiveResult::Committed(_) => {}
-                    super::frame::FrameReceiveResult::Aborted(_) => {}
-                }
-            }
-            Message::IssueChunk(first_chunk) => {
-                if !manifest_started {
-                    send_protocol_error(stream, "expected v3 manifest start before issue tail")?;
-                    bail!("unexpected v3 issue tail before manifest start");
-                }
-                if !state.journal.manifest_sealed {
-                    send_protocol_error(stream, "v3 issue tail requires sealed manifest boundary")?;
-                    bail!("unexpected v3 issue tail before manifest seal");
-                }
-                let (chunks_received, next_message) =
-                    receive_issue_tail_from_chunk(stream, &state, first_chunk, &mut profile)?;
-                debug!(
-                    "receiver v3 issue tail received: dump_id={} chunks={}",
-                    state.paths.dump_id(),
-                    chunks_received
-                );
-                match next_message {
-                    Message::Finish(finish) => {
-                        if !state.journal.manifest_sealed {
-                            send_protocol_error(
-                                stream,
-                                "v3 finish requires sealed manifest boundary",
-                            )?;
-                            bail!("unexpected v3 finish before manifest seal");
-                        }
-                        let finish = receive_finish_message(stream, &state, finish, &mut profile)?;
-                        let final_archive_path = state.paths.final_archive_path().to_path_buf();
-                        profile.record_total(session_started.elapsed());
-                        debug!(
-                            "receiver v3 dump session completed: dump_id={} final_frame_no={} final_work_ordinal={:?} total_elapsed_ms={}",
-                            state.paths.dump_id(),
-                            finish.final_frame_no,
-                            finish.final_work_ordinal,
-                            session_started.elapsed().as_millis()
-                        );
-                        return Ok(ReceiveReport {
-                            resume_state,
-                            state,
-                            finish,
-                            final_archive_path,
-                            profile,
-                        });
-                    }
-                    Message::Error(error) => {
-                        let _ = discard_issue_journal_temp(&state);
-                        bail!("peer aborted during v3 issue tail: {}", error.message);
-                    }
-                    unexpected => {
-                        let _ = discard_issue_journal_temp(&state);
-                        send_protocol_error(stream, "expected v3 finish after typed issue tail")?;
-                        bail!(
-                            "unexpected v3 message after issue tail: {:?}",
-                            unexpected.kind()
-                        );
-                    }
-                }
-            }
-            Message::Finish(finish) => {
-                if !manifest_started {
-                    send_protocol_error(stream, "expected v3 manifest start before finish")?;
-                    bail!("unexpected v3 finish before manifest start");
-                }
-                if !state.journal.manifest_sealed {
-                    send_protocol_error(stream, "v3 finish requires sealed manifest boundary")?;
-                    bail!("unexpected v3 finish before manifest seal");
-                }
-                let finish = receive_finish_message(stream, &state, finish, &mut profile)?;
-                let final_archive_path = state.paths.final_archive_path().to_path_buf();
-                profile.record_total(session_started.elapsed());
-                debug!(
-                    "receiver v3 dump session completed: dump_id={} final_frame_no={} final_work_ordinal={:?} total_elapsed_ms={}",
-                    state.paths.dump_id(),
-                    finish.final_frame_no,
-                    finish.final_work_ordinal,
-                    session_started.elapsed().as_millis()
-                );
-                return Ok(ReceiveReport {
-                    resume_state,
-                    state,
-                    finish,
-                    final_archive_path,
-                    profile,
-                });
-            }
-            Message::Error(error) => {
-                let _ = discard_issue_journal_temp(&state);
-                bail!("peer aborted during v3 dump session: {}", error.message);
-            }
-            unexpected => {
-                send_protocol_error(
-                    stream,
-                    "expected v3 manifest, frame, issue tail, or finish message",
-                )?;
-                bail!(
-                    "unexpected v3 message during dump session: {:?}",
-                    unexpected.kind()
-                );
-            }
-        }
+        contender.try_lock().unwrap();
+        let _replacement_guard = FileLock(contender);
+        assert!(inherited.metadata().is_ok());
     }
 }

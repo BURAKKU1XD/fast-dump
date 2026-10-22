@@ -674,9 +674,9 @@ pub(crate) fn write_benchmark_plan(output_dir: &Path) -> Result<PathBuf> {
     let path = benchmark_plan_path(output_dir);
     let mut output = String::new();
 
-    output.push_str("# fast-dump v3 Benchmark Matrix\n\n");
+    output.push_str("# fast-dump Runtime Benchmark Matrix\n\n");
     output.push_str(
-        "This artifact is generated from the benchmark harness source. It freezes the required v3 benchmark scope and the current coverage state without pretending that planned profiles or metrics already exist.\n\n",
+        "This artifact is generated from the benchmark harness source. It freezes the required runtime benchmark scope and the current coverage state without pretending that planned profiles or metrics already exist.\n\n",
     );
     output.push_str("## Current Scope\n\n");
     let automated_profiles = benchmark_network_profiles()
@@ -685,12 +685,18 @@ pub(crate) fn write_benchmark_plan(output_dir: &Path) -> Result<PathBuf> {
         .map(|profile| format!("`{}`", profile.id))
         .collect::<Vec<_>>()
         .join(", ");
-    output.push_str("- Current automated protocol runtime: `v3`.\n");
+    output.push_str("- Current automated protocol runtime: `v4`.\n");
     output.push_str(&format!(
         "- Current automated network profiles: {}.\n",
         automated_profiles
     ));
     output.push_str("- Current automated runner: synthetic sender->receiver loopback matrix.\n");
+    output.push_str("- The legacy Unix default enumerates both executor labels, default and abs_path. They run the same v4 implementation and are not distinct workloads. Use --executor default for new comparisons to avoid duplicate runs.\n");
+    output.push_str("- Matrix scenarios set compression threads and configured bundle target explicitly; sender level is `3`, reader bounds are `2..=32`, and actual reader workers also depend on available parallelism and pending entry count. Reader settings are not columns in the legacy CSV schema.\n");
+    output.push_str("- The configured bundle target is a soft aggregation target: bundle 1 starts at up to `4 MiB`, and whole files remain intact. It is also the regular-file materialization/streaming threshold.\n");
+    output.push_str("- Buffer, manifest, executor, and large-file-isolation selectors retained in the CSV do not tune the v4 runtime. `link-1gbps` and `link-10gbps` share a decimal application-byte rate budget across control/data per direction, with up to 8 MiB burst, at most 4 MiB per read, and no added RTT. Run the ignored TCP calibration before using them; both read sizes must sustain at least 90% of the configured rate. Legacy RTT profiles retain approximate per-I/O delay/pacing; no loopback profile models a physical WAN or Ethernet overhead.\n");
+    output.push_str("- `[bench-link]` log lines report sender protocol TX/RX bytes separately, TX Gbit/s over measured session duration, successful logical payload bytes, and raw read bytes including retried attempts. The legacy CSV wire_bytes column remains the sum of both directions; total_mib_s uses successful logical bytes, and frame_aborts/frame_rebuilds map to actual bundle attempt counters.\n");
+    output.push_str("- Matrix archive verification is enabled by default and runs after measured durations and resource sampling finish. FAST_DUMP_BENCH_VERIFY_ARCHIVE=0 explicitly disables it. Record that setting and the benchmark command with the artifacts; they are not recorded in CSV rows. Legacy non-matrix profile sampling is unverified.\n");
     output.push_str(
         "- Cutover decisions must use the full required dataset and shaped-network matrix below, not loopback-only numbers.\n\n",
     );
@@ -811,20 +817,29 @@ fn dominant_bottleneck(row: &SummaryRow) -> (&'static str, f64) {
         ("sender: read", row.read_duration_ms),
         ("sender: compress", row.compress_duration_ms),
         ("sender: send", row.send_duration_ms),
-        ("sender: manifest build", row.manifest_build_duration_ms),
         (
-            "sender: manifest transfer",
+            "sender: source scan (legacy build alias)",
+            row.manifest_build_duration_ms,
+        ),
+        (
+            "sender: legacy transfer placeholder",
             row.manifest_transfer_duration_ms,
         ),
-        ("sender: traversal wait", row.traversal_wait_ms),
+        (
+            "sender: source scan (legacy traversal alias)",
+            row.traversal_wait_ms,
+        ),
         ("sender: ack wait", row.ack_wait_ms),
-        ("receiver: manifest", receiver_manifest_total_ms(row)),
+        (
+            "receiver: legacy manifest placeholder",
+            receiver_manifest_total_ms(row),
+        ),
         (
             "receiver: frame local commit",
             receiver_frame_local_commit_ms(row),
         ),
         (
-            "receiver: frame network/decode",
+            "receiver: unmeasured legacy residual",
             receiver_frame_network_decode_ms(row),
         ),
         ("receiver: finish", row.receiver_finish_duration_ms),
@@ -848,12 +863,16 @@ pub(crate) fn write_benchmark_report(output_dir: &Path, rows: &[SummaryRow]) -> 
     let mut output = String::new();
     output.push_str("# fast-dump Benchmark Report\n\n");
     output.push_str(
-        "This artifact is generated from `results_summary.csv`. It highlights the fastest current `v3` tuning candidate per dataset and network pair and exposes which sender/receiver stage currently dominates wall time.\n\n",
+        "This artifact is generated from `results_summary.csv`. It selects the lowest mean elapsed time per dataset/network pair. Every summary metric is an arithmetic mean across completed repeats, including columns named max; use raw rows for individual peaks or percentiles.\n\n",
     );
+    output.push_str("The bottleneck label identifies the largest instrumented duration, not a measured critical path. Read duration includes ordered-result waits and materialization. Streamed source reads and compression run in a producer concurrently with network sending; streamed compression duration excludes source reads and producer queue waits, while retaining tar work. Stage shares need not sum to 100%. Source scan appears under both legacy manifest-build and traversal-wait aliases.\n\n");
+    output.push_str("Legacy manifest transfer, spool, replay, receiver-manifest, overlap, and directory-handle fields are zero placeholders in v4. The receiver network/decode residual is not independently measured; a zero does not imply zero network delay. Startup means the first bundle task is ready, before its send or commit.\n\n");
+    output.push_str("Total throughput uses successfully transferred logical payload bytes, without counting retries twice. raw_read_bytes can include repeated or failed attempt reads; legacy ratio columns still use that read-byte denominator. frame_aborts/frame_rebuilds report actual bundle attempts. Wire bytes count both directions after transport establishment, and wire overhead can include discarded attempt payload. Windows CPU/RSS cover the combined benchmark process; other targets emit zero resource placeholders. Matrix archive verification is on by default, runs after timing and resource sampling, and may warm the source cache before the next repeat.\n\n");
+    output.push_str("RSS placeholders are displayed as unmeasured and excluded from memory-budget views. Executor labels default and abs_path select the same v4 workload; use --executor default for new runs rather than interpreting those labels as different implementations.\n\n");
 
     output.push_str("## Fastest Current Rows\n\n");
-    output.push_str("| dataset | network | executor | threads | frame MiB | buffer KiB | manifest chunk KiB | ack records | ack KiB | total ms | total MiB/s | bottleneck | bottleneck share % | ack wait ms | receiver frame local ms | max RSS MiB |\n");
-    output.push_str("| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: |\n");
+    output.push_str("| dataset | network | executor | threads | frame MiB | buffer KiB | total ms | total MiB/s | bottleneck | bottleneck share % | ack wait ms | receiver frame local ms | max RSS MiB |\n");
+    output.push_str("| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | --- | ---: | ---: | ---: | ---: |\n");
     let keys = rows
         .iter()
         .map(|row| {
@@ -875,23 +894,20 @@ pub(crate) fn write_benchmark_report(output_dir: &Path, rows: &[SummaryRow]) -> 
         };
         let (bottleneck, bottleneck_ms) = dominant_bottleneck(best_row);
         output.push_str(&format!(
-            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {:.2} | {:.2} | {} | {:.2} | {:.2} | {:.2} | {:.2} |\n",
+            "| {} | {} | {} | {} | {} | {} | {:.2} | {:.2} | {} | {:.2} | {:.2} | {:.2} | {} |\n",
             best_row.scenario.dataset,
             best_row.scenario.network_profile,
             best_row.scenario.executor,
             best_row.scenario.threads,
             best_row.scenario.frame_target_mb,
             best_row.scenario.read_buffer_kb,
-            best_row.scenario.manifest_chunk_kb,
-            best_row.scenario.manifest_ack_records,
-            best_row.scenario.manifest_ack_kb,
             best_row.total_duration_ms,
             best_row.total_mib_s,
             bottleneck,
             stage_share_pct(bottleneck_ms, best_row.total_duration_ms),
             best_row.ack_wait_ms,
             receiver_frame_local_commit_ms(best_row),
-            best_row.max_rss_mib
+            format_rss_mib(best_row.max_rss_mib)
         ));
     }
     output.push('\n');
@@ -1222,13 +1238,17 @@ pub(crate) fn print_dataset_markdown_tables(
     let mut under_budget = rows
         .iter()
         .copied()
-        .filter(|row| row.max_rss_mib <= memory_budget_mib as f64)
+        .filter(|row| row.max_rss_mib > 0.0 && row.max_rss_mib <= memory_budget_mib as f64)
         .collect::<Vec<_>>();
     under_budget.sort_by(|left, right| {
         left.total_duration_ms
             .total_cmp(&right.total_duration_ms)
             .then_with(|| left.max_rss_mib.total_cmp(&right.max_rss_mib))
     });
+    if rows.iter().any(|row| row.max_rss_mib <= 0.0) {
+        println!("_Rows with unmeasured RSS are excluded from the memory-budget view._");
+        println!();
+    }
     print_markdown_table(
         &format!("Fastest total time under {} MiB RSS", memory_budget_mib),
         &under_budget,
@@ -1246,24 +1266,20 @@ fn print_markdown_table(title: &str, rows: &[&SummaryRow]) {
     }
 
     println!(
-        "| runtime | network | executor | threads | frame MiB | buffer KiB | manifest chunk KiB | ack records | ack KiB | isolate MiB | repeats | total ms | total MiB/s | frames | files/frame | aborts | walk wait ms | ack wait ms | dirfd depth | max RSS MiB |"
+        "| network | executor | threads | frame MiB | buffer KiB | isolate MiB | repeats | total ms | total MiB/s | frames | files/frame | aborts | walk wait ms | ack wait ms | dirfd depth | max RSS MiB |"
     );
     println!(
-        "| --- | --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"
+        "| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |"
     );
 
     for row in rows.iter().take(MARKDOWN_TOP_ROWS) {
         println!(
-            "| {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {} | {:.2} | {:.2} | {} | {:.2} | {} | {:.2} | {:.2} | {} | {:.2} |",
-            row.scenario.protocol_runtime,
+            "| {} | {} | {} | {} | {} | {} | {} | {:.2} | {:.2} | {} | {:.2} | {} | {:.2} | {:.2} | {} | {} |",
             row.scenario.network_profile,
             row.scenario.executor,
             row.scenario.threads,
             row.scenario.frame_target_mb,
             row.scenario.read_buffer_kb,
-            row.scenario.manifest_chunk_kb,
-            row.scenario.manifest_ack_records,
-            row.scenario.manifest_ack_kb,
             row.scenario.large_file_single_frame_threshold_mib,
             row.completed_repeats,
             row.total_duration_ms,
@@ -1274,10 +1290,18 @@ fn print_markdown_table(title: &str, rows: &[&SummaryRow]) {
             row.traversal_wait_ms,
             row.ack_wait_ms,
             row.max_dirfd_depth,
-            row.max_rss_mib
+            format_rss_mib(row.max_rss_mib)
         );
     }
     println!();
+}
+
+fn format_rss_mib(value: f64) -> String {
+    if value > 0.0 {
+        format!("{value:.2}")
+    } else {
+        "unmeasured".to_owned()
+    }
 }
 
 fn parse_u32(raw: &str, field: &str) -> Result<u32> {

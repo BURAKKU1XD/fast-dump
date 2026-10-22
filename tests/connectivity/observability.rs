@@ -1,4 +1,5 @@
 use std::fs;
+use std::process::Command;
 use std::time::Duration;
 
 use crate::support::*;
@@ -29,29 +30,19 @@ fn debug_flag_toggles_sender_and_receiver_logs() {
         let receiver_stderr = String::from_utf8_lossy(&result.receiver_output.stderr);
 
         assert!(
-            sender_stdout.contains("discovery_issues_total=0"),
+            sender_stdout.contains("files_skipped=0"),
             "case={label} sender_stdout={sender_stdout}"
         );
         assert!(
-            sender_stdout.contains("subtrees_skipped=0"),
+            sender_stdout.contains("bundles_sent="),
             "case={label} sender_stdout={sender_stdout}"
         );
         assert!(
-            sender_stdout.contains("manifest_resets_total=0"),
+            sender_stdout.contains("final_bundle="),
             "case={label} sender_stdout={sender_stdout}"
         );
         assert_eq!(
             sender_stderr.contains("sender starting:"),
-            debug,
-            "case={label} sender_stderr={sender_stderr}"
-        );
-        assert_eq!(
-            sender_stderr.contains("sender v3 dump session bootstrapping:"),
-            debug,
-            "case={label} sender_stderr={sender_stderr}"
-        );
-        assert_eq!(
-            sender_stderr.contains("sender v3 frame acknowledged:"),
             debug,
             "case={label} sender_stderr={sender_stderr}"
         );
@@ -61,12 +52,7 @@ fn debug_flag_toggles_sender_and_receiver_logs() {
             "case={label} receiver_stderr={receiver_stderr}"
         );
         assert_eq!(
-            receiver_stderr.contains("receiver v3 dump session ready:"),
-            debug,
-            "case={label} receiver_stderr={receiver_stderr}"
-        );
-        assert_eq!(
-            receiver_stderr.contains("receiver v3 frame committed:"),
+            receiver_stderr.contains("v4 receiver listener entering serve loop:"),
             debug,
             "case={label} receiver_stderr={receiver_stderr}"
         );
@@ -74,7 +60,7 @@ fn debug_flag_toggles_sender_and_receiver_logs() {
 }
 
 #[test]
-fn v3_profile_reports_manifest_overlap_and_durable_boundaries() {
+fn v4_profiles_report_bundle_and_resume_boundaries() {
     let _env = EnvVarGuard::set(&[]);
     let source_dir = TestDir::new();
     let mut expected = std::collections::BTreeMap::new();
@@ -94,38 +80,83 @@ fn v3_profile_reports_manifest_overlap_and_durable_boundaries() {
         3,
     );
 
-    let dump_id = "dump-v3-observability";
-    let mut options = default_send_options(1);
-    options.manifest_chunk_bytes = 64;
-    options.manifest_ack_records = 1;
-    options.manifest_ack_bytes = 64;
-
-    let result = run_push_roundtrip_with_options(source_dir.path(), dump_id, options);
+    let dump_id = "dump-v4-observability";
+    let result =
+        run_push_roundtrip_with_options(source_dir.path(), dump_id, default_send_options(1));
 
     assert_archive_hashes(&result.receive_report.final_archive_path, &expected);
-    assert_eq!(result.sender_report.sent_frames, 3);
-    assert_eq!(result.sender_report.final_file_index, 3);
-    assert_eq!(result.receive_report.finish.final_work_ordinal, Some(3));
-    assert!(result.sender_profile.manifest_build.bytes > 0);
-    assert_eq!(result.sender_profile.manifest_spool_read.bytes, 0);
-    assert_eq!(result.sender_profile.manifest_replay.bytes, 0);
+    assert_eq!(result.sender_report.bundles_sent, 3);
+    assert_eq!(result.sender_report.final_work_ordinal, 3);
+    assert!(result.sender_profile.scan.duration >= Duration::ZERO);
+    assert!(result.sender_profile.read.bytes > 0);
+    assert!(result.sender_profile.compress.duration >= Duration::ZERO);
     assert!(result.sender_profile.ack_wait.duration >= Duration::ZERO);
-    assert!(result.receive_report.state.journal.manifest_sealed);
-    assert_eq!(
-        result
-            .receive_report
-            .state
-            .journal
-            .last_manifest_work_ordinal,
-        result.receive_report.finish.final_work_ordinal
-    );
-    assert_eq!(
-        result
-            .receive_report
-            .state
-            .journal
-            .last_committed_work_ordinal,
-        result.receive_report.finish.final_work_ordinal
-    );
-    assert!(result.receive_report.state.journal.manifest_bytes_persisted > 0);
+    assert_eq!(result.sender_profile.bundled_entries, 3);
+    assert!(result.receive_report.final_archive_path.exists());
+    assert_eq!(result.receive_profile.committed_bundles, 3);
+    assert!(result.receive_profile.bundle_commit.duration >= Duration::ZERO);
+    assert!(result.receive_profile.bundle_ack_flush.duration >= Duration::ZERO);
+    assert!(result.receive_profile.finalize_duration >= Duration::ZERO);
+}
+
+#[test]
+fn sender_binary_rejects_invalid_runtime_bounds_before_connect() {
+    let source_dir = TestDir::new();
+    fs::write(source_dir.path().join("alpha.txt"), b"alpha").unwrap();
+
+    for (label, extra_args, expected_fragment) in [
+        (
+            "threads-zero",
+            vec!["--threads", "0"],
+            "threads must be at least 1",
+        ),
+        (
+            "min-readers-zero",
+            vec!["--min-readers", "0"],
+            "min_readers must be at least 1",
+        ),
+        (
+            "max-readers-zero",
+            vec!["--max-readers", "0"],
+            "max_readers must be at least 1",
+        ),
+        (
+            "reader-bounds-inverted",
+            vec!["--min-readers", "5", "--max-readers", "4"],
+            "min_readers must not be greater than max_readers",
+        ),
+        (
+            "read-buffer-zero",
+            vec!["--read-buffer-kb", "0"],
+            "read_buffer_kb must be at least 1",
+        ),
+        (
+            "frame-target-zero",
+            vec!["--frame-target-mb", "0"],
+            "frame_target_mb must be at least 1",
+        ),
+    ] {
+        let output = Command::new(binary_path())
+            .args([
+                "sender",
+                "--connect",
+                "127.0.0.1:9",
+                "--source",
+                source_dir.path().to_str().unwrap(),
+            ])
+            .args(extra_args)
+            .output()
+            .unwrap();
+
+        assert!(
+            !output.status.success(),
+            "case={label} stdout={}",
+            String::from_utf8_lossy(&output.stdout)
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(expected_fragment),
+            "case={label} stderr={}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 }

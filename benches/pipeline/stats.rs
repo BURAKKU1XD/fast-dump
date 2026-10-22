@@ -1,8 +1,8 @@
 use std::fs;
-use std::io::{Read, Write};
+use std::io::{self, Read, Write};
 use std::path::Path;
 use std::sync::{
-    Arc,
+    Arc, Mutex,
     atomic::{AtomicBool, Ordering},
 };
 use std::thread;
@@ -13,10 +13,13 @@ use std::time::Instant;
 use std::mem::{size_of, zeroed};
 
 use criterion::black_box;
-use fast_dump::network::transport::{BoundListener, connect_once};
-use fast_dump::receiver::{ReceiverProfile, receive_dump};
+use fast_dump::network::transport::{BoundListener, CloneableStream, connect_once};
+use fast_dump::receiver::{ReceiverProfile, receive_dump_profile as receive_dump_v4_profile};
 use fast_dump::role::Role;
-use fast_dump::sender::{PipelineProfile, SendOptions, StageProfile, send_dump_profile};
+use fast_dump::sender::{
+    BundlePlanOptions as V4BundlePlanOptions, SendReport as V4SendReport,
+    SenderProfile as V4SenderProfile, StageProfile, send_dump_profile as send_dump_v4_profile,
+};
 #[cfg(target_os = "windows")]
 use windows_sys::Win32::Foundation::FILETIME;
 #[cfg(target_os = "windows")]
@@ -29,7 +32,7 @@ use windows_sys::Win32::System::Threading::{GetCurrentProcess, GetProcessTimes};
 #[cfg(target_os = "windows")]
 use super::shared::available_logical_cpus;
 use super::shared::{
-    BenchDir, BenchmarkCoverage, benchmark_network_shape, loopback_addr,
+    BenchDir, BenchmarkCoverage, SendOptions, benchmark_network_shape, loopback_addr,
     loopback_profile_sample_count, monitor_interval,
 };
 
@@ -126,6 +129,52 @@ pub(crate) struct LoopbackRunMetrics {
     pub(crate) wire_overhead_pct: f64,
 }
 
+pub(crate) const PROTOCOL_RUNTIME_LABEL: &str = "v4";
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub(crate) struct PipelineProfile {
+    pub(crate) scan: StageProfile,
+    pub(crate) read: StageProfile,
+    pub(crate) tar: StageProfile,
+    pub(crate) compress: StageProfile,
+    pub(crate) send: StageProfile,
+    pub(crate) ack_wait: StageProfile,
+    pub(crate) total: StageProfile,
+    pub(crate) file_reads: Vec<StageProfile>,
+    pub(crate) files_read: u64,
+    pub(crate) read_buffers: u64,
+    pub(crate) manifest_build: StageProfile,
+    pub(crate) manifest_transfer: StageProfile,
+    pub(crate) manifest_spool_read: StageProfile,
+    pub(crate) manifest_replay: StageProfile,
+    pub(crate) manifest_replay_records: u64,
+    pub(crate) disk_budget_wait: StageProfile,
+    pub(crate) traversal_wait: StageProfile,
+    pub(crate) time_to_first_frame: Duration,
+    pub(crate) max_inflight_directory_tasks: u64,
+    pub(crate) max_dirfd_depth: u64,
+}
+
+impl From<V4SenderProfile> for PipelineProfile {
+    fn from(profile: V4SenderProfile) -> Self {
+        Self {
+            scan: profile.scan.clone(),
+            read: profile.read.clone(),
+            tar: profile.tar.clone(),
+            compress: profile.compress.clone(),
+            send: profile.send.clone(),
+            ack_wait: profile.ack_wait.clone(),
+            total: profile.total.clone(),
+            files_read: profile.discovered_entries,
+            read_buffers: profile.flush_count,
+            manifest_build: profile.scan.clone(),
+            traversal_wait: profile.scan.clone(),
+            time_to_first_frame: profile.time_to_first_bundle,
+            ..Default::default()
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct LoopbackScenarioReport {
     pub(crate) name: String,
@@ -157,42 +206,42 @@ const BENCHMARK_METRIC_PLAN: &[BenchmarkMetricPlan] = &[
         title: "Total throughput MiB/s",
         coverage: BenchmarkCoverage::Implemented,
         current_source: "LoopbackRunMetrics.total_mib_s",
-        notes: "Current harness records this for every loopback scenario and uses it in summary ranking.",
+        notes: "Successfully transferred logical payload bytes divided by sender session duration through FinishAck, including scan, retries, and durable commits. Repeated attempt reads do not inflate the numerator. This is not wire throughput; transport establishment is outside the timer.",
     },
     BenchmarkMetricPlan {
         id: "stage-durations-and-speeds",
         title: "Read/compress/send durations and speeds",
         coverage: BenchmarkCoverage::Implemented,
         current_source: "LoopbackRunMetrics read/compress/send fields",
-        notes: "Useful for locating whether CPU, protocol, or storage dominates the current v3 path.",
+        notes: "Read time includes ordered read-ahead waits and planner materialization, not summed reader CPU. Streamed read/compression runs in a producer while the main thread sends; streamed compression duration excludes source reads and producer queue waits, but includes tar work. Stages overlap and are not an additive wall-time breakdown.",
     },
     BenchmarkMetricPlan {
         id: "traversal-and-ack-wait",
-        title: "Traversal wait and ack wait",
+        title: "Source scan and durable-ack wait",
         coverage: BenchmarkCoverage::Implemented,
         current_source: "LoopbackRunMetrics.traversal_wait_ms and ack_wait_ms",
-        notes: "These waits are already visible, but only on localhost without shaped network delay.",
+        notes: "traversal_wait_ms and manifest_build_duration_ms are aliases of the same source scan duration. ack_wait_ms measures explicit sender waits on both localhost and shaped profiles.",
     },
     BenchmarkMetricPlan {
         id: "wire-overhead",
         title: "Wire bytes and overhead",
         coverage: BenchmarkCoverage::Implemented,
         current_source: "LoopbackRunMetrics.wire_bytes and wire_overhead_bytes",
-        notes: "This is the current baseline for frame and chunk overhead on the wire.",
+        notes: "wire_bytes counts both directions across control and data channels after transport establishment. Overhead subtracts successfully sent compressed bundle payload, so retries can also contribute discarded attempt payload. TCP/IP headers and transport handshake bytes are excluded.",
     },
     BenchmarkMetricPlan {
         id: "executor-fd-budget",
-        title: "Executor mode and max dirfd depth",
-        coverage: BenchmarkCoverage::Implemented,
+        title: "Legacy executor and directory-handle fields",
+        coverage: BenchmarkCoverage::Partial,
         current_source: "results_raw.csv executor plus LoopbackRunMetrics.max_dirfd_depth",
-        notes: "Unix matrix runs now compare the default dirfd executor against the forced abs-path fallback and record the observed bounded directory-handle depth.",
+        notes: "The v4 sender uses one traversal implementation. The legacy executor selector has no runtime effect; max_dirfd_depth and max_inflight_dirs are zero placeholders, not measured handle counts.",
     },
     BenchmarkMetricPlan {
         id: "sender-cpu-rss",
-        title: "Sender CPU and RSS",
+        title: "Combined benchmark-process CPU and RSS",
         coverage: BenchmarkCoverage::Partial,
         current_source: "Current ProcessMonitor samples the combined loopback benchmark process",
-        notes: "Useful for local regression hints, but not yet split into dedicated sender and receiver process metrics.",
+        notes: "Windows samples the combined sender/receiver process; CPU is normalized by logical CPU count. Other targets emit zero placeholders. Archive verification starts after sampling stops; retained allocations from previous runs can affect later RSS.",
     },
     BenchmarkMetricPlan {
         id: "receiver-cpu-rss",
@@ -203,59 +252,59 @@ const BENCHMARK_METRIC_PLAN: &[BenchmarkMetricPlan] = &[
     },
     BenchmarkMetricPlan {
         id: "sender-spool-bytes",
-        title: "Sender spool bytes written/read",
+        title: "Legacy sender manifest columns",
         coverage: BenchmarkCoverage::Implemented,
         current_source: "LoopbackRunMetrics.manifest_build_bytes and manifest_spool_read_bytes",
-        notes: "Loopback runner now exports sender manifest spool build and spool-read bytes directly from PipelineProfile.",
+        notes: "v4 has no manifest spool: manifest_build_bytes contains discovered entry count, not bytes. Transfer, spool-read, and replay columns are zero compatibility placeholders.",
     },
     BenchmarkMetricPlan {
         id: "receiver-manifest-bytes",
-        title: "Receiver manifest bytes persisted",
+        title: "Legacy receiver manifest column",
         coverage: BenchmarkCoverage::Implemented,
         current_source: "LoopbackRunMetrics.receiver_manifest_bytes",
-        notes: "Receiver loopback runs now report the durable manifest bytes persisted in ReceiverState journal.",
+        notes: "v4 has no persisted manifest. This field remains zero for CSV compatibility and does not measure the bundle WAL or archive size.",
     },
     BenchmarkMetricPlan {
         id: "issue-tail-cost",
         title: "Issue-tail persistence cost",
         coverage: BenchmarkCoverage::Implemented,
         current_source: "LoopbackRunMetrics.receiver_issue_tail_bytes and receiver_issue_tail_duration_ms",
-        notes: "Loopback runner now reports both persisted typed issue-tail bytes and the receiver-side wall time spent consuming the typed tail.",
+        notes: "Reports final issue-file size and receiver skip-catalog processing duration. These are zero for stable fixtures without terminal skips.",
     },
     BenchmarkMetricPlan {
         id: "time-to-first-frame",
-        title: "Time to first frame",
+        title: "Time until first bundle is ready",
         coverage: BenchmarkCoverage::Implemented,
         current_source: "LoopbackRunMetrics.time_to_first_frame_ms",
-        notes: "Derived from v3 sender session timings so manifest-first regressions are visible in raw and summary artifacts.",
+        notes: "Legacy frame name maps to time_to_first_bundle: elapsed sender time when the first prepared or streamed task is received, before that bundle is sent or acknowledged.",
     },
     BenchmarkMetricPlan {
         id: "reconnect-and-replay-latency",
         title: "Reconnect-to-resume and checkpoint replay latency",
         coverage: BenchmarkCoverage::Planned,
         current_source: "planned reconnect/replay benchmarks",
-        notes: "This is the measurable proof that ordinary v3 reconnect no longer depends on a full live rescan.",
+        notes: "Not measured by the fresh-dump matrix. The current sender rescans the source and resumes after the durable committed work ordinal; dedicated reconnect latency runs remain planned.",
     },
     BenchmarkMetricPlan {
         id: "manifest-phase-latency",
-        title: "Manifest build and transfer latency",
+        title: "Legacy manifest timing aliases",
         coverage: BenchmarkCoverage::Implemented,
         current_source: "LoopbackRunMetrics manifest_build_* / manifest_transfer_* / manifest_spool_read_* fields",
-        notes: "Loopback raw results now split sender manifest build, transfer, spool-read, and replay costs.",
+        notes: "Only manifest_build_duration_ms is populated, as an alias of source scan duration. Transfer, spool-read, and replay durations remain zero; they are not active v4 stages.",
     },
     BenchmarkMetricPlan {
         id: "overlap-efficiency",
-        title: "Manifest/data overlap efficiency",
-        coverage: BenchmarkCoverage::Implemented,
+        title: "Unmeasured overlap efficiency",
+        coverage: BenchmarkCoverage::Planned,
         current_source: "LoopbackRunMetrics.overlap_efficiency_pct",
-        notes: "Computed from v3 manifest-transfer duration versus time-to-first-frame so sequential fallback is visible in results.",
+        notes: "This compatibility column is always zero in v4. No overlap-efficiency measurement is implemented; zero does not imply serial execution.",
     },
     BenchmarkMetricPlan {
         id: "receiver-stage-latency",
-        title: "Receiver manifest/frame/finish stage latency",
+        title: "Receiver bundle commit and finalization latency",
         coverage: BenchmarkCoverage::Implemented,
         current_source: "LoopbackRunMetrics receiver_*_duration_ms fields",
-        notes: "Loopback raw results now split receiver-side manifest staging, frame local commit, issue-tail handling, and finish/finalization latency so sender-vs-receiver bottlenecks are distinguishable.",
+        notes: "Legacy frame columns map to bundle write, sync, WAL append, and ACK flush. Manifest stages are zero. The report's network/decode residual is not an independent measurement and cannot attribute network delay.",
     },
 ];
 
@@ -278,13 +327,96 @@ struct ShapedStream<T> {
     inner: T,
     read_shaper: Option<TrafficShaper>,
     write_shaper: Option<TrafficShaper>,
+    shared_read_pacer: Option<SharedReadPacer>,
+}
+
+const LINK_BURST_BYTES: usize = 8 * 1024 * 1024;
+const LINK_MAX_READ_BYTES: usize = 4 * 1024 * 1024;
+const NANOS_PER_SECOND: u128 = 1_000_000_000;
+
+// Один бюджет входящих bytes разделяют control/data и все клоны endpoint.
+// Обратное направление получает отдельный бюджет: модель остаётся full duplex.
+#[derive(Clone)]
+struct SharedReadPacer {
+    started: Instant,
+    budget: Arc<Mutex<RateBudget>>,
+}
+
+struct RateBudget {
+    bytes_per_second: u64,
+    burst_bytes: usize,
+    available_scaled: u128,
+    updated_at: Duration,
+}
+
+impl RateBudget {
+    fn new(bytes_per_second: u64, burst_bytes: usize) -> Self {
+        assert!(bytes_per_second > 0 && burst_bytes > 0);
+        Self {
+            bytes_per_second,
+            burst_bytes,
+            available_scaled: burst_bytes as u128 * NANOS_PER_SECOND,
+            updated_at: Duration::ZERO,
+        }
+    }
+
+    fn acquire_or_delay(&mut self, now: Duration, bytes: usize) -> Option<Duration> {
+        assert!(bytes <= self.burst_bytes);
+        let earned = now
+            .saturating_sub(self.updated_at)
+            .as_nanos()
+            .saturating_mul(self.bytes_per_second as u128);
+        self.available_scaled = self
+            .available_scaled
+            .saturating_add(earned)
+            .min(self.burst_bytes as u128 * NANOS_PER_SECOND);
+        self.updated_at = now;
+        let requested = bytes as u128 * NANOS_PER_SECOND;
+        if self.available_scaled >= requested {
+            self.available_scaled -= requested;
+            return None;
+        }
+        // Не списываем будущие bytes: после sleep другой канал мог занять budget.
+        // Повторная проверка также сохраняет credit от oversleep, но не больше burst.
+        let wait_ns = (requested - self.available_scaled).div_ceil(self.bytes_per_second as u128);
+        Some(Duration::from_nanos(wait_ns as u64))
+    }
+}
+
+impl SharedReadPacer {
+    fn for_profile(network_profile: &str) -> Option<Self> {
+        let rate = benchmark_network_shape(network_profile)?.shared_receive_bytes_per_second?;
+        Some(Self {
+            started: Instant::now(),
+            budget: Arc::new(Mutex::new(RateBudget::new(rate, LINK_BURST_BYTES))),
+        })
+    }
+
+    fn acquire(&self, bytes: usize) -> io::Result<()> {
+        if bytes == 0 {
+            return Ok(());
+        }
+        loop {
+            let delay = self
+                .budget
+                .lock()
+                .map_err(|_| io::Error::other("benchmark link budget poisoned"))?
+                .acquire_or_delay(self.started.elapsed(), bytes);
+            let Some(delay) = delay else {
+                return Ok(());
+            };
+            thread::sleep(delay);
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
 struct TrafficShaper {
-    latency_per_operation: Duration,
+    startup_latency: Duration,
+    burst_restart_gap: Duration,
     bytes_per_second: Option<u64>,
     next_ready_at: Instant,
+    primed: bool,
 }
 
 impl ProcessMonitor {
@@ -316,55 +448,95 @@ impl<T> CountingStream<T> {
 }
 
 impl<T> ShapedStream<T> {
-    fn new(inner: T, network_profile: &str) -> Self {
+    fn new(inner: T, network_profile: &str, shared_read_pacer: Option<SharedReadPacer>) -> Self {
         let Some(shape) = benchmark_network_shape(network_profile) else {
             return Self {
                 inner,
                 read_shaper: None,
                 write_shaper: None,
+                shared_read_pacer,
             };
         };
-        let latency_per_operation =
-            Duration::from_nanos(shape.rtt_ms.saturating_mul(1_000_000) / 2);
+        assert_eq!(
+            shape.shared_receive_bytes_per_second.is_some(),
+            shared_read_pacer.is_some(),
+            "rate-only profiles require the endpoint's shared receive budget"
+        );
+        let startup_latency = Duration::from_nanos(shape.rtt_ms.saturating_mul(1_000_000) / 2);
         let bytes_per_second = shape
             .bandwidth_mib_per_sec
             .map(|mib_per_sec| mib_per_sec.saturating_mul(1024 * 1024));
-        let shaper = if latency_per_operation.is_zero() && bytes_per_second.is_none() {
+        let shaper = if startup_latency.is_zero() && bytes_per_second.is_none() {
             None
         } else {
             Some(TrafficShaper {
-                latency_per_operation,
+                startup_latency,
+                burst_restart_gap: startup_latency,
                 bytes_per_second,
                 next_ready_at: Instant::now(),
+                primed: false,
             })
         };
         Self {
             inner,
             read_shaper: shaper,
             write_shaper: shaper,
+            shared_read_pacer,
         }
     }
 }
 
+impl<T> CloneableStream for ShapedStream<T>
+where
+    T: CloneableStream,
+{
+    fn try_clone_stream(&self) -> anyhow::Result<Self> {
+        Ok(Self {
+            inner: self.inner.try_clone_stream()?,
+            read_shaper: self.read_shaper,
+            write_shaper: self.write_shaper,
+            shared_read_pacer: self.shared_read_pacer.clone(),
+        })
+    }
+}
+
 impl TrafficShaper {
+    fn scheduled_ready_at(&mut self, now: Instant, transferred_bytes: usize) -> Instant {
+        let start_at = if self.next_ready_at > now {
+            self.next_ready_at
+        } else {
+            now
+        };
+
+        // RTT добавляем только на старт нового burst после простоя канала.
+        // Иначе shaped bench наказывал бы любой syscall-sized read/write
+        // отдельной сетевой задержкой и искажал бы WAN attribution.
+        let needs_startup_latency = !self.primed
+            || (self.next_ready_at <= now
+                && now.saturating_duration_since(self.next_ready_at) >= self.burst_restart_gap);
+
+        let mut ready_at = start_at;
+        if needs_startup_latency {
+            ready_at += self.startup_latency;
+        }
+        if let Some(bytes_per_second) = self.bytes_per_second {
+            let transfer_duration =
+                Duration::from_secs_f64(transferred_bytes as f64 / bytes_per_second as f64);
+            ready_at += transfer_duration;
+        }
+
+        self.next_ready_at = ready_at;
+        self.primed = true;
+        ready_at
+    }
+
     fn apply(&mut self, transferred_bytes: usize) {
         if transferred_bytes == 0 {
             return;
         }
 
         let now = Instant::now();
-        let start_at = if self.next_ready_at > now {
-            self.next_ready_at
-        } else {
-            now
-        };
-        let mut ready_at = start_at + self.latency_per_operation;
-        if let Some(bytes_per_second) = self.bytes_per_second {
-            let transfer_duration =
-                Duration::from_secs_f64(transferred_bytes as f64 / bytes_per_second as f64);
-            ready_at += transfer_duration;
-        }
-        self.next_ready_at = ready_at;
+        let ready_at = self.scheduled_ready_at(now, transferred_bytes);
         let sleep_for = ready_at.saturating_duration_since(now);
         if !sleep_for.is_zero() {
             thread::sleep(sleep_for);
@@ -388,9 +560,19 @@ where
     T: Read,
 {
     fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        let read = self.inner.read(buf)?;
+        // Половина burst остаётся под oversleep credit даже при полном read 4 MiB.
+        let limit = if self.shared_read_pacer.is_some() {
+            buf.len().min(LINK_MAX_READ_BYTES)
+        } else {
+            buf.len()
+        };
+        let read = self.inner.read(&mut buf[..limit])?;
         if let Some(shaper) = &mut self.read_shaper {
             shaper.apply(read);
+        }
+        if let Some(pacer) = &self.shared_read_pacer {
+            // TCP уже принял bytes, но protocol parser увидит их только после accounting.
+            pacer.acquire(read)?;
         }
         Ok(read)
     }
@@ -406,6 +588,12 @@ where
         Ok(written)
     }
 
+    fn write_vectored(&mut self, bufs: &[std::io::IoSlice<'_>]) -> std::io::Result<usize> {
+        let written = self.inner.write_vectored(bufs)?;
+        self.written_bytes = self.written_bytes.saturating_add(written as u64);
+        Ok(written)
+    }
+
     fn flush(&mut self) -> std::io::Result<()> {
         self.inner.flush()
     }
@@ -417,6 +605,14 @@ where
 {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         let written = self.inner.write(buf)?;
+        if let Some(shaper) = &mut self.write_shaper {
+            shaper.apply(written);
+        }
+        Ok(written)
+    }
+
+    fn write_vectored(&mut self, bufs: &[std::io::IoSlice<'_>]) -> std::io::Result<usize> {
+        let written = self.inner.write_vectored(bufs)?;
         if let Some(shaper) = &mut self.write_shaper {
             shaper.apply(written);
         }
@@ -589,76 +785,92 @@ pub(crate) fn print_loopback_report(report: &LoopbackScenarioReport) {
     }
 }
 
-struct ReceiverLoopbackReport {
+struct V4ReceiverLoopbackReport {
     final_archive_path: std::path::PathBuf,
-    issue_journal_path: std::path::PathBuf,
-    receiver_manifest_bytes: u64,
+    issue_journal_path: Option<std::path::PathBuf>,
     receiver_profile: ReceiverProfile,
 }
 
-fn receive_loopback_dump<T>(
-    stream: &mut T,
+fn receive_v4_loopback_dump<TControl, TData>(
+    control_stream: TControl,
+    data_stream: TData,
     receiver_path: std::path::PathBuf,
-    options: &SendOptions,
-) -> anyhow::Result<ReceiverLoopbackReport>
+) -> anyhow::Result<V4ReceiverLoopbackReport>
 where
-    T: Read + Write,
+    TControl: CloneableStream,
+    TData: Read + Send + 'static,
 {
-    let report = receive_dump(
-        stream,
-        receiver_path,
-        options.manifest_ack_records,
-        options.manifest_ack_bytes,
-    )?;
-    Ok(ReceiverLoopbackReport {
+    let (report, profile) =
+        receive_dump_v4_profile(control_stream, data_stream, receiver_path, "bench-dump")?;
+    Ok(V4ReceiverLoopbackReport {
         final_archive_path: report.final_archive_path,
-        issue_journal_path: report.state.paths.issue_journal_path().to_path_buf(),
-        receiver_manifest_bytes: report.state.journal.manifest_bytes_persisted,
-        receiver_profile: report.profile,
+        issue_journal_path: report.issue_report_path,
+        receiver_profile: profile,
     })
 }
 
-fn send_loopback_profile<T>(
-    stream: &mut T,
+fn send_v4_loopback_profile<TControl, TData>(
+    control_stream: &mut TControl,
+    data_stream: &mut TData,
     source_dir: &Path,
     options: &SendOptions,
-) -> anyhow::Result<(fast_dump::sender::SendReport, PipelineProfile)>
+) -> anyhow::Result<(V4SendReport, V4SenderProfile)>
 where
-    T: Read + Write,
+    TControl: Read + Write,
+    TData: Write,
 {
-    send_dump_profile(stream, source_dir.to_path_buf(), "bench-dump", options)
+    send_dump_v4_profile(
+        control_stream,
+        data_stream,
+        source_dir.to_path_buf(),
+        "bench-dump",
+        V4BundlePlanOptions {
+            bundle_target_bytes: options.frame_target_bytes as usize,
+            compression_level: options.level,
+            compression_threads: options.threads,
+            readers: std::thread::available_parallelism()
+                .map_or(1, |n| n.get())
+                .clamp(options.min_readers, options.max_readers),
+        },
+    )
 }
 
 fn sample_loopback_send_profile(source_dir: &Path, options: &SendOptions) -> PipelineProfile {
-    let receiver_dir = BenchDir::new("loopback-receiver-profile");
+    let receiver_dir = BenchDir::new("loopback-v4-receiver-profile");
     let listener = BoundListener::bind(loopback_addr()).unwrap();
     let addr = listener.local_addr();
     let receiver_path = receiver_dir.path().to_path_buf();
-    let manifest_ack_records = options.manifest_ack_records;
-    let manifest_ack_bytes = options.manifest_ack_bytes;
 
     let receiver = thread::spawn(move || {
-        let mut session = listener.accept(Role::Receiver, None, None).unwrap();
-        receive_dump(
-            &mut session.stream,
+        let session = listener.accept(Role::Receiver, None, None).unwrap();
+        receive_dump_v4_profile(
+            session.control_stream,
+            session.data_stream,
             receiver_path,
-            manifest_ack_records,
-            manifest_ack_bytes,
+            "bench-dump",
         )
         .unwrap()
     });
 
     let mut sender_session = connect_once(Role::Sender, addr, Some("bench-dump"), None).unwrap();
-    let (_, profile) = send_dump_profile(
-        &mut sender_session.stream,
+    let (_, profile) = send_dump_v4_profile(
+        &mut sender_session.control_stream,
+        &mut sender_session.data_stream,
         source_dir.to_path_buf(),
         "bench-dump",
-        options,
+        V4BundlePlanOptions {
+            bundle_target_bytes: options.frame_target_bytes as usize,
+            compression_level: options.level,
+            compression_threads: options.threads,
+            readers: std::thread::available_parallelism()
+                .map_or(1, |n| n.get())
+                .clamp(options.min_readers, options.max_readers),
+        },
     )
     .unwrap();
-    let receive_report = receiver.join().unwrap();
+    let (receive_report, _) = receiver.join().unwrap();
     black_box(receive_report.final_archive_path);
-    profile
+    profile.into()
 }
 
 pub(crate) fn collect_profile_samples<F>(sample_count: usize, mut sample: F) -> Vec<PipelineProfile>
@@ -676,69 +888,109 @@ pub(crate) fn run_loopback_scenario(
     options: &SendOptions,
     network_profile: &str,
 ) -> LoopbackRunMetrics {
-    let receiver_dir = BenchDir::new("loopback-receiver-run");
+    run_v4_loopback_scenario(source_dir, options, network_profile)
+}
+
+fn run_v4_loopback_scenario(
+    source_dir: &Path,
+    options: &SendOptions,
+    network_profile: &str,
+) -> LoopbackRunMetrics {
+    let receiver_dir = BenchDir::new("loopback-v4-receiver-run");
     let listener = BoundListener::bind(loopback_addr()).unwrap();
     let addr = listener.local_addr();
     let receiver_path = receiver_dir.path().to_path_buf();
-    let receiver_options = options.clone();
     let receiver_network_profile = network_profile.to_owned();
 
     let receiver = thread::spawn(move || {
         let session = listener.accept(Role::Receiver, None, None).unwrap();
-        let mut receiver_stream = ShapedStream::new(session.stream, &receiver_network_profile);
-        receive_loopback_dump(&mut receiver_stream, receiver_path, &receiver_options).unwrap()
+        let receive_pacer = SharedReadPacer::for_profile(&receiver_network_profile);
+        let receiver_control_stream = ShapedStream::new(
+            session.control_stream,
+            &receiver_network_profile,
+            receive_pacer.clone(),
+        );
+        let receiver_data_stream = ShapedStream::new(
+            session.data_stream,
+            &receiver_network_profile,
+            receive_pacer,
+        );
+        receive_v4_loopback_dump(receiver_control_stream, receiver_data_stream, receiver_path)
+            .unwrap()
     });
 
     let sender_session = connect_once(Role::Sender, addr, Some("bench-dump"), None).unwrap();
-    let mut sender_stream =
-        CountingStream::new(ShapedStream::new(sender_session.stream, network_profile));
+    let receive_pacer = SharedReadPacer::for_profile(network_profile);
+    let mut sender_control_stream = CountingStream::new(ShapedStream::new(
+        sender_session.control_stream,
+        network_profile,
+        receive_pacer.clone(),
+    ));
+    let mut sender_data_stream = CountingStream::new(ShapedStream::new(
+        sender_session.data_stream,
+        network_profile,
+        receive_pacer,
+    ));
     let monitor = ProcessMonitor::start(monitor_interval());
-    let (report, profile) = send_loopback_profile(&mut sender_stream, source_dir, options).unwrap();
+    let (report, profile) = send_v4_loopback_profile(
+        &mut sender_control_stream,
+        &mut sender_data_stream,
+        source_dir,
+        options,
+    )
+    .unwrap();
     let resources = monitor.finish();
 
     let receive_report = receiver.join().unwrap();
-    black_box(receiver_dir.path().to_path_buf());
-    black_box(receive_report.final_archive_path);
-    let receiver_profile = &receive_report.receiver_profile;
-
+    let logical_bytes = profile.total.bytes;
     let raw_read_bytes = profile.read.bytes;
+    let tx_bytes = sender_control_stream
+        .written_bytes
+        .saturating_add(sender_data_stream.written_bytes);
+    let rx_bytes = sender_control_stream
+        .read_bytes
+        .saturating_add(sender_data_stream.read_bytes);
+    let elapsed_seconds = profile.total.duration.as_secs_f64();
+    let tx_gbps = if elapsed_seconds > 0.0 {
+        tx_bytes as f64 * 8.0 / elapsed_seconds / 1_000_000_000.0
+    } else {
+        0.0
+    };
+    eprintln!(
+        "[bench-link] profile={network_profile} tx_bytes={tx_bytes} rx_bytes={rx_bytes} elapsed_ms={:.6} tx_gbps={tx_gbps:.6} logical_bytes={logical_bytes} raw_read_bytes={raw_read_bytes}",
+        duration_ms(profile.total.duration),
+    );
+    black_box(receiver_dir.path().to_path_buf());
+    super::verify::verify_if_requested(source_dir, &receive_report.final_archive_path)
+        .unwrap_or_else(|error| panic!("benchmark archive verification failed: {error:#}"));
+    black_box(receive_report.final_archive_path);
+
     let compressed_payload_bytes = profile.send.bytes;
-    let wire_bytes = sender_stream.total_wire_bytes();
+    let wire_bytes = sender_control_stream
+        .total_wire_bytes()
+        .saturating_add(sender_data_stream.total_wire_bytes());
     let wire_overhead_bytes = wire_bytes.saturating_sub(compressed_payload_bytes);
-    let skipped_files = report
-        .files_skipped_open_failed
-        .saturating_add(report.files_skipped_unstable_after_retries);
-    let sent_payload_files = report
-        .files_sent_clean
-        .saturating_add(report.files_sent_best_effort);
-    let receiver_issue_tail_bytes = fs::metadata(&receive_report.issue_journal_path)
+    let sent_payload_files = profile.bundled_entries;
+    let receiver_issue_tail_bytes = receive_report
+        .issue_journal_path
+        .as_ref()
+        .and_then(|path| fs::metadata(path).ok())
         .map(|metadata| metadata.len())
         .unwrap_or(0);
-    let overlap_efficiency_pct = if profile.manifest_transfer.duration.is_zero() {
-        0.0
-    } else {
-        profile
-            .manifest_transfer
-            .duration
-            .saturating_sub(profile.time_to_first_frame)
-            .as_secs_f64()
-            * 100.0
-            / profile.manifest_transfer.duration.as_secs_f64()
-    };
 
     LoopbackRunMetrics {
-        files_count: profile.files_read,
-        skipped_files,
-        sent_frames: report.sent_frames as u64,
-        frame_aborts: report.frame_aborts,
-        frame_rebuilds: report.frame_rebuilds,
-        avg_files_per_frame: if report.sent_frames == 0 {
+        files_count: sent_payload_files,
+        skipped_files: report.terminal_skip_count as u64,
+        sent_frames: report.bundles_sent as u64,
+        frame_aborts: profile.bundle_aborts,
+        frame_rebuilds: profile.bundle_rebuilds,
+        avg_files_per_frame: if report.bundles_sent == 0 {
             0.0
         } else {
-            sent_payload_files as f64 / report.sent_frames as f64
+            sent_payload_files as f64 / report.bundles_sent as f64
         },
         raw_read_bytes,
-        tar_input_bytes: profile.compress.bytes,
+        tar_input_bytes: profile.tar.bytes,
         compressed_payload_bytes,
         wire_bytes,
         wire_overhead_bytes,
@@ -746,55 +998,63 @@ pub(crate) fn run_loopback_scenario(
         compress_duration_ms: duration_ms(profile.compress.duration),
         send_duration_ms: duration_ms(profile.send.duration),
         total_duration_ms: duration_ms(profile.total.duration),
-        manifest_build_bytes: profile.manifest_build.bytes,
-        manifest_build_duration_ms: duration_ms(profile.manifest_build.duration),
-        manifest_transfer_bytes: profile.manifest_transfer.bytes,
-        manifest_transfer_duration_ms: duration_ms(profile.manifest_transfer.duration),
-        manifest_spool_read_bytes: profile.manifest_spool_read.bytes,
-        manifest_spool_read_duration_ms: duration_ms(profile.manifest_spool_read.duration),
-        manifest_replay_bytes: profile.manifest_replay.bytes,
-        manifest_replay_duration_ms: duration_ms(profile.manifest_replay.duration),
-        manifest_replay_records: profile.manifest_replay_records,
-        receiver_manifest_bytes: receive_report.receiver_manifest_bytes,
+        manifest_build_bytes: profile.discovered_entries,
+        manifest_build_duration_ms: duration_ms(profile.scan.duration),
+        manifest_transfer_bytes: 0,
+        manifest_transfer_duration_ms: 0.0,
+        manifest_spool_read_bytes: 0,
+        manifest_spool_read_duration_ms: 0.0,
+        manifest_replay_bytes: 0,
+        manifest_replay_duration_ms: 0.0,
+        manifest_replay_records: 0,
+        receiver_manifest_bytes: 0,
         receiver_issue_tail_bytes,
-        receiver_total_duration_ms: duration_ms(receiver_profile.total_duration),
-        receiver_manifest_stage_duration_ms: duration_ms(receiver_profile.manifest_stage_duration),
-        receiver_manifest_commit_duration_ms: duration_ms(
-            receiver_profile.manifest_commit_duration,
+        receiver_total_duration_ms: duration_ms(receive_report.receiver_profile.total_duration),
+        receiver_manifest_stage_duration_ms: 0.0,
+        receiver_manifest_commit_duration_ms: 0.0,
+        receiver_manifest_ack_flush_duration_ms: 0.0,
+        receiver_frame_duration_ms: duration_ms(
+            receive_report.receiver_profile.bundle_commit.duration,
         ),
-        receiver_manifest_ack_flush_duration_ms: duration_ms(
-            receiver_profile.manifest_ack_flush_duration,
+        receiver_frame_write_duration_ms: duration_ms(
+            receive_report.receiver_profile.bundle_write.duration,
         ),
-        receiver_frame_duration_ms: duration_ms(receiver_profile.frame_duration),
-        receiver_frame_write_duration_ms: duration_ms(receiver_profile.frame_write_duration),
-        receiver_frame_sync_duration_ms: duration_ms(receiver_profile.frame_sync_duration),
+        receiver_frame_sync_duration_ms: duration_ms(
+            receive_report.receiver_profile.bundle_sync.duration,
+        ),
         receiver_frame_journal_persist_duration_ms: duration_ms(
-            receiver_profile.frame_journal_persist_duration,
+            receive_report.receiver_profile.wal_append.duration,
         ),
         receiver_frame_ack_flush_duration_ms: duration_ms(
-            receiver_profile.frame_ack_flush_duration,
+            receive_report.receiver_profile.bundle_ack_flush.duration,
         ),
-        receiver_issue_tail_duration_ms: duration_ms(receiver_profile.issue_tail_duration),
-        receiver_finish_duration_ms: duration_ms(receiver_profile.finish_duration),
+        receiver_issue_tail_duration_ms: duration_ms(
+            receive_report.receiver_profile.skip_catalog.duration,
+        ),
+        receiver_finish_duration_ms: duration_ms(receive_report.receiver_profile.finalize_duration),
         receiver_archive_finalize_duration_ms: duration_ms(
-            receiver_profile.archive_finalize_duration,
+            receive_report.receiver_profile.archive_finalize_duration,
         ),
-        receiver_issue_finalize_duration_ms: duration_ms(receiver_profile.issue_finalize_duration),
+        receiver_issue_finalize_duration_ms: duration_ms(
+            receive_report.receiver_profile.issue_finalize_duration,
+        ),
         receiver_finish_ack_flush_duration_ms: duration_ms(
-            receiver_profile.finish_ack_flush_duration,
+            receive_report.receiver_profile.finish_ack_flush_duration,
         ),
-        disk_budget_wait_ms: duration_ms(profile.disk_budget_wait.duration),
-        time_to_first_frame_ms: duration_ms(profile.time_to_first_frame),
-        overlap_efficiency_pct,
-        traversal_wait_ms: duration_ms(profile.traversal_wait.duration),
+        disk_budget_wait_ms: 0.0,
+        time_to_first_frame_ms: duration_ms(profile.time_to_first_bundle),
+        overlap_efficiency_pct: 0.0,
+        traversal_wait_ms: duration_ms(profile.scan.duration),
         ack_wait_ms: duration_ms(profile.ack_wait.duration),
         flush_count: profile.flush_count,
-        max_inflight_dirs: profile.max_inflight_directory_tasks,
-        max_dirfd_depth: profile.max_dirfd_depth,
-        read_mib_s: stage_speed_or_zero(&profile.read),
-        compress_mib_s: stage_speed_or_zero(&profile.compress),
-        send_mib_s: stage_speed_or_zero(&profile.send),
-        total_mib_s: stage_speed_or_zero(&profile.total),
+        max_inflight_dirs: 0,
+        max_dirfd_depth: 0,
+        read_mib_s: throughput_mib_per_sec(raw_read_bytes, profile.read.duration).unwrap_or(0.0),
+        compress_mib_s: throughput_mib_per_sec(profile.tar.bytes, profile.compress.duration)
+            .unwrap_or(0.0),
+        send_mib_s: throughput_mib_per_sec(compressed_payload_bytes, profile.send.duration)
+            .unwrap_or(0.0),
+        total_mib_s: throughput_mib_per_sec(logical_bytes, profile.total.duration).unwrap_or(0.0),
         avg_cpu_pct: resources.avg_cpu_percent,
         max_cpu_pct: resources.max_cpu_percent,
         avg_rss_mib: bytes_to_mib(resources.avg_working_set_bytes),
@@ -992,4 +1252,269 @@ fn monitor_current_process(interval: Duration, stop: Arc<AtomicBool>) -> Process
 
 pub(crate) fn bytes_to_mib(bytes: u64) -> f64 {
     bytes as f64 / (1024.0 * 1024.0)
+}
+
+#[cfg(test)]
+#[allow(unused_imports)]
+mod link_rate_tests {
+    use std::io::Cursor;
+    use std::net::{Shutdown, TcpListener, TcpStream};
+    use std::sync::{Barrier, OnceLock};
+
+    use super::*;
+    use crate::pipeline::shared::{LINK_1GBPS_PROFILE, LINK_10GBPS_PROFILE};
+
+    #[test]
+    fn link_profiles_use_decimal_rates_without_legacy_rtt_shaping() {
+        for (profile, expected_rate) in [
+            (LINK_1GBPS_PROFILE, 125_000_000),
+            (LINK_10GBPS_PROFILE, 1_250_000_000),
+        ] {
+            let shape = benchmark_network_shape(profile).unwrap();
+            assert_eq!(shape.shared_receive_bytes_per_second, Some(expected_rate));
+            assert_eq!(shape.rtt_ms, 0);
+            assert_eq!(shape.bandwidth_mib_per_sec, None);
+        }
+    }
+
+    #[test]
+    fn byte_budget_is_independent_of_read_fragmentation() {
+        let total_bytes = 16 * 1024 * 1024;
+        for rate in [125_000_000, 1_250_000_000] {
+            let expected_ns = ((total_bytes - LINK_BURST_BYTES) as u128 * NANOS_PER_SECOND)
+                .div_ceil(rate as u128);
+            for chunk_bytes in [1_024, 65_536, LINK_MAX_READ_BYTES] {
+                let mut budget = RateBudget::new(rate, LINK_BURST_BYTES);
+                let mut elapsed = Duration::ZERO;
+                for _ in 0..total_bytes / chunk_bytes {
+                    while let Some(delay) = budget.acquire_or_delay(elapsed, chunk_bytes) {
+                        elapsed += delay;
+                    }
+                }
+                // Дробный credit сохраняется и при максимальном read, который меньше burst.
+                assert!(elapsed.as_nanos() >= expected_ns);
+                assert!(
+                    elapsed.as_nanos() - expected_ns <= (total_bytes / LINK_BURST_BYTES) as u128
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn oversleep_credit_is_preserved_and_idle_credit_is_bounded() {
+        let mut budget = RateBudget::new(125_000_000, LINK_BURST_BYTES);
+        assert_eq!(
+            budget.acquire_or_delay(Duration::ZERO, LINK_BURST_BYTES),
+            None
+        );
+        let byte_delay = Some(Duration::from_nanos(8));
+        assert_eq!(budget.acquire_or_delay(Duration::ZERO, 1), byte_delay);
+        assert_eq!(budget.acquire_or_delay(Duration::ZERO, 1), byte_delay);
+
+        // Sleep на 8 ns может фактически длиться 1 ms: эти bytes доступны сразу.
+        let late_wakeup = Duration::from_millis(1);
+        assert_eq!(budget.acquire_or_delay(late_wakeup, 125_000), None);
+        assert_eq!(budget.acquire_or_delay(late_wakeup, 1), byte_delay);
+
+        let idle_wakeup = Duration::from_secs(60);
+        assert_eq!(budget.acquire_or_delay(idle_wakeup, LINK_BURST_BYTES), None);
+        assert_eq!(budget.acquire_or_delay(idle_wakeup, 1), byte_delay);
+    }
+
+    #[test]
+    fn maximum_read_keeps_oversleep_credit_at_ten_gigabits() {
+        let mut budget = RateBudget::new(1_250_000_000, LINK_BURST_BYTES);
+        assert_eq!(
+            budget.acquire_or_delay(Duration::ZERO, LINK_BURST_BYTES),
+            None
+        );
+        let scheduled_wait = budget
+            .acquire_or_delay(Duration::ZERO, LINK_MAX_READ_BYTES)
+            .unwrap();
+        let late_wakeup = scheduled_wait + Duration::from_millis(1);
+        assert_eq!(
+            budget.acquire_or_delay(late_wakeup, LINK_MAX_READ_BYTES),
+            None
+        );
+        // При burst == read limit этот credit терялся на каждом полном read.
+        assert_eq!(budget.acquire_or_delay(late_wakeup, 1_250_000), None);
+    }
+
+    #[test]
+    fn channels_and_clones_share_budget_but_reverse_direction_does_not() {
+        let endpoint = SharedReadPacer::for_profile(LINK_1GBPS_PROFILE).unwrap();
+        let clone = endpoint.clone();
+        let reverse = SharedReadPacer::for_profile(LINK_1GBPS_PROFILE).unwrap();
+        assert_eq!(
+            endpoint
+                .budget
+                .lock()
+                .unwrap()
+                .acquire_or_delay(Duration::ZERO, LINK_BURST_BYTES),
+            None
+        );
+        assert_eq!(
+            clone
+                .budget
+                .lock()
+                .unwrap()
+                .acquire_or_delay(Duration::ZERO, 1),
+            Some(Duration::from_nanos(8))
+        );
+        assert_eq!(
+            reverse
+                .budget
+                .lock()
+                .unwrap()
+                .acquire_or_delay(Duration::ZERO, LINK_BURST_BYTES),
+            None
+        );
+    }
+
+    #[test]
+    fn rate_only_read_caps_a_single_grant_below_the_burst() {
+        let pacer = SharedReadPacer::for_profile(LINK_10GBPS_PROFILE);
+        let mut stream = ShapedStream::new(
+            Cursor::new(vec![0xa5; LINK_MAX_READ_BYTES + 1]),
+            LINK_10GBPS_PROFILE,
+            pacer,
+        );
+        let mut bytes = vec![0; LINK_MAX_READ_BYTES + 1];
+        assert_eq!(stream.read(&mut bytes).unwrap(), LINK_MAX_READ_BYTES);
+        assert_eq!(bytes[LINK_MAX_READ_BYTES - 1], 0xa5);
+        assert_eq!(bytes[LINK_MAX_READ_BYTES], 0);
+        assert!(stream.read_shaper.is_none());
+        assert!(stream.write_shaper.is_none());
+    }
+
+    #[test]
+    #[ignore = "manual TCP calibration: 1 GiB per direction/rate with 1 MiB and 4 MiB read buffers"]
+    fn shared_link_rate_calibration_over_tcp() {
+        for profile in [LINK_1GBPS_PROFILE, LINK_10GBPS_PROFILE] {
+            for read_buffer_bytes in [1024 * 1024, 4 * 1024 * 1024] {
+                calibrate_shared_link_rate(profile, read_buffer_bytes);
+            }
+        }
+    }
+
+    fn calibrate_shared_link_rate(profile: &str, read_buffer_bytes: usize) {
+        const BYTES_PER_CHANNEL: u64 = 512 * 1024 * 1024;
+        const IO_BYTES: usize = 256 * 1024;
+        let rate = benchmark_network_shape(profile)
+            .unwrap()
+            .shared_receive_bytes_per_second
+            .unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let endpoint_pacers = [
+            SharedReadPacer::for_profile(profile).unwrap(),
+            SharedReadPacer::for_profile(profile).unwrap(),
+        ];
+        let mut streams = Vec::new();
+        for _ in 0..2 {
+            let sender = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+            let (receiver, _) = listener.accept().unwrap();
+            streams.push((0, receiver));
+            streams.push((1, sender));
+        }
+        let gate = Arc::new(Barrier::new(streams.len() * 2 + 1));
+        let started = OnceLock::<Instant>::new();
+        let measurements = thread::scope(|scope| {
+            let mut readers = Vec::new();
+            let mut writers = Vec::new();
+            for (direction, stream) in streams {
+                stream.set_nodelay(true).unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(60)))
+                    .unwrap();
+                stream
+                    .set_write_timeout(Some(Duration::from_secs(60)))
+                    .unwrap();
+                let mut read_stream =
+                    ShapedStream::new(stream, profile, Some(endpoint_pacers[direction].clone()));
+                let mut write_stream = read_stream.try_clone_stream().unwrap();
+                assert!(Arc::ptr_eq(
+                    &read_stream.shared_read_pacer.as_ref().unwrap().budget,
+                    &write_stream.shared_read_pacer.as_ref().unwrap().budget,
+                ));
+                let read_gate = gate.clone();
+                let read_started = &started;
+                readers.push((
+                    direction,
+                    scope.spawn(move || {
+                        let mut buffer = vec![0_u8; read_buffer_bytes];
+                        let mut received = 0_u64;
+                        let mut read_calls = 0_u64;
+                        let mut full_reads = 0_u64;
+                        let mut max_read_bytes = 0_usize;
+                        read_gate.wait();
+                        loop {
+                            let read = read_stream.read(&mut buffer).unwrap();
+                            if read == 0 {
+                                break;
+                            }
+                            received += read as u64;
+                            read_calls += 1;
+                            full_reads += u64::from(read == read_buffer_bytes);
+                            max_read_bytes = max_read_bytes.max(read);
+                        }
+                        assert_eq!(received, BYTES_PER_CHANNEL);
+                        (
+                            received,
+                            read_started.get().unwrap().elapsed(),
+                            read_calls,
+                            full_reads,
+                            max_read_bytes,
+                        )
+                    }),
+                ));
+                let write_gate = gate.clone();
+                writers.push(scope.spawn(move || {
+                    let buffer = vec![0xa5; IO_BYTES];
+                    write_gate.wait();
+                    for _ in 0..BYTES_PER_CHANNEL / IO_BYTES as u64 {
+                        write_stream.write_all(&buffer).unwrap();
+                    }
+                    write_stream.inner.shutdown(Shutdown::Write).unwrap();
+                }));
+            }
+            started.set(Instant::now()).unwrap();
+            gate.wait();
+            for writer in writers {
+                writer.join().unwrap();
+            }
+            let mut measurements = [(0_u64, Duration::ZERO, 0_u64, 0_u64, 0_usize); 2];
+            for (direction, reader) in readers {
+                let (bytes, elapsed, read_calls, full_reads, max_read_bytes) =
+                    reader.join().unwrap();
+                measurements[direction].0 += bytes;
+                measurements[direction].1 = measurements[direction].1.max(elapsed);
+                measurements[direction].2 += read_calls;
+                measurements[direction].3 += full_reads;
+                measurements[direction].4 = measurements[direction].4.max(max_read_bytes);
+            }
+            measurements
+        });
+        for (direction, (bytes, elapsed, read_calls, full_reads, max_read_bytes)) in
+            measurements.into_iter().enumerate()
+        {
+            let achieved = bytes as f64 / elapsed.as_secs_f64();
+            eprintln!(
+                "[bench-link-calibration] profile={profile} direction={} bytes={bytes} elapsed_ms={:.3} achieved_gbps={:.6} configured_gbps={:.3} burst_bytes={LINK_BURST_BYTES} max_grant_bytes={LINK_MAX_READ_BYTES} read_buffer_bytes={read_buffer_bytes} read_calls={read_calls} full_reads={full_reads} max_read_bytes={max_read_bytes}",
+                ["sender-to-receiver", "receiver-to-sender"][direction],
+                duration_ms(elapsed),
+                achieved * 8.0 / 1_000_000_000.0,
+                rate as f64 * 8.0 / 1_000_000_000.0,
+            );
+            assert_eq!(bytes, 2 * BYTES_PER_CHANNEL);
+            let byte_bound = rate as f64 * elapsed.as_secs_f64() + LINK_BURST_BYTES as f64;
+            assert!(
+                bytes as f64 <= byte_bound,
+                "shared direction exceeded its rate plus burst"
+            );
+            assert!(
+                achieved >= rate as f64 * 0.90,
+                "host/shaper sustained less than 90% of {profile}; do not use this calibration as a link-speed baseline"
+            );
+        }
+    }
 }

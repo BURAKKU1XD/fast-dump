@@ -5,13 +5,27 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::{Context, Result};
-use fast_dump::sender::{FileResumeState, SendOptions};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct SendOptions {
+    pub(crate) level: i32,
+    pub(crate) threads: u32,
+    pub(crate) frame_target_bytes: u64,
+    pub(crate) min_readers: usize,
+    pub(crate) max_readers: usize,
+    pub(crate) read_buffer_bytes: usize,
+    pub(crate) manifest_chunk_bytes: usize,
+    pub(crate) manifest_ack_records: u64,
+    pub(crate) manifest_ack_bytes: usize,
+}
 
 pub(crate) const MANY_SMALL_FILES_DATASET: &str = "manySmallFiles";
 pub(crate) const BIG_FILES_DATASET: &str = "bigFiles";
 pub(crate) const MIXED_DATASET: &str = "mixed";
 pub(crate) const DEFAULT_MEMORY_BUDGET_MIB: u64 = 512;
 pub(crate) const LOOPBACK_LOCALHOST_PROFILE: &str = "loopback-localhost";
+pub(crate) const LINK_1GBPS_PROFILE: &str = "link-1gbps";
+pub(crate) const LINK_10GBPS_PROFILE: &str = "link-10gbps";
 pub(crate) const LAN_LOW_RTT_PROFILE: &str = "lan-low-rtt";
 pub(crate) const WAN_MODERATE_RTT_PROFILE: &str = "wan-moderate-rtt";
 pub(crate) const WAN_HIGH_RTT_PROFILE: &str = "wan-high-rtt";
@@ -92,6 +106,7 @@ pub(crate) struct BenchmarkNetworkProfile {
 pub(crate) struct BenchmarkNetworkShape {
     pub(crate) rtt_ms: u64,
     pub(crate) bandwidth_mib_per_sec: Option<u64>,
+    pub(crate) shared_receive_bytes_per_second: Option<u64>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -114,16 +129,16 @@ const BENCHMARK_DATASET_PLAN: &[BenchmarkDatasetPlan] = &[
         title: "Million tiny files",
         coverage: BenchmarkCoverage::Planned,
         current_fixture: "planned dedicated dataset; current manySmallFiles is only a developer-scale proxy",
-        primary_goal: "Stress deterministic traversal, manifest size, replay cost, and RAM growth on extreme file counts.",
-        notes: "Required for cutover because v3 must not regress on tiny-file trees or grow RAM linearly with entry count.",
+        primary_goal: "Stress deterministic traversal, bundle metadata limits, and RAM growth on extreme file counts.",
+        notes: "The current sender retains the full scan result; this planned case must quantify entry-count memory growth beyond the bounded payload read-ahead window.",
     },
     BenchmarkDatasetPlan {
         id: "deep-tree",
         title: "Deep tree tiny files",
         coverage: BenchmarkCoverage::Partial,
         current_fixture: "manySmallFiles depth=7, files=40000",
-        primary_goal: "Measure path-stack, directory enter/leave churn, and replay cost on nested trees.",
-        notes: "Current synthetic dataset exercises nesting, but not the target v3 depth 9-12 or million-entry scale.",
+        primary_goal: "Measure path handling, directory traversal, and scan cost on nested trees.",
+        notes: "Current synthetic dataset exercises nesting, but not the target depth 9-12 or million-entry scale.",
     },
     BenchmarkDatasetPlan {
         id: "mixed-working-set",
@@ -131,15 +146,15 @@ const BENCHMARK_DATASET_PLAN: &[BenchmarkDatasetPlan] = &[
         coverage: BenchmarkCoverage::Implemented,
         current_fixture: "mixed",
         primary_goal: "Track general-purpose throughput, compression ratio, and stage balance on realistic size and entropy mixes.",
-        notes: "This is the main baseline for comparing default knobs before adding manifest-specific metrics.",
+        notes: "This is the main baseline for comparing reader, compression, and bundle-size settings.",
     },
     BenchmarkDatasetPlan {
         id: "unstable-subtree",
         title: "Unstable subtree",
         coverage: BenchmarkCoverage::Planned,
         current_fixture: "planned fault-style dataset with live churn and subtree skips",
-        primary_goal: "Measure replay, retry, discovery issue volume, and overlap behavior under partial subtree instability.",
-        notes: "Needed to prove v3 replay and discovery journaling do not fall back to full live rescans.",
+        primary_goal: "Measure retry cost, terminal skips, and durable resume behavior under partial subtree instability.",
+        notes: "Live-file correctness has regression tests; the fresh static-fixture matrix does not measure churn or reconnect latency.",
     },
     BenchmarkDatasetPlan {
         id: "mount-backed-source",
@@ -151,11 +166,11 @@ const BENCHMARK_DATASET_PLAN: &[BenchmarkDatasetPlan] = &[
     },
     BenchmarkDatasetPlan {
         id: "fallback-vs-unix",
-        title: "Fallback vs Unix executor",
+        title: "Cross-platform source traversal",
         coverage: BenchmarkCoverage::Planned,
-        current_fixture: "planned paired corpus executed once via Unix fast path and once via fallback executor",
-        primary_goal: "Compare correctness and throughput without allowing the fallback executor to become an unmeasured legacy path.",
-        notes: "The same corpus and network profile must be used for both execution layers.",
+        current_fixture: "planned paired Linux and Windows runs on equivalent fixtures",
+        primary_goal: "Compare correctness and throughput of supported platform paths on the same corpus.",
+        notes: "The legacy executor selector does not change v4 runtime behavior; separate operating-system runs are needed for this comparison.",
     },
     BenchmarkDatasetPlan {
         id: "large-payload-baseline",
@@ -163,7 +178,7 @@ const BENCHMARK_DATASET_PLAN: &[BenchmarkDatasetPlan] = &[
         coverage: BenchmarkCoverage::Implemented,
         current_fixture: "bigFiles",
         primary_goal: "Keep a control case for compression throughput, frame isolation, and receiver fsync costs on large files.",
-        notes: "This is auxiliary and does not replace the required tiny-file and replay-heavy matrix cases.",
+        notes: "This complements tiny-file and mixed workloads; reconnect and live-churn performance remain separate planned cases.",
     },
 ];
 
@@ -178,40 +193,58 @@ const BENCHMARK_NETWORK_PROFILES: &[BenchmarkNetworkProfile] = &[
         primary_goal: "Fast developer-local signal for stage balance before shaped-network validation.",
     },
     BenchmarkNetworkProfile {
+        id: LINK_1GBPS_PROFILE,
+        title: "1 Gbit/s shared application-byte rate",
+        coverage: BenchmarkCoverage::Implemented,
+        rtt_ms: "0 added",
+        bandwidth_limit: "125000000 B/s per direction, shared across channels",
+        loss_or_disconnects: "none",
+        primary_goal: "Rate-only full-duplex model with a bounded 8 MiB burst and at most 4 MiB per read. No TCP RTT, congestion, or Ethernet overhead emulation.",
+    },
+    BenchmarkNetworkProfile {
+        id: LINK_10GBPS_PROFILE,
+        title: "10 Gbit/s shared application-byte rate",
+        coverage: BenchmarkCoverage::Implemented,
+        rtt_ms: "0 added",
+        bandwidth_limit: "1250000000 B/s per direction, shared across channels",
+        loss_or_disconnects: "none",
+        primary_goal: "Rate-only full-duplex model with a bounded 8 MiB burst and at most 4 MiB per read. Calibrate host throughput before interpreting results.",
+    },
+    BenchmarkNetworkProfile {
         id: LAN_LOW_RTT_PROFILE,
-        title: "Low-latency LAN",
+        title: "Legacy approximate low-latency LAN",
         coverage: BenchmarkCoverage::Implemented,
         rtt_ms: "1",
-        bandwidth_limit: ">= 250 MiB/s",
+        bandwidth_limit: "250 MiB/s shaper setting",
         loss_or_disconnects: "none",
-        primary_goal: "Measure throughput without letting durable ack cadence disappear into loopback noise.",
+        primary_goal: "Historical per-I/O delay/pacing comparison only; independent channel budgets do not model one physical link.",
     },
     BenchmarkNetworkProfile {
         id: WAN_MODERATE_RTT_PROFILE,
-        title: "Moderate WAN RTT",
+        title: "Legacy approximate moderate WAN RTT",
         coverage: BenchmarkCoverage::Implemented,
         rtt_ms: "30",
-        bandwidth_limit: ">= 125 MiB/s",
+        bandwidth_limit: "125 MiB/s shaper setting",
         loss_or_disconnects: "none",
-        primary_goal: "Expose manifest ack cadence and overlap costs under realistic WAN latency.",
+        primary_goal: "Historical application-delay stress case; TCP ACKs and congestion still run on localhost.",
     },
     BenchmarkNetworkProfile {
         id: WAN_HIGH_RTT_PROFILE,
-        title: "High RTT durable-ack cost",
+        title: "Legacy approximate high-RTT durable-ack cost",
         coverage: BenchmarkCoverage::Implemented,
         rtt_ms: "100",
-        bandwidth_limit: ">= 125 MiB/s",
+        bandwidth_limit: "125 MiB/s shaper setting",
         loss_or_disconnects: "none",
-        primary_goal: "Stress the cost of every durable manifest or frame boundary acknowledgment.",
+        primary_goal: "Historical application-delay stress case, not a physical 1 Gbit/s link or true TCP RTT model.",
     },
     BenchmarkNetworkProfile {
         id: BANDWIDTH_LIMITED_PROFILE,
-        title: "Bandwidth-limited link",
+        title: "Legacy approximate bandwidth-limited link",
         coverage: BenchmarkCoverage::Implemented,
         rtt_ms: "30",
         bandwidth_limit: "25 MiB/s",
         loss_or_disconnects: "none",
-        primary_goal: "Measure overlap and chunk-size choices when bandwidth, not CPU, is the hard limit.",
+        primary_goal: "Historical per-I/O delay/pacing comparison; preserve old results without equating this model to a physical link.",
     },
     BenchmarkNetworkProfile {
         id: LOSSY_RECONNECT_PRONE_PROFILE,
@@ -230,12 +263,12 @@ const BENCHMARK_COMPARISON_RULES: &[BenchmarkComparisonRule] = &[
         rule: "Compare benchmark runs only on the same machine, dataset, network profile, sender knobs, and warm/cold cache mode.",
     },
     BenchmarkComparisonRule {
-        id: "median-and-tail",
-        rule: "Use repeats >= 5, report median as the default comparison number, and keep p90 alongside it for instability detection.",
+        id: "summary-means-and-repeat-counts",
+        rule: "Summary CSV values are arithmetic means across completed repeats, including the per-run maxima columns. Keep raw results and repeat counts; median, p90, and an overall peak require separate calculations from raw rows.",
     },
     BenchmarkComparisonRule {
         id: "loopback-is-not-cutover",
-        rule: "Loopback localhost is a developer baseline only; it cannot by itself justify a v3 cutover or default tuning choice.",
+        rule: "Loopback localhost is a developer baseline only; it cannot by itself justify a production default tuning change.",
     },
     BenchmarkComparisonRule {
         id: "full-matrix-before-cutover",
@@ -248,31 +281,31 @@ const BENCHMARK_SUCCESS_GATES: &[BenchmarkSuccessGate] = &[
         id: "whole-file-correctness",
         title: "Whole-file correctness remains non-negotiable",
         rule: "Every compared run must pass the relevant safety and archive-integrity suites before any performance number counts.",
-        evidence: "Connectivity and archive-correctness tests stay green on the same revision that produced the benchmark artifact.",
+        evidence: "Connectivity and archive-correctness tests stay green on the measured revision. Matrix archives are verified by default after timing and resource sampling; FAST_DUMP_BENCH_VERIFY_ARCHIVE=0 explicitly disables that check.",
     },
     BenchmarkSuccessGate {
         id: "bounded-ram",
         title: "RAM stays explicitly bounded",
-        rule: "Peak sender and receiver RSS must stay within the declared benchmark budget for every required dataset/profile run.",
-        evidence: "Peak RSS metrics are recorded per run; million-file and deep-tree runs must not require relaxed budgets to complete.",
+        rule: "Inspect per-run peak combined-process RSS against the declared budget; separate sender and receiver memory attribution is not implemented.",
+        evidence: "Windows raw rows contain sampled process peaks; summary max_rss_mib is their mean. Other targets emit zero placeholders, and the full scan result grows with entry count.",
     },
     BenchmarkSuccessGate {
         id: "bounded-disk",
         title: "Disk growth stays explicitly bounded",
-        rule: "Sender spool bytes, receiver manifest bytes, and issue-tail temp bytes must stay within declared quotas and clean up after abort paths.",
-        evidence: "Benchmark artifacts record spool, manifest, and issue-tail growth together with abort or reconnect scenarios.",
+        rule: "Review receiver archive, WAL, and issue-file growth and cleanup across aborts and resumes; v4 does not use sender or receiver manifest spools.",
+        evidence: "The current matrix records final issue-file size but does not measure total disk growth or enforce disk quotas. Abort and resume correctness are covered separately by tests.",
     },
     BenchmarkSuccessGate {
-        id: "resume-without-full-live-rescan",
-        title: "Reconnect does not trigger a full live rescan",
-        rule: "Ordinary reconnect and restart flows must resume from durable manifest or checkpoint state instead of rescanning the full live tree.",
-        evidence: "Replay latency and checkpoint-replay metrics are present, and the ordinary v3 path reports no fallback full-rescan event.",
+        id: "resume-from-durable-bundles",
+        title: "Reconnect preserves durable bundle boundaries",
+        rule: "Resume from the last durable committed bundle without duplicate archive entries; the current sender rescans the live source and skips committed work ordinals.",
+        evidence: "Disconnect/resume correctness tests verify complete archives. Fresh-dump matrix rows do not measure reconnect or replay latency.",
     },
     BenchmarkSuccessGate {
         id: "target-throughput-non-regression",
         title: "Target scenarios do not regress throughput",
         rule: "The current runtime must match or improve the recorded baseline throughput on the required target scenarios after accounting for the same correctness and resource budgets.",
-        evidence: "Per-scenario median throughput for the agreed matrix is stored and compared against the checked-in baseline artifacts.",
+        evidence: "Per-scenario mean elapsed time and raw repeat rows are stored with matching configuration and compared against the baseline artifacts.",
     },
 ];
 
@@ -581,15 +614,6 @@ pub(crate) fn create_single_large_file_fixture(dir: &Path, size: u64) -> u64 {
     size
 }
 
-pub(crate) fn empty_resume_state() -> FileResumeState {
-    FileResumeState {
-        last_committed_frame: 0,
-        last_committed_file_index: 0,
-        last_committed_file_path: String::new(),
-        archive_len: 0,
-    }
-}
-
 pub(crate) fn available_sender_threads_limit() -> u32 {
     std::thread::available_parallelism()
         .map(|parallelism| parallelism.get().saturating_sub(1).max(1) as u32)
@@ -608,7 +632,7 @@ fn sample_send_options() -> SendOptions {
         threads: 1,
         frame_target_bytes: 8 * 1024 * 1024,
         min_readers: 2,
-        max_readers: 8,
+        max_readers: 32,
         read_buffer_bytes: 1024 * 1024,
         manifest_chunk_bytes: 512 * 1024,
         manifest_ack_records: 4_096,
@@ -641,22 +665,37 @@ pub(crate) fn benchmark_network_shape(profile_id: &str) -> Option<BenchmarkNetwo
         LOOPBACK_LOCALHOST_PROFILE => Some(BenchmarkNetworkShape {
             rtt_ms: 0,
             bandwidth_mib_per_sec: None,
+            shared_receive_bytes_per_second: None,
+        }),
+        LINK_1GBPS_PROFILE => Some(BenchmarkNetworkShape {
+            rtt_ms: 0,
+            bandwidth_mib_per_sec: None,
+            shared_receive_bytes_per_second: Some(125_000_000),
+        }),
+        LINK_10GBPS_PROFILE => Some(BenchmarkNetworkShape {
+            rtt_ms: 0,
+            bandwidth_mib_per_sec: None,
+            shared_receive_bytes_per_second: Some(1_250_000_000),
         }),
         LAN_LOW_RTT_PROFILE => Some(BenchmarkNetworkShape {
             rtt_ms: 1,
             bandwidth_mib_per_sec: Some(250),
+            shared_receive_bytes_per_second: None,
         }),
         WAN_MODERATE_RTT_PROFILE => Some(BenchmarkNetworkShape {
             rtt_ms: 30,
             bandwidth_mib_per_sec: Some(125),
+            shared_receive_bytes_per_second: None,
         }),
         WAN_HIGH_RTT_PROFILE => Some(BenchmarkNetworkShape {
             rtt_ms: 100,
             bandwidth_mib_per_sec: Some(125),
+            shared_receive_bytes_per_second: None,
         }),
         BANDWIDTH_LIMITED_PROFILE => Some(BenchmarkNetworkShape {
             rtt_ms: 30,
             bandwidth_mib_per_sec: Some(25),
+            shared_receive_bytes_per_second: None,
         }),
         LOSSY_RECONNECT_PRONE_PROFILE => None,
         _ => None,

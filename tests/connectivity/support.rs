@@ -17,13 +17,11 @@ use anyhow::{Result, bail};
 use fast_dump::network::transport::{
     BoundListener, Session, TransportMode, connect_once, establish_session,
 };
-use fast_dump::receiver::{ReceiveReport, receive_dump};
+use fast_dump::receiver::{ReceiveReport, ReceiverProfile, receive_dump_profile};
 use fast_dump::role::Role;
-use fast_dump::sender::{PipelineProfile, SendOptions, SendReport, send_dump_profile};
+use fast_dump::sender::{BundlePlanOptions, SendReport, SenderProfile, send_dump_profile};
 use xxhash_rust::xxh3::Xxh3Default;
 
-// Параллельные интеграционные тесты могут стартовать в один и тот же тик системных часов,
-// поэтому к timestamp добавляем процесс-локальный счётчик и исключаем коллизии temp-директорий.
 static TEST_DIR_COUNTER: AtomicU64 = AtomicU64::new(1);
 
 pub(crate) struct TestDir {
@@ -184,8 +182,6 @@ impl DeterministicBytes {
     }
 
     fn next_u64(&mut self) -> u64 {
-        // Детерминированный генератор сохраняет воспроизводимость больших файлов
-        // без зависимости от внешнего RNG между разными запусками тестов.
         let mut value = self.state;
         value ^= value << 13;
         value ^= value >> 7;
@@ -286,6 +282,26 @@ pub(crate) fn unpack_archive(path: &Path, output_dir: &Path) {
     let decoder = zstd::stream::read::Decoder::new(file).unwrap();
     let mut archive = tar::Archive::new(decoder);
     archive.unpack(output_dir).unwrap();
+    // unpack также останавливается на первом нулевом блоке tar. Проверяем
+    // оставшийся нулевой хвост и EOF декодера, включая footer последнего frame.
+    let mut decoder = archive.into_inner();
+    let mut tail = [0_u8; 8192];
+    let mut tail_bytes = 0_usize;
+    loop {
+        let count = decoder.read(&mut tail).unwrap();
+        if count == 0 {
+            break;
+        }
+        assert!(
+            tail[..count].iter().all(|byte| *byte == 0),
+            "nonzero data after tar termination"
+        );
+        tail_bytes += count;
+    }
+    assert!(
+        tail_bytes >= 512,
+        "archive is missing its final tar zero block"
+    );
 }
 
 pub(crate) struct BinaryRoundtripResult {
@@ -298,8 +314,9 @@ pub(crate) struct BinaryRoundtripResult {
 pub(crate) struct RoundtripResult {
     pub(crate) _receiver_dir: TestDir,
     pub(crate) sender_report: SendReport,
-    pub(crate) sender_profile: PipelineProfile,
+    pub(crate) sender_profile: SenderProfile,
     pub(crate) receive_report: ReceiveReport,
+    pub(crate) receive_profile: ReceiverProfile,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -308,7 +325,7 @@ pub(crate) struct SenderBinaryOptions {
     pub(crate) threads: u32,
     pub(crate) min_readers: usize,
     pub(crate) max_readers: usize,
-    pub(crate) read_buffer_kb: usize,
+    pub(crate) read_buffer_kb: u64,
     pub(crate) frame_target_mb: u64,
 }
 
@@ -318,24 +335,18 @@ impl SenderBinaryOptions {
             level: 3,
             threads: 1,
             min_readers: 2,
-            max_readers: 4,
+            max_readers: 8,
             read_buffer_kb: 1024,
             frame_target_mb,
         }
     }
 }
 
-pub(crate) fn default_send_options(frame_target_bytes: u64) -> SendOptions {
-    SendOptions {
-        level: 3,
-        threads: 1,
-        frame_target_bytes,
-        min_readers: 2,
-        max_readers: 4,
-        read_buffer_bytes: 1024 * 1024,
-        manifest_chunk_bytes: 512 * 1024,
-        manifest_ack_records: 4_096,
-        manifest_ack_bytes: 8 * 1024 * 1024,
+pub(crate) fn default_send_options(frame_target_bytes: u64) -> BundlePlanOptions {
+    BundlePlanOptions {
+        bundle_target_bytes: frame_target_bytes as usize,
+        compression_level: 3,
+        ..Default::default()
     }
 }
 
@@ -477,40 +488,34 @@ pub(crate) fn run_push_roundtrip_via_binaries(
     )
 }
 
-pub(crate) fn spawn_receiver_dump_once(
-    data_dir: &Path,
-    manifest_ack_records: u64,
-    manifest_ack_bytes: usize,
-) -> (SocketAddr, thread::JoinHandle<Result<ReceiveReport>>) {
-    let listener = BoundListener::bind("127.0.0.1:0".parse().unwrap()).unwrap();
-    let addr = listener.local_addr();
-    let receiver_path = data_dir.to_path_buf();
-    let handle = thread::spawn(move || {
-        let mut session = listener.accept(Role::Receiver, None, None).unwrap();
-        receive_dump(
-            &mut session.stream,
-            receiver_path,
-            manifest_ack_records,
-            manifest_ack_bytes,
-        )
-    });
-    (addr, handle)
-}
-
 pub(crate) fn run_push_roundtrip_with_options(
     source: &Path,
     dump_id: &str,
-    options: SendOptions,
+    options: BundlePlanOptions,
 ) -> RoundtripResult {
     let receiver_dir = TestDir::new();
-    let (addr, receiver) = spawn_receiver_dump_once(
-        receiver_dir.path(),
-        options.manifest_ack_records,
-        options.manifest_ack_bytes,
-    );
+    let listener = BoundListener::bind("127.0.0.1:0".parse().unwrap()).unwrap();
+    let addr = listener.local_addr();
+    let receiver_path = receiver_dir.path().to_path_buf();
+    let receiver = thread::spawn(move || {
+        let session = listener.accept(Role::Receiver, None, None).unwrap();
+        let peer_dump_id = session.peer_dump_id.clone();
+        receive_dump_profile(
+            session.control_stream,
+            session.data_stream,
+            receiver_path,
+            peer_dump_id.as_deref().unwrap(),
+        )
+    });
+
     let mut sender = connect_once(Role::Sender, addr, Some(dump_id), None).unwrap();
-    let sender_result =
-        send_dump_profile(&mut sender.stream, source.to_path_buf(), dump_id, &options);
+    let sender_result = send_dump_profile(
+        &mut sender.control_stream,
+        &mut sender.data_stream,
+        source.to_path_buf(),
+        dump_id,
+        options,
+    );
     let (sender_report, sender_profile) = match sender_result {
         Ok(result) => result,
         Err(error) => {
@@ -519,11 +524,13 @@ pub(crate) fn run_push_roundtrip_with_options(
             panic!("sender error: {error:#}; receiver_result={receiver_result:?}");
         }
     };
-    let receive_report = receiver.join().unwrap().unwrap();
+    let (receive_report, receive_profile) = receiver.join().unwrap().unwrap();
+
     RoundtripResult {
         _receiver_dir: receiver_dir,
         sender_report,
         sender_profile,
         receive_report,
+        receive_profile,
     }
 }

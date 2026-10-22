@@ -5,24 +5,21 @@ use std::process::Command;
 use std::thread;
 
 use crate::support::*;
-use fast_dump::network::protocol::MAX_FRAME_CHUNK_BYTES;
 use fast_dump::network::transport::BoundListener;
 use fast_dump::role::Role;
-use fast_dump::sender::{SendOptions, send_dump};
+use fast_dump::sender::{BundlePlanOptions, send_dump};
 
 const BOUNDARY_SMALL_FILE_COUNT: u64 = 100;
-const BOUNDARY_READ_BUFFER_KB: usize = 64;
-const BOUNDARY_MIN_READERS: usize = 2;
-const BOUNDARY_MAX_READERS: usize = 4;
 const BOUNDARY_FRAME_TARGET_MB: u64 = 2;
+const V4_DATA_CHUNK_BYTES: u64 = 4 * 1024 * 1024;
 
 fn boundary_sender_options() -> SenderBinaryOptions {
     SenderBinaryOptions {
         level: 1,
         threads: 1,
-        min_readers: BOUNDARY_MIN_READERS,
-        max_readers: BOUNDARY_MAX_READERS,
-        read_buffer_kb: BOUNDARY_READ_BUFFER_KB,
+        min_readers: 2,
+        max_readers: 8,
+        read_buffer_kb: 1024,
         frame_target_mb: BOUNDARY_FRAME_TARGET_MB,
     }
 }
@@ -54,11 +51,8 @@ fn build_boundary_fixture(root: &Path) -> BTreeMap<String, FileHash> {
     let mut expected = BTreeMap::new();
     let mut seed = 1_000_u64;
 
-    // Один пустой файл нужен как дешёвая проверка нулевого payload в tar/zstd пути.
     insert_expected_file(&mut expected, root, "special/empty.bin", b"");
 
-    // Набор из 100 мелких файлов держит нагрузку на reader pool и проверяет, что
-    // archive не теряет ни один entry при частых переключениях между файлами.
     for index in 0..BOUNDARY_SMALL_FILE_COUNT {
         let size = 17 + ((index * 37) % 3072);
         insert_expected_random_file(
@@ -71,30 +65,20 @@ fn build_boundary_fixture(root: &Path) -> BTreeMap<String, FileHash> {
         seed += 1;
     }
 
-    let read_buffer_bytes = (BOUNDARY_READ_BUFFER_KB as u64) * 1024;
-    let reader_window_bytes = read_buffer_bytes * BOUNDARY_MAX_READERS as u64;
     let frame_target_bytes = BOUNDARY_FRAME_TARGET_MB * 1024 * 1024;
-
-    // Здесь собираем n-1 / n / n+1 вокруг ключевых byte-boundary sender pipeline:
-    // tar block, page-size, read buffer, агрегированное окно reader pool,
-    // протокольный chunk limit и frame target.
     for (group, boundary) in [
         ("tar-block", 512_u64),
         ("page", 4 * 1024),
-        ("read-buffer", read_buffer_bytes),
-        ("reader-window", reader_window_bytes),
-        ("frame-chunk", MAX_FRAME_CHUNK_BYTES as u64),
-        ("frame-target", frame_target_bytes),
+        ("data-chunk", V4_DATA_CHUNK_BYTES),
+        ("bundle-target", frame_target_bytes),
     ] {
         insert_boundary_triplet(&mut expected, root, group, boundary, &mut seed);
     }
 
-    // Один файл заметно больше frame target проверяет, что sender не режет файл
-    // посередине логической границы и receiver получает валидный итоговый архив.
     insert_expected_random_file(
         &mut expected,
         root,
-        "large/over-16x-frame.bin",
+        "large/over-16x-bundle.bin",
         frame_target_bytes * 16,
         seed,
     );
@@ -108,7 +92,7 @@ fn sender_and_receiver_binaries_roundtrip_boundary_fixture_and_verify_hashes() {
     let expected = build_boundary_fixture(source_dir.path());
     let dump_id = "dump-binary-boundary-fixture";
 
-    assert_eq!(expected.len(), 120);
+    assert_eq!(expected.len(), 114);
 
     let result = run_push_roundtrip_via_binaries_with_sender_options(
         source_dir.path(),
@@ -131,12 +115,48 @@ fn sender_and_receiver_binaries_roundtrip_boundary_fixture_and_verify_hashes() {
     );
     assert!(sender_stdout.contains("status=clean"), "{sender_stdout}");
 
-    let receiver_stdout = String::from_utf8_lossy(&result.receiver_output.stdout);
-    assert!(
-        receiver_stdout.contains(&format!("dump_id={dump_id}")),
-        "stdout={receiver_stdout}"
-    );
+    assert_archive_hashes(&result.archive_path, &expected);
+}
 
+#[test]
+#[ignore = "large file-count and streamed-payload stress; run explicitly or in scheduled CI"]
+fn sender_and_receiver_roundtrip_random_files_and_verify_hashes() {
+    let source_dir = TestDir::new();
+    let mut expected = build_boundary_fixture(source_dir.path());
+    // Мелкие файлы нагружают обход/очереди; большие проверяют streaming и смену bundles.
+    for index in 0..10_000_u64 {
+        insert_expected_random_file(
+            &mut expected,
+            source_dir.path(),
+            &format!("stress/{:03}/file-{index:05}.bin", index % 100),
+            1 + (index * 37) % 8192,
+            20_000 + index,
+        );
+    }
+    for (index, size) in [32 * 1024 * 1024, 64 * 1024 * 1024].into_iter().enumerate() {
+        insert_expected_random_file(
+            &mut expected,
+            source_dir.path(),
+            &format!("stress-large/{index}.bin"),
+            size,
+            40_000 + index as u64,
+        );
+    }
+    assert_eq!(expected.len(), 10_116);
+    let result = run_push_roundtrip_via_binaries_with_sender_options(
+        source_dir.path(),
+        "dump-random-stress",
+        boundary_sender_options(),
+        false,
+    );
+    assert!(
+        result.sender_output.status.success(),
+        "status={:?}, stderr={}",
+        result.sender_output.status.code(),
+        String::from_utf8_lossy(&result.sender_output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&result.sender_output.stdout);
+    assert!(stdout.contains("status=clean"), "{stdout}");
     assert_archive_hashes(&result.archive_path, &expected);
 }
 
@@ -157,18 +177,18 @@ fn receiver_binary_roundtrips_source_into_valid_archive_in_pull_mode() {
         let mut session = listener
             .accept(Role::Sender, Some("dump-04"), None)
             .unwrap();
-        let options = SendOptions {
-            level: 3,
-            threads: 1,
-            frame_target_bytes: 1,
-            min_readers: 2,
-            max_readers: 8,
-            read_buffer_bytes: 1024 * 1024,
-            manifest_chunk_bytes: 256 * 1024,
-            manifest_ack_records: 4096,
-            manifest_ack_bytes: 1024 * 1024,
-        };
-        send_dump(&mut session.stream, sender_path, "dump-04", &options).unwrap()
+        send_dump(
+            &mut session.control_stream,
+            &mut session.data_stream,
+            sender_path,
+            "dump-04",
+            BundlePlanOptions {
+                bundle_target_bytes: 1,
+                compression_level: 3,
+                ..Default::default()
+            },
+        )
+        .unwrap()
     });
 
     let output = Command::new(binary_path())
@@ -195,9 +215,9 @@ fn receiver_binary_roundtrips_source_into_valid_archive_in_pull_mode() {
 
     let stdout = String::from_utf8(output.stdout).unwrap();
     assert!(stdout.contains("dump_id=dump-04"), "{stdout}");
-    assert!(stdout.contains("resume frame=0"), "{stdout}");
-    assert!(stdout.contains("final frame=2"), "{stdout}");
-    assert_eq!(report.final_frame_no, 2);
+    assert!(stdout.contains("final_bundle=2"), "{stdout}");
+    assert!(stdout.contains("final_work_ordinal=2"), "{stdout}");
+    assert_eq!(report.final_bundle_no, 2);
     assert_eq!(
         archive_entries(&final_archive_path),
         sample_archive_entries()
@@ -236,10 +256,7 @@ fn sender_and_receiver_binaries_persist_issue_journal_for_terminal_skip() {
 
     let sender_stdout = String::from_utf8_lossy(&result.sender_output.stdout);
     assert!(sender_stdout.contains("status=completed_with_warnings"));
-    assert!(sender_stdout.contains("files_skipped_open_failed=1"));
-    assert!(sender_stdout.contains("discovery_issues_total=0"));
-    assert!(sender_stdout.contains("subtrees_skipped=0"));
-    assert!(sender_stdout.contains("manifest_resets_total=0"));
+    assert!(sender_stdout.contains("files_skipped=1"));
 
     assert_archive_hashes(&result.archive_path, &expected);
 
@@ -251,6 +268,6 @@ fn sender_and_receiver_binaries_persist_issue_journal_for_terminal_skip() {
     let issue_journal = fs::read_to_string(&issue_journal_path).unwrap();
 
     assert!(issue_journal_path.exists());
-    assert!(issue_journal.contains("scope\trecord_seq\twork_ordinal\tattempts\tcode\tpath"));
-    assert!(issue_journal.contains("\topen_failed\tlocked.bin\t"));
+    assert!(issue_journal.contains("work_ordinal\treason\trelative_path"));
+    assert!(issue_journal.contains("\topen_failed\tlocked.bin"));
 }

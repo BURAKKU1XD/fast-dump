@@ -22,6 +22,45 @@ mod pipeline {
         ));
     }
 
+    pub mod verify {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/benches/pipeline/verify.rs"
+        ));
+
+        #[test]
+        fn verification_rejects_missing_tar_end_block_and_hidden_trailing_payload() {
+            let dir = super::shared::BenchDir::new("archive-verification-tail");
+            let source = dir.path().join("source");
+            fs::create_dir_all(&source).unwrap();
+            fs::write(source.join("file.bin"), b"expected").unwrap();
+            let archive_path = dir.path().join("dump.tar.zst");
+            let mut builder = tar::Builder::new(Vec::new());
+            let mut header = tar::Header::new_gnu();
+            header.set_mode(0o600);
+            header.set_size(8);
+            builder
+                .append_data(&mut header, "file.bin", &b"expected"[..])
+                .unwrap();
+            let mut tar_bytes = builder.into_inner().unwrap();
+            let complete = zstd::bulk::compress(&tar_bytes, 1).unwrap();
+            fs::write(&archive_path, &complete).unwrap();
+            assert_eq!(verify_archive(&source, &archive_path).unwrap(), (1, 8));
+
+            // Zstd frame исправен и все файлы присутствуют, но второго нулевого
+            // блока tar нет: обычный entries() такое окончание не проверяет.
+            tar_bytes.truncate(tar_bytes.len() - 512);
+            fs::write(&archive_path, zstd::bulk::compress(&tar_bytes, 1).unwrap()).unwrap();
+            assert!(verify_archive(&source, &archive_path).is_err());
+
+            // Дополнительный frame после tar EOF нельзя молча игнорировать.
+            let mut trailing = complete;
+            trailing.extend(zstd::bulk::compress(b"unexpected trailing payload", 1).unwrap());
+            fs::write(&archive_path, trailing).unwrap();
+            assert!(verify_archive(&source, &archive_path).is_err());
+        }
+    }
+
     pub mod loopback {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -40,7 +79,7 @@ fn sample_row(repeat_index: u32, total_duration_ms: f64, sent_frames: u64) -> Ra
     RawResultRow {
         scenario: ScenarioKey {
             dataset: "mixed".to_owned(),
-            protocol_runtime: "v3".to_owned(),
+            protocol_runtime: "v4".to_owned(),
             network_profile: "wan-high-rtt".to_owned(),
             executor: "default".to_owned(),
             threads: 4,
@@ -146,7 +185,7 @@ fn raw_results_roundtrip_preserves_duration_and_wire_metrics() {
     assert_eq!(loaded.len(), 1);
 
     let parsed = &loaded[0];
-    assert_eq!(parsed.scenario.protocol_runtime, "v3");
+    assert_eq!(parsed.scenario.protocol_runtime, "v4");
     assert_eq!(parsed.scenario.network_profile, "wan-high-rtt");
     assert_eq!(parsed.skipped_files, 3);
     assert_eq!(parsed.sent_frames, 9);
@@ -205,7 +244,7 @@ fn aggregate_summary_rows_averages_new_schema_fields() {
     assert_eq!(summaries.len(), 1);
 
     let summary = &summaries[0];
-    assert_eq!(summary.scenario.protocol_runtime, "v3");
+    assert_eq!(summary.scenario.protocol_runtime, "v4");
     assert_eq!(summary.scenario.network_profile, "wan-high-rtt");
     assert_eq!(summary.skipped_files, 3);
     assert_eq!(summary.sent_frames, 12);
