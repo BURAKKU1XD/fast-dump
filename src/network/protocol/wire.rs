@@ -133,6 +133,14 @@ pub(crate) struct BundleData {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct BundleDataHeader {
+    pub(crate) bundle_no: u64,
+    pub(crate) attempt_no: u32,
+    pub(crate) is_last: bool,
+    pub(crate) payload_len: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct BundleCommit {
     pub(crate) attempt_no: u32,
     pub(crate) descriptor: BundleCommitDescriptor,
@@ -870,6 +878,14 @@ where
     if kind == MessageKind::BundleData {
         return read_bundle_data_body(stream, body_len).map(Message::BundleData);
     }
+    read_control_body(stream, kind, body_len)
+}
+
+fn read_control_body<T: Read>(
+    stream: &mut T,
+    kind: MessageKind,
+    body_len: usize,
+) -> Result<Message> {
     let mut body = vec![0_u8; body_len];
     stream
         .read_exact(&mut body)
@@ -878,6 +894,37 @@ where
 }
 
 fn read_bundle_data_body<T: Read>(stream: &mut T, body_len: usize) -> Result<BundleData> {
+    let mut bytes = Vec::new();
+    let header = read_bundle_data_body_into(stream, body_len, &mut bytes)?;
+    Ok(BundleData {
+        bundle_no: header.bundle_no,
+        attempt_no: header.attempt_no,
+        is_last: header.is_last,
+        bytes,
+    })
+}
+
+pub(crate) fn read_bundle_data_message_into<T: Read>(
+    stream: &mut T,
+    bytes: &mut Vec<u8>,
+) -> Result<BundleDataHeader> {
+    let (kind, body_len) = read_packet_header(stream)?;
+    if kind != MessageKind::BundleData {
+        match read_control_body(stream, kind, body_len)? {
+            Message::Error(error) => {
+                bail!("peer reported v4 data-channel error: {}", error.message)
+            }
+            other => bail!("unexpected v4 message on data channel: {:?}", other.kind()),
+        };
+    }
+    read_bundle_data_body_into(stream, body_len, bytes)
+}
+
+fn read_bundle_data_body_into<T: Read>(
+    stream: &mut T,
+    body_len: usize,
+    bytes: &mut Vec<u8>,
+) -> Result<BundleDataHeader> {
     let payload_len = body_len
         .checked_sub(DATA_HEADER_BYTES)
         .context("v4 bundle data body is shorter than its header")?;
@@ -889,16 +936,20 @@ fn read_bundle_data_body<T: Read>(stream: &mut T, body_len: usize) -> Result<Bun
     let bundle_no = reader.read_u64()?;
     let attempt_no = reader.read_u32()?;
     let is_last = reader.read_bool("is_last")?;
-    // Payload сразу попадает в итоговый буфер, без второго Vec и копирования packet body.
-    let mut bytes = vec![0_u8; payload_len];
+    // Сохраняем инициализированный хвост между пакетами: повторное чтение не
+    // требует ни выделения памяти, ни обнуления уже использованного буфера.
+    if bytes.len() < payload_len {
+        bytes.reserve_exact(payload_len - bytes.len());
+        bytes.resize(payload_len, 0);
+    }
     stream
-        .read_exact(&mut bytes)
+        .read_exact(&mut bytes[..payload_len])
         .context("failed to read v4 bundle data payload")?;
-    Ok(BundleData {
+    Ok(BundleDataHeader {
         bundle_no,
         attempt_no,
         is_last,
-        bytes,
+        payload_len,
     })
 }
 
@@ -1451,6 +1502,70 @@ mod tests {
         let mut input = FragmentedReader(Cursor::new(bytes));
         assert_eq!(read_message(&mut input).unwrap(), Message::BundleData(data));
         assert_eq!(read_message(&mut input).unwrap(), Message::FinishAck);
+    }
+
+    #[test]
+    fn reused_data_buffer_keeps_initialized_tail_and_packet_boundaries() {
+        let mut packets = Vec::new();
+        for (index, len) in [1025, 7, 0, 1025].into_iter().enumerate() {
+            write_bundle_data_message(
+                &mut packets,
+                index as u64,
+                2,
+                index == 3,
+                &vec![index as u8; len],
+            )
+            .unwrap();
+        }
+        write_message(&mut packets, &Message::FinishAck).unwrap();
+        let mut input = FragmentedReader(Cursor::new(packets));
+        let mut storage = Vec::new();
+        let first = read_bundle_data_message_into(&mut input, &mut storage).unwrap();
+        assert_eq!(first.payload_len, 1025);
+        let allocation = storage.as_ptr();
+        storage[7..].fill(0xa5);
+        for (index, len) in [(1, 7), (2, 0), (3, 1025)] {
+            let header = read_bundle_data_message_into(&mut input, &mut storage).unwrap();
+            assert_eq!(header.bundle_no, index);
+            assert_eq!(header.attempt_no, 2);
+            assert_eq!(header.is_last, index == 3);
+            assert_eq!(header.payload_len, len);
+            assert_eq!(storage.len(), 1025);
+            assert_eq!(storage.as_ptr(), allocation);
+            assert!(storage[..len].iter().all(|byte| *byte == index as u8));
+            if index < 3 {
+                assert!(storage[7..].iter().all(|byte| *byte == 0xa5));
+            }
+        }
+        assert_eq!(read_message(&mut input).unwrap(), Message::FinishAck);
+    }
+
+    #[test]
+    fn reusable_data_reader_rejects_truncation_and_wrong_channel_messages() {
+        let mut packet = Vec::new();
+        write_bundle_data_message(&mut packet, 1, 1, true, &[0xa5; 32]).unwrap();
+        for len in 0..packet.len() {
+            assert!(
+                read_bundle_data_message_into(&mut Cursor::new(&packet[..len]), &mut Vec::new())
+                    .is_err()
+            );
+        }
+        let mut error = Vec::new();
+        send_error(&mut error, "cancelled").unwrap();
+        assert!(
+            read_bundle_data_message_into(&mut Cursor::new(error), &mut Vec::new())
+                .unwrap_err()
+                .to_string()
+                .contains("data-channel error: cancelled")
+        );
+        let mut wrong = Vec::new();
+        write_message(&mut wrong, &Message::FinishAck).unwrap();
+        assert!(
+            read_bundle_data_message_into(&mut Cursor::new(wrong), &mut Vec::new())
+                .unwrap_err()
+                .to_string()
+                .contains("unexpected v4 message on data channel")
+        );
     }
 
     #[test]

@@ -10,8 +10,7 @@ use crate::role::Role;
 const DEFAULT_LEVEL: i32 = 3;
 const DEFAULT_FRAME_TARGET_MB: u64 = 64;
 const DEFAULT_THREADS: &str = "auto";
-const DEFAULT_MIN_READERS: usize = 2;
-const DEFAULT_MAX_READERS: usize = 32;
+const DEFAULT_MIN_READERS: usize = 1;
 const DEFAULT_READ_BUFFER_KB: u64 = 1024;
 const DEFAULT_MAX_SESSIONS: usize = 1;
 
@@ -80,7 +79,7 @@ pub struct SenderArgs {
     pub threads: ThreadCountArg,
     #[arg(long, default_value_t = DEFAULT_MIN_READERS)]
     pub min_readers: usize,
-    #[arg(long, default_value_t = DEFAULT_MAX_READERS)]
+    #[arg(long, default_value_t = crate::cpu::available_physical_cores())]
     pub max_readers: usize,
     #[arg(long, default_value_t = DEFAULT_READ_BUFFER_KB)]
     pub read_buffer_kb: u64,
@@ -250,8 +249,9 @@ mod tests {
         assert_eq!(args.source, PathBuf::from("input"));
         assert_eq!(args.resolve_dump_id().unwrap(), "input");
         assert_eq!(args.threads, ThreadCountArg::Auto);
-        assert_eq!(args.min_readers, 2);
-        assert_eq!(args.max_readers, 32);
+        assert_eq!(args.min_readers, 1);
+        let default_readers = crate::sender::BundlePlanOptions::default().readers;
+        assert_eq!(args.max_readers, default_readers);
         assert_eq!(args.read_buffer_kb, 1024);
 
         let runtime = args.runtime_options().unwrap();
@@ -260,8 +260,8 @@ mod tests {
             .unwrap_or(1);
         assert_eq!(runtime.threads, expected_threads);
         assert_eq!(runtime.bundle_target_bytes, 64 * 1024 * 1024);
-        assert_eq!(runtime.min_readers, 2);
-        assert_eq!(runtime.max_readers, 32);
+        assert_eq!(runtime.min_readers, 1);
+        assert_eq!(runtime.max_readers, default_readers);
         assert_eq!(runtime.read_buffer_bytes, 1024 * 1024);
     }
 

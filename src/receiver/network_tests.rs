@@ -57,6 +57,8 @@ impl PendingState {
             archive_len_after_append: None,
             checksum: Xxh3Default::new(),
             write_duration: Duration::ZERO,
+            periodic_sync_duration: Duration::ZERO,
+            periodic_sync_count: 0,
             commit: Some(BundleCommitDescriptor::from_bundle_descriptor(
                 &bundle.descriptor,
             )),
@@ -80,7 +82,7 @@ impl PendingState {
             PendingDataChunk {
                 key: AttemptKey::new(bundle_no, attempt_no),
                 is_last,
-                bytes: bytes.to_vec(),
+                bytes: bytes.to_vec().into(),
             },
         )
     }
@@ -580,18 +582,21 @@ fn orphan_payload_applies_backpressure_until_its_control_plan_arrives() {
         })))
         .unwrap();
     data_tx
-        .send(Ok(BundleData {
-            bundle_no: 1,
-            attempt_no: 1,
+        .send(Ok(PendingDataChunk {
+            key: AttemptKey::new(1, 1),
             is_last: true,
-            bytes: bundle.compressed_payload[5..].to_vec(),
+            bytes: bundle.compressed_payload[5..].to_vec().into(),
         }))
         .unwrap();
 
     // Оба канала готовы: orphan требует обработать именно план, не второй payload.
-    let ReceiveEvent::Control(Message::BundlePlan(plan)) =
-        receive_next_event(&control_rx, &data_rx, !state.orphan_data.is_empty()).unwrap()
-    else {
+    let ReceiveEvent::Control(Message::BundlePlan(plan)) = receive_next_event(
+        &control_rx,
+        &data_rx,
+        &crossbeam_channel::never(),
+        !state.orphan_data.is_empty(),
+    )
+    .unwrap() else {
         panic!("receiver drained data while waiting for its plan");
     };
     assert_eq!(data_rx.len(), 1);
@@ -607,16 +612,20 @@ fn orphan_payload_applies_backpressure_until_its_control_plan_arrives() {
     assert!(state.orphan_data.is_empty());
     assert_eq!(receiver.current_archive_len(), 5);
 
-    let ReceiveEvent::Data(data) =
-        receive_next_event(&control_rx, &data_rx, !state.orphan_data.is_empty()).unwrap()
-    else {
+    let ReceiveEvent::Data(data) = receive_next_event(
+        &control_rx,
+        &data_rx,
+        &crossbeam_channel::never(),
+        !state.orphan_data.is_empty(),
+    )
+    .unwrap() else {
         panic!("receiver did not resume reading bundle data");
     };
     state
         .data(
             &mut receiver,
-            data.bundle_no,
-            data.attempt_no,
+            data.key.bundle_no,
+            data.key.attempt_no,
             &data.bytes,
             data.is_last,
         )
@@ -624,3 +633,452 @@ fn orphan_payload_applies_backpressure_until_its_control_plan_arrives() {
     assert_eq!(state.commit(&mut receiver).bundle_no, 1);
     assert_eq!(directory.archive_bytes(), bundle.compressed_payload);
 }
+
+#[test]
+fn queued_plan_and_commit_coalesce_with_the_ready_bundle() {
+    let directory = TestDirectory::new();
+    let mut receiver = directory.open();
+    let mut state = PendingState::default();
+    let first = bundle(1);
+    let second = bundle(2);
+    state.plan(&first, 1);
+    state
+        .data(&mut receiver, 1, 1, &first.compressed_payload, true)
+        .unwrap();
+    let (control_tx, control_rx) = bounded(READER_QUEUE_CAPACITY);
+    let (data_tx, data_rx) = bounded(1);
+    control_tx
+        .send(Ok(Message::BundlePlan(wire::BundlePlan {
+            attempt_no: 1,
+            descriptor: BundlePlanDescriptor::from_bundle_descriptor(&second.descriptor),
+        })))
+        .unwrap();
+    control_tx
+        .send(Ok(Message::BundleCommit(BundleCommit {
+            attempt_no: 1,
+            descriptor: BundleCommitDescriptor::from_bundle_descriptor(&second.descriptor),
+        })))
+        .unwrap();
+    data_tx
+        .send(Ok(PendingDataChunk {
+            key: AttemptKey::new(2, 1),
+            is_last: true,
+            bytes: second.compressed_payload.clone().into(),
+        }))
+        .unwrap();
+
+    let mut output = Vec::new();
+    let mut profile = ReceiverProfile::default();
+    let mut consecutive_controls = 0;
+    for step in 0..4 {
+        let event = receive_event_before_commit(
+            &control_rx,
+            &data_rx,
+            &crossbeam_channel::never(),
+            false,
+            &mut consecutive_controls,
+            || {
+                drain_ready_commits(
+                    &mut output,
+                    &mut receiver,
+                    &mut state.bundles,
+                    &mut profile,
+                    false,
+                )?;
+                // Peer посылает Finish только после durable ACK: никакого таймера.
+                if profile.committed_bundles == 2 {
+                    control_tx
+                        .send(Ok(Message::Finish(Finish {
+                            final_bundle_no: 2,
+                            final_work_ordinal: Some(2),
+                        })))
+                        .unwrap();
+                }
+                Ok(())
+            },
+        )
+        .unwrap();
+        match (step, event) {
+            (0, ReceiveEvent::Control(Message::BundlePlan(_))) => {
+                state.plan(&second, 1);
+                state.bundles.back_mut().unwrap().commit = None;
+            }
+            (1, ReceiveEvent::Control(Message::BundleCommit(commit))) => {
+                state.bundles.back_mut().unwrap().commit = Some(commit.descriptor);
+            }
+            (2, ReceiveEvent::Data(data)) => {
+                state
+                    .data(&mut receiver, 2, 1, &data.bytes, data.is_last)
+                    .unwrap();
+            }
+            (3, ReceiveEvent::Control(Message::Finish(_))) => {}
+            _ => panic!("unexpected event order at step {step}"),
+        }
+        if step < 3 {
+            assert!(output.is_empty(), "premature singleton ACK");
+        }
+    }
+    assert_eq!(profile.committed_bundles, 2);
+    assert_eq!(profile.bundle_sync.bytes, 1);
+    assert_eq!(receiver.resume_state().last_committed_bundle_no, 2);
+    let mut acknowledgements = Cursor::new(output);
+    let Message::BundleAck(ack) = wire::read_message(&mut acknowledgements).unwrap() else {
+        panic!("missing group ACK");
+    };
+    assert_eq!(ack.bundle_no, 2);
+    assert_eq!(
+        acknowledgements.position(),
+        acknowledgements.get_ref().len() as u64
+    );
+    assert_eq!(
+        directory.archive_bytes(),
+        [first.compressed_payload, second.compressed_payload].concat()
+    );
+}
+
+#[test]
+fn queued_commit_does_not_make_incomplete_payload_durable() {
+    let directory = TestDirectory::new();
+    let mut receiver = directory.open();
+    let mut state = PendingState::default();
+    let first = bundle(1);
+    let second = bundle(2);
+    state.plan(&first, 1);
+    state.plan(&second, 1);
+    state.bundles.back_mut().unwrap().commit = None;
+    state
+        .data(&mut receiver, 1, 1, &first.compressed_payload, true)
+        .unwrap();
+    let (control_tx, control_rx) = bounded(1);
+    let (data_tx, data_rx) = bounded(1);
+    control_tx
+        .send(Ok(Message::BundleCommit(BundleCommit {
+            attempt_no: 1,
+            descriptor: BundleCommitDescriptor::from_bundle_descriptor(&second.descriptor),
+        })))
+        .unwrap();
+    data_tx
+        .send(Ok(PendingDataChunk {
+            key: AttemptKey::new(2, 1),
+            is_last: false,
+            bytes: second.compressed_payload[..5].to_vec().into(),
+        }))
+        .unwrap();
+    let mut consecutive_controls = 0;
+    let ReceiveEvent::Control(Message::BundleCommit(commit)) = receive_event_before_commit(
+        &control_rx,
+        &data_rx,
+        &crossbeam_channel::never(),
+        false,
+        &mut consecutive_controls,
+        || panic!("queued commit must be handled first"),
+    )
+    .unwrap() else {
+        panic!("missing queued commit");
+    };
+    state.bundles.back_mut().unwrap().commit = Some(commit.descriptor);
+    let mut output = Vec::new();
+    let mut profile = ReceiverProfile::default();
+    let ReceiveEvent::Data(data) = receive_event_before_commit(
+        &control_rx,
+        &data_rx,
+        &crossbeam_channel::never(),
+        false,
+        &mut consecutive_controls,
+        || {
+            drain_ready_commits(
+                &mut output,
+                &mut receiver,
+                &mut state.bundles,
+                &mut profile,
+                false,
+            )
+        },
+    )
+    .unwrap() else {
+        panic!("missing partial payload");
+    };
+    state
+        .data(&mut receiver, 2, 1, &data.bytes, data.is_last)
+        .unwrap();
+    assert!(output.is_empty());
+    assert_eq!(profile.committed_bundles, 0);
+    assert_eq!(receiver.resume_state().archive_len, 0);
+    assert!(!state.bundles.back().unwrap().data_finished);
+}
+
+#[test]
+fn last_ready_bundle_commits_before_waiting_for_peer_finish() {
+    let directory = TestDirectory::new();
+    let mut receiver = directory.open();
+    let mut state = PendingState::default();
+    let bundle = bundle(1);
+    state.plan(&bundle, 1);
+    state
+        .data(&mut receiver, 1, 1, &bundle.compressed_payload, true)
+        .unwrap();
+    let (control_tx, control_rx) = bounded(1);
+    let (_data_tx, data_rx) = bounded(1);
+    let mut consecutive_controls = 0;
+    let event = receive_event_before_commit(
+        &control_rx,
+        &data_rx,
+        &crossbeam_channel::never(),
+        false,
+        &mut consecutive_controls,
+        || {
+            assert_eq!(state.commit(&mut receiver).bundle_no, 1);
+            control_tx
+                .send(Ok(Message::Finish(Finish {
+                    final_bundle_no: 1,
+                    final_work_ordinal: Some(1),
+                })))
+                .unwrap();
+            Ok(())
+        },
+    )
+    .unwrap();
+    assert!(matches!(event, ReceiveEvent::Control(Message::Finish(_))));
+    assert_eq!(receiver.resume_state().last_committed_bundle_no, 1);
+}
+
+#[test]
+fn bounded_control_priority_yields_to_data_and_preserves_orphan_backpressure() {
+    let (control_tx, control_rx) = bounded(READER_QUEUE_CAPACITY + 1);
+    let (data_tx, data_rx) = bounded(1);
+    for _ in 0..=READER_QUEUE_CAPACITY {
+        control_tx
+            .send(Ok(Message::ResumeQuery(ResumeQuery {
+                dump_id: "queued".into(),
+            })))
+            .unwrap();
+    }
+    let data = || PendingDataChunk {
+        key: AttemptKey::new(1, 1),
+        is_last: true,
+        bytes: vec![1].into(),
+    };
+    data_tx.send(Ok(data())).unwrap();
+    let mut consecutive_controls = 0;
+    for _ in 0..READER_QUEUE_CAPACITY {
+        assert!(matches!(
+            receive_event_before_commit(
+                &control_rx,
+                &data_rx,
+                &crossbeam_channel::never(),
+                false,
+                &mut consecutive_controls,
+                || panic!("control budget was not exhausted"),
+            )
+            .unwrap(),
+            ReceiveEvent::Control(_)
+        ));
+    }
+    let mut commit_checks = 0;
+    assert!(matches!(
+        receive_event_before_commit(
+            &control_rx,
+            &data_rx,
+            &crossbeam_channel::never(),
+            false,
+            &mut consecutive_controls,
+            || {
+                commit_checks += 1;
+                Ok(())
+            },
+        )
+        .unwrap(),
+        ReceiveEvent::Data(_)
+    ));
+    assert_eq!(commit_checks, 1);
+    assert_eq!(control_rx.len(), 1);
+    data_tx.send(Ok(data())).unwrap();
+    consecutive_controls = READER_QUEUE_CAPACITY;
+    assert!(matches!(
+        receive_event_before_commit(
+            &control_rx,
+            &data_rx,
+            &crossbeam_channel::never(),
+            true,
+            &mut consecutive_controls,
+            || Ok(()),
+        )
+        .unwrap(),
+        ReceiveEvent::Control(_)
+    ));
+    assert_eq!(data_rx.len(), 1, "orphan must still wait for its plan");
+}
+
+#[test]
+fn queued_invalid_control_fails_without_committing_ready_payload() {
+    let directory = TestDirectory::new();
+    let mut receiver = directory.open();
+    let mut state = PendingState::default();
+    let bundle = bundle(1);
+    state.plan(&bundle, 1);
+    state
+        .data(&mut receiver, 1, 1, &bundle.compressed_payload, true)
+        .unwrap();
+    let (control_tx, control_rx) = bounded(1);
+    let (_data_tx, data_rx) = bounded(1);
+    control_tx
+        .send(wire::read_message(&mut Cursor::new([0xff; 12])))
+        .unwrap();
+    let result = receive_event_before_commit(
+        &control_rx,
+        &data_rx,
+        &crossbeam_channel::never(),
+        false,
+        &mut 0,
+        || panic!("invalid queued control must not advance durable state"),
+    );
+    let error = match result {
+        Err(error) => error,
+        Ok(_) => panic!("invalid control was accepted"),
+    };
+    assert!(error.to_string().contains("invalid v4 packet magic"));
+    assert_eq!(receiver.resume_state().last_committed_bundle_no, 0);
+    assert_eq!(state.bundles.len(), 1);
+}
+
+#[test]
+fn queued_abort_preserves_ready_prefix_and_ignores_late_payload() {
+    let directory = TestDirectory::new();
+    let mut receiver = directory.open();
+    let mut state = PendingState::default();
+    let first = bundle(1);
+    let second = bundle(2);
+    state.plan(&first, 1);
+    state.plan(&second, 1);
+    state.bundles.back_mut().unwrap().commit = None;
+    state
+        .data(&mut receiver, 1, 1, &first.compressed_payload, true)
+        .unwrap();
+    state
+        .data(&mut receiver, 2, 1, &second.compressed_payload[..5], false)
+        .unwrap();
+    let (control_tx, control_rx) = bounded(1);
+    let (data_tx, data_rx) = bounded(1);
+    control_tx
+        .send(Ok(Message::BundleAbort(BundleAbort {
+            bundle_no: 2,
+            attempt_no: 1,
+        })))
+        .unwrap();
+    data_tx
+        .send(Ok(PendingDataChunk {
+            key: AttemptKey::new(2, 1),
+            is_last: true,
+            bytes: second.compressed_payload[5..].to_vec().into(),
+        }))
+        .unwrap();
+    let mut consecutive_controls = 0;
+    let ReceiveEvent::Control(Message::BundleAbort(abort)) = receive_event_before_commit(
+        &control_rx,
+        &data_rx,
+        &crossbeam_channel::never(),
+        false,
+        &mut consecutive_controls,
+        || panic!("queued abort must be processed first"),
+    )
+    .unwrap() else {
+        panic!("missing queued abort");
+    };
+    state.abort(&mut receiver, abort.bundle_no, abort.attempt_no);
+    let ReceiveEvent::Data(data) = receive_event_before_commit(
+        &control_rx,
+        &data_rx,
+        &crossbeam_channel::never(),
+        false,
+        &mut consecutive_controls,
+        || {
+            assert_eq!(state.commit(&mut receiver).bundle_no, 1);
+            Ok(())
+        },
+    )
+    .unwrap() else {
+        panic!("missing late payload");
+    };
+    state
+        .data(&mut receiver, 2, 1, &data.bytes, data.is_last)
+        .unwrap();
+    assert_eq!(receiver.resume_state().last_committed_bundle_no, 1);
+    assert_eq!(directory.archive_bytes(), first.compressed_payload);
+}
+
+#[test]
+fn data_reader_recycles_bounded_storage_without_changing_payload() {
+    let mut packets = Vec::new();
+    for bundle_no in 1..=64 {
+        wire::write_bundle_data_message(
+            &mut packets,
+            bundle_no,
+            3,
+            true,
+            &vec![bundle_no as u8; 2048],
+        )
+        .unwrap();
+    }
+    let rx = spawn_data_reader(Cursor::new(packets)).unwrap();
+    let mut allocations = HashSet::new();
+    for bundle_no in 1..=64 {
+        let data = rx.recv_timeout(Duration::from_secs(5)).unwrap().unwrap();
+        assert_eq!(data.key, AttemptKey::new(bundle_no, 3));
+        assert!(data.is_last);
+        assert_eq!(data.bytes.len(), 2048);
+        assert!(data.bytes.iter().all(|byte| *byte == bundle_no as u8));
+        allocations.insert(data.bytes.storage.as_ptr() as usize);
+        drop(data);
+    }
+    assert!(allocations.len() <= DATA_BUFFER_COUNT);
+    assert!(rx.recv_timeout(Duration::from_secs(5)).unwrap().is_err());
+    assert!(matches!(
+        rx.recv_timeout(Duration::from_secs(5)),
+        Err(crossbeam_channel::RecvTimeoutError::Disconnected)
+    ));
+}
+
+#[test]
+fn abandoned_orphan_returns_its_buffer_and_disconnected_pool_does_not_block() {
+    let (recycle, returned) = bounded(1);
+    let storage = vec![0xa5; 1024];
+    let allocation = storage.as_ptr();
+    let mut orphan = HashMap::new();
+    let key = AttemptKey::new(1, 1);
+    orphan.insert(
+        key,
+        PendingDataChunk {
+            key,
+            is_last: false,
+            bytes: DataBuffer {
+                storage,
+                payload_len: 8,
+                recycle: Some(recycle.clone()),
+            },
+        },
+    );
+    drop(orphan.remove(&key));
+    let storage = returned.try_recv().unwrap();
+    assert_eq!(storage.as_ptr(), allocation);
+    assert_eq!(storage.len(), 1024);
+    drop(returned);
+    drop(DataBuffer {
+        storage,
+        payload_len: 0,
+        recycle: Some(recycle),
+    });
+}
+
+impl CloneableStream for Cursor<Vec<u8>> {
+    fn try_clone_stream(&self) -> Result<Self> {
+        Ok(self.clone())
+    }
+
+    fn shutdown_stream(&self) -> Result<()> {
+        // Чтение конечного буфера никогда не ждёт внешнего события.
+        Ok(())
+    }
+}
+
+#[path = "storage_fault_tests.rs"]
+mod storage_fault_tests;

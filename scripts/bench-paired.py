@@ -49,11 +49,17 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--before", type=Path, required=True)
     parser.add_argument("--after", type=Path, required=True)
+    parser.add_argument("--allow-identical-binaries", action="store_true",
+                        help="allow identical SHA256 only for intentional A/A calibration")
     parser.add_argument("--output", type=Path, default=os.environ.get("FAST_DUMP_BENCH_MATRIX_DIR"))
     parser.add_argument("--repeats", type=int, default=5)
     parser.add_argument("--dataset", default="manySmallFiles,bigFiles,mixed")
+    parser.add_argument("--source", type=Path, help="use an existing immutable fixture instead of generated datasets")
     parser.add_argument("--network-profile", default="loopback-localhost")
     parser.add_argument("--threads", required=True, help="compression thread count, or comma-separated counts")
+    parser.add_argument("--readers", type=int, help="force one reader count on both binaries")
+    parser.add_argument("--before-readers", type=int, help="override reader count for the before binary")
+    parser.add_argument("--after-readers", type=int, help="override reader count for the after binary")
     parser.add_argument("--frames", default="64")
     parser.add_argument("--buffers", default="1024")
     parser.add_argument("--executor", default="default")
@@ -61,19 +67,36 @@ def main():
     args = parser.parse_args()
     require(args.output is not None, "Supply --output or FAST_DUMP_BENCH_MATRIX_DIR")
     require(args.repeats > 0, "--repeats must be positive")
+    reader_counts = {side: getattr(args, side + '_readers') or args.readers for side in ('before', 'after')}
+    require(all(value is None or value > 0 for value in (args.readers, args.before_readers, args.after_readers)), "Reader counts must be positive")
     output = args.output.expanduser().resolve()
     binaries = {side: getattr(args, side).expanduser().resolve() for side in ("before", "after")}
     for binary in binaries.values():
         require(binary.is_file(), f"Benchmark binary does not exist: {binary}")
     require(not output.exists(), f"Output already exists: {output}")
+    if args.source is not None:
+        args.source = args.source.expanduser().resolve()
+        require(args.source.is_dir(), "--source must be an existing directory")
+        require(output != args.source and args.source not in output.parents, "Output must not be inside the source fixture")
+    hashes = {side: binary_hash(path) for side, path in binaries.items()}
+    identical_binaries = hashes["before"] == hashes["after"]
+    require(not identical_binaries or args.allow_identical_binaries,
+            "Before and after binaries have identical SHA256; use --allow-identical-binaries only for intentional A/A calibration")
     common = ["--repeats", "1", "--shuffle-scenarios", "--shuffle-seed", str(args.shuffle_seed)]
     for name in ("dataset", "network_profile", "threads", "frames", "buffers", "executor"):
+        if name == "dataset" and args.source is not None:
+            common.extend(["--source", str(args.source)])
+            continue
         common.extend(["--" + name.replace("_", "-"), getattr(args, name)])
     metadata = {
         "complete": False, "repeats_per_side": args.repeats,
         "policy": "AB then BA alternating; all samples retained; no automatic warmup or trimming",
-        "binary_sha256": {side: binary_hash(path) for side, path in binaries.items()},
+        "binary_sha256": hashes,
+        "allow_identical_binaries": args.allow_identical_binaries,
+        "identical_binaries": identical_binaries,
+        "comparison_kind": "A/A" if identical_binaries else "A/B",
         "common_arguments": common,
+        "requested_readers": reader_counts,
         "dataset_directory_env": os.environ.get("FAST_DUMP_BENCH_DATASET_DIR"),
         "temp_directory_env": os.environ.get("FAST_DUMP_BENCH_TEMP_DIR"),
         "invocations": [],
@@ -96,6 +119,8 @@ def main():
             environment["FAST_DUMP_BENCH_MATRIX_DIR"] = str(directory)
             environment["FAST_DUMP_BENCH_VERIFY_ARCHIVE"] = "1"
             command = [str(binaries[side]), *common]
+            if reader_counts[side] is not None:
+                command.extend(["--readers", str(reader_counts[side])])
             invocation = {"pair": repeat, "side": side, "directory": str(directory), "command": command}
             metadata["invocations"].append(invocation)
             save_manifest()

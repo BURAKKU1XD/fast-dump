@@ -130,7 +130,7 @@ const BENCHMARK_DATASET_PLAN: &[BenchmarkDatasetPlan] = &[
         coverage: BenchmarkCoverage::Planned,
         current_fixture: "planned dedicated dataset; current manySmallFiles is only a developer-scale proxy",
         primary_goal: "Stress deterministic traversal, bundle metadata limits, and RAM growth on extreme file counts.",
-        notes: "The current sender retains the full scan result; this planned case must quantify entry-count memory growth beyond the bounded payload read-ahead window.",
+        notes: "The sender streams ordinary scans through queues bounded by entry count. This case must measure metadata growth from directory width, DFS depth, path lengths, and ambiguous-name subtrees beyond the payload read-ahead budget; public collecting scan helpers still retain their full report.",
     },
     BenchmarkDatasetPlan {
         id: "deep-tree",
@@ -287,7 +287,7 @@ const BENCHMARK_SUCCESS_GATES: &[BenchmarkSuccessGate] = &[
         id: "bounded-ram",
         title: "RAM stays explicitly bounded",
         rule: "Inspect per-run peak combined-process RSS against the declared budget; separate sender and receiver memory attribution is not implemented.",
-        evidence: "Windows raw rows contain sampled process peaks; summary max_rss_mib is their mean. Other targets emit zero placeholders, and the full scan result grows with entry count.",
+        evidence: "Windows raw rows contain sampled process peaks; summary max_rss_mib is their mean. Other targets emit zero placeholders. Sender scan queues bound entry counts, not metadata bytes; active sorted directories and ambiguous-name subtrees can still grow, and public collecting scan helpers retain their full report.",
     },
     BenchmarkSuccessGate {
         id: "bounded-disk",
@@ -631,8 +631,8 @@ fn sample_send_options() -> SendOptions {
         level: 3,
         threads: 1,
         frame_target_bytes: 8 * 1024 * 1024,
-        min_readers: 2,
-        max_readers: 32,
+        min_readers: 1,
+        max_readers: fast_dump::sender::BundlePlanOptions::default().readers,
         read_buffer_bytes: 1024 * 1024,
         manifest_chunk_bytes: 512 * 1024,
         manifest_ack_records: 4_096,

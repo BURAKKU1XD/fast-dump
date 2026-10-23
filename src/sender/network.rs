@@ -13,14 +13,16 @@ use crate::network::protocol::wire::{
     self, BundleAbort, BundleAbortAck, BundleAck, BundleCommit, BundlePlan, Finish, Message,
     SkipAck, SkipEntries,
 };
-use crate::network::protocol::{
-    BundleCommitDescriptor, BundlePlanDescriptor, PreparedBundle, SkippedEntry,
-};
+use crate::network::protocol::{BundleCommitDescriptor, BundlePlanDescriptor, SkippedEntry};
 use crate::profile::SenderProfile;
 
 use super::compress::BundleCompressor;
-use super::plan::{DumpPlanner, PrepareProfile, SendBundle, StreamedBundleTask};
-use super::stream::send_streamed_attempt;
+use super::plan::{
+    DumpPlanner, MaterializedBundleTask, PrepareProfile, SendBundle, StreamedBundleTask,
+};
+use super::stream::{
+    StreamWorkspace, send_materialized_attempt_with_workspace, send_streamed_attempt_with_workspace,
+};
 use super::{BundlePlanOptions, plan_dump};
 
 const INFLIGHT_BUNDLE_WINDOW: usize = 4;
@@ -76,8 +78,9 @@ where
         ..SenderProfile::default()
     };
     let planned = spawn_planner_thread(planner);
-    let mut stream_compressor =
+    let mut compressor =
         BundleCompressor::new(options.compression_level, options.compression_threads)?;
+    let mut workspace = StreamWorkspace::new();
     let mut bundles_sent = 0_usize;
     let mut final_bundle_no = resume_state.last_committed_bundle_no;
     let mut inflight_bundles = VecDeque::<u64>::new();
@@ -92,7 +95,7 @@ where
                     profile.record_time_to_first_bundle(started.elapsed());
                 }
                 match bundle {
-                    SendBundle::Prepared(bundle) => {
+                    SendBundle::Materialized(bundle) => {
                         drain_inflight_bundles(
                             control_stream,
                             &mut profile,
@@ -105,10 +108,12 @@ where
                             .bytes
                             .saturating_add(bundle.descriptor.raw_payload_bytes);
                         final_bundle_no = bundle_no;
-                        write_bundle_payload_profiled(
+                        write_materialized_bundle_profiled(
                             control_stream,
                             data_stream,
                             bundle,
+                            &mut compressor,
+                            &mut workspace,
                             &mut profile,
                         )?;
                         inflight_bundles.push_back(bundle_no);
@@ -125,7 +130,8 @@ where
                             control_stream,
                             data_stream,
                             task,
-                            &mut stream_compressor,
+                            &mut compressor,
+                            &mut workspace,
                             &mut profile,
                             &mut inflight_bundles,
                         )? {
@@ -207,6 +213,8 @@ where
 }
 
 fn merge_prepare_profile(profile: &mut SenderProfile, prepare_profile: &PrepareProfile) {
+    profile.scan = prepare_profile.scan.clone();
+    profile.discovered_entries = prepare_profile.discovered_entries;
     profile.read.bytes = profile
         .read
         .bytes
@@ -284,72 +292,72 @@ where
     Ok(())
 }
 
-fn write_bundle_payload_profiled<TControl, TData>(
+fn write_materialized_bundle_profiled<TControl, TData>(
     control_stream: &mut TControl,
     data_stream: &mut TData,
-    bundle: PreparedBundle,
+    bundle: MaterializedBundleTask,
+    compressor: &mut BundleCompressor,
+    workspace: &mut StreamWorkspace,
     profile: &mut SenderProfile,
 ) -> Result<()>
 where
     TControl: Read + Write,
     TData: Write,
 {
-    let send_started = Instant::now();
-    let commit = BundleCommitDescriptor::from_bundle_descriptor(&bundle.descriptor);
+    // План владеет исходными descriptors; tar заимствует их после отправки,
+    // поэтому строки путей не копируются для двух стадий pipeline.
+    let plan_message = Message::BundlePlan(BundlePlan {
+        attempt_no: 1,
+        descriptor: bundle.descriptor,
+    });
+    let plan_started = Instant::now();
+    wire::write_message(control_stream, &plan_message)?;
+    control_stream
+        .flush()
+        .context("failed to flush v4 bundle plan on control channel")?;
+    let mut control_send_duration = plan_started.elapsed();
+    profile.record_flush();
+    let Message::BundlePlan(plan) = plan_message else {
+        unreachable!();
+    };
+    let sent = send_materialized_attempt_with_workspace(
+        data_stream,
+        &plan.descriptor,
+        bundle.payloads,
+        compressor,
+        workspace,
+    )?;
+    let payload = sent.result?;
+    profile.record_flush();
+
+    let commit_started = Instant::now();
     wire::write_message(
         control_stream,
-        &Message::BundlePlan(BundlePlan {
+        &Message::BundleCommit(BundleCommit {
             attempt_no: 1,
-            descriptor: BundlePlanDescriptor {
-                bundle_no: bundle.descriptor.bundle_no,
-                first_work_ordinal: bundle.descriptor.first_work_ordinal,
-                last_work_ordinal: bundle.descriptor.last_work_ordinal,
-                last_relative_path: bundle.descriptor.last_relative_path,
-                entries: bundle.descriptor.entries,
-                raw_payload_bytes: bundle.descriptor.raw_payload_bytes,
+            descriptor: BundleCommitDescriptor {
+                bundle_no: plan.descriptor.bundle_no,
+                tar_payload_bytes: payload.tar_bytes,
+                compressed_payload_bytes: payload.compressed_bytes,
+                compressed_xxh3_64: payload.checksum,
             },
         }),
     )?;
     control_stream
         .flush()
-        .context("failed to flush v4 bundle plan on control channel")?;
-    profile.record_flush();
-
-    let mut wrote_chunk = false;
-    let mut chunks = bundle
-        .compressed_payload
-        .chunks(wire::MAX_DATA_CHUNK_BYTES)
-        .peekable();
-    while let Some(chunk) = chunks.next() {
-        wrote_chunk = true;
-        wire::write_bundle_data_message(
-            data_stream,
-            commit.bundle_no,
-            1,
-            chunks.peek().is_none(),
-            chunk,
-        )?;
-    }
-    if !wrote_chunk {
-        wire::write_bundle_data_message(data_stream, commit.bundle_no, 1, true, &[])?;
-    }
-    data_stream
-        .flush()
-        .context("failed to flush v4 bundle data channel")?;
-    profile.record_flush();
-
-    wire::write_message(
-        control_stream,
-        &Message::BundleCommit(BundleCommit {
-            attempt_no: 1,
-            descriptor: commit,
-        }),
-    )?;
-    control_stream
-        .flush()
         .context("failed to flush v4 bundle commit on control channel")?;
-    profile.record_send(commit.compressed_payload_bytes, send_started.elapsed());
+    control_send_duration += commit_started.elapsed();
+    profile.record_send(
+        payload.compressed_bytes,
+        control_send_duration + sent.send_duration,
+    );
     profile.record_flush();
+    profile.tar.bytes = profile.tar.bytes.saturating_add(payload.tar_bytes);
+    profile.compress.bytes = profile.compress.bytes.saturating_add(payload.tar_bytes);
+    profile.compress.duration += sent.compress_duration;
+    profile.bundled_entries = profile
+        .bundled_entries
+        .saturating_add(plan.descriptor.entries.len() as u64);
     Ok(())
 }
 
@@ -363,6 +371,7 @@ fn send_streamed_bundle_profiled<TControl, TData>(
     data_stream: &mut TData,
     mut task: StreamedBundleTask,
     compressor: &mut BundleCompressor,
+    workspace: &mut StreamWorkspace,
     profile: &mut SenderProfile,
     inflight_bundles: &mut VecDeque<u64>,
 ) -> Result<StreamedBundleSendOutcome>
@@ -413,12 +422,13 @@ where
         control_send_duration += plan_started.elapsed();
         profile.record_flush();
 
-        let sent = send_streamed_attempt(
+        let sent = send_streamed_attempt_with_workspace(
             data_stream,
             &mut task.file,
             task.bundle_no,
             attempt_no,
             compressor,
+            workspace,
         )?;
         total_read_bytes = total_read_bytes.saturating_add(sent.read_bytes);
         total_read_duration += sent.read_duration;
@@ -689,7 +699,10 @@ impl Drop for PlannerThread {
 
 fn spawn_planner_thread(planner: DumpPlanner) -> PlannerThread {
     let cancellation = planner.cancellation_flag();
-    let (sender, receiver) = mpsc::sync_channel(INFLIGHT_BUNDLE_WINDOW);
+    // Rendezvous не накапливает очередь сырых bundle: параллельно с текущим
+    // planner готовит только следующий и может держать один перенесённый файл.
+    // Окно ACK остаётся независимым и не требует хранить отправленные payload.
+    let (sender, receiver) = mpsc::sync_channel(0);
     let handle = thread::spawn(move || {
         let result = run_planner_thread(planner, &sender);
         if let Err(error) = result {
@@ -788,11 +801,12 @@ mod tests {
                 .send(worker_cancellation.load(Ordering::Relaxed))
                 .unwrap();
         });
-        drop(PlannerThread {
+        let planned = PlannerThread {
             receiver: Some(receiver),
             handle: Some(handle),
             cancellation,
-        });
+        };
+        drop(planned);
         assert!(completion.try_recv().unwrap());
     }
 }

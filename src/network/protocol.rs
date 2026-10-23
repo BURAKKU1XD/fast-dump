@@ -85,6 +85,7 @@ pub(crate) struct BundleCommitDescriptor {
     pub(crate) compressed_xxh3_64: u64,
 }
 
+#[cfg(test)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PreparedBundle {
     pub(crate) descriptor: BundleDescriptor,
@@ -120,6 +121,7 @@ impl BundlePlanDescriptor {
 }
 
 impl BundleCommitDescriptor {
+    #[cfg(test)]
     pub(crate) const fn from_bundle_descriptor(descriptor: &BundleDescriptor) -> Self {
         Self {
             bundle_no: descriptor.bundle_no,

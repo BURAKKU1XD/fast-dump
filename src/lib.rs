@@ -1,5 +1,6 @@
 pub mod app;
 pub mod cli;
+mod cpu;
 pub mod network;
 mod profile;
 pub mod receiver;

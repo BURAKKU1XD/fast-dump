@@ -3,6 +3,7 @@ use std::io::{self, Read};
 use std::ops::{Deref, Range};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use anyhow::{Context, Result};
 
@@ -12,13 +13,117 @@ use super::scan::{ScannedEntry, ScannedEntryKind};
 
 pub(crate) const MAX_IMMEDIATE_ATTEMPTS: u32 = 3;
 pub(crate) const READ_BATCH_ENTRIES: usize = 4;
+#[cfg(test)]
 pub(crate) const PREFETCH_FILE_BYTES: u64 = 256 * 1024;
+pub(crate) const PREFETCH_PAYLOAD_BYTES: usize = 8 * 1024 * 1024;
+
+#[derive(Debug)]
+pub(crate) struct PrefetchBudget {
+    available: AtomicUsize,
+}
+
+impl PrefetchBudget {
+    pub(crate) fn new() -> Arc<Self> {
+        Arc::new(Self {
+            available: AtomicUsize::new(PREFETCH_PAYLOAD_BYTES),
+        })
+    }
+
+    fn reserve_batch(
+        self: &Arc<Self>,
+        sizes: [usize; READ_BATCH_ENTRIES],
+    ) -> ([bool; READ_BATCH_ENTRIES], Option<PrefetchReservation>) {
+        let mut available = self.available.load(Ordering::Relaxed);
+        loop {
+            let mut reserved = 0;
+            let selected = sizes.map(|size| {
+                let fits = size != 0 && size <= available - reserved;
+                if fits {
+                    reserved += size;
+                }
+                fits
+            });
+            if reserved == 0 {
+                return (selected, None);
+            }
+            match self.available.compare_exchange_weak(
+                available,
+                available - reserved,
+                Ordering::Relaxed,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => {
+                    return (
+                        selected,
+                        Some(PrefetchReservation {
+                            budget: self.clone(),
+                            bytes: reserved,
+                            delivered: AtomicBool::new(false),
+                        }),
+                    );
+                }
+                Err(current) => available = current,
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
+struct PrefetchReservation {
+    budget: Arc<PrefetchBudget>,
+    bytes: usize,
+    delivered: AtomicBool,
+}
+
+impl PrefetchReservation {
+    fn release(&mut self, bytes: usize) {
+        self.bytes -= bytes;
+        self.budget.available.fetch_add(bytes, Ordering::Relaxed);
+    }
+
+    fn deliver_slab(&self) {
+        // Planner отдельно ограничивает собираемый bundle. После последней
+        // выдачи slab больше не занимает read-ahead budget, даже если ещё живёт
+        // в planner. Не ждём сжатия 64 MiB bundle при бюджете очереди 8 MiB.
+        if !self.delivered.swap(true, Ordering::Relaxed) {
+            self.budget
+                .available
+                .fetch_add(self.bytes, Ordering::Relaxed);
+        }
+    }
+}
+
+impl Drop for PrefetchReservation {
+    fn drop(&mut self) {
+        if !*self.delivered.get_mut() {
+            self.budget
+                .available
+                .fetch_add(self.bytes, Ordering::Relaxed);
+        }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct SharedContents {
+    bytes: Vec<u8>,
+    // Пока последний элемент slab не передан planner, весь slab входит в budget,
+    // включая уже выданный префикс. При отмене Drop освобождает reservation.
+    _reservation: Option<PrefetchReservation>,
+}
+
+impl Deref for SharedContents {
+    type Target = Vec<u8>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.bytes
+    }
+}
 
 #[derive(Debug, Clone)]
 pub(crate) enum EntryContents {
     Owned(Vec<u8>),
     Shared {
-        bytes: Arc<Vec<u8>>,
+        bytes: Arc<SharedContents>,
         range: Range<usize>,
     },
 }
@@ -28,6 +133,18 @@ impl EntryContents {
         match self {
             Self::Owned(bytes) => bytes,
             Self::Shared { bytes, range } => &bytes[range.clone()],
+        }
+    }
+
+    pub(crate) fn delivered_from_prefetch(&self) {
+        // Slab заполняется в порядке обхода и выдаётся в том же порядке.
+        // Последний непустой slice освобождает budget одной атомарной операцией
+        // на batch; предыдущим slices не нужен отдельный atomic counter.
+        if let Self::Shared { bytes, range } = self
+            && range.end == bytes.len()
+            && let Some(reservation) = &bytes._reservation
+        {
+            reservation.deliver_slab();
         }
     }
 }
@@ -196,8 +313,8 @@ fn materialize_regular_file(
     }))
 }
 
-// Read-ahead держит в памяти только небольшие файлы. Более крупный файл дочитывает
-// planner из уже открытого handle: размер и лимит попыток остаются общими.
+// Когда read-ahead не получил byte budget, planner дочитывает уже открытый handle:
+// размер и лимит попыток остаются общими, новый open здесь не нужен.
 pub(crate) fn finish_materializing(
     mut entry: StreamedRegularFile,
     stream_threshold_bytes: u64,
@@ -238,11 +355,24 @@ fn reopen_after_short_read(entry: &mut StreamedRegularFile) -> Option<SkipReason
 
 pub(crate) type ReadBatch = [Option<Result<ReadDecision>>; READ_BATCH_ENTRIES];
 
+#[cfg(test)]
 pub(crate) fn materialize_batch(
     entries: [Option<ScannedEntry>; READ_BATCH_ENTRIES],
     stream_threshold_bytes: u64,
 ) -> ReadBatch {
     finish_read_batch(open_read_batch(entries), stream_threshold_bytes)
+}
+
+pub(crate) fn materialize_budgeted_batch(
+    entries: [Option<ScannedEntry>; READ_BATCH_ENTRIES],
+    stream_threshold_bytes: u64,
+    budget: &Arc<PrefetchBudget>,
+) -> ReadBatch {
+    finish_read_batch_with_budget(
+        open_read_batch(entries),
+        stream_threshold_bytes,
+        Some(budget),
+    )
 }
 
 fn open_read_batch(entries: [Option<ScannedEntry>; READ_BATCH_ENTRIES]) -> ReadBatch {
@@ -251,32 +381,50 @@ fn open_read_batch(entries: [Option<ScannedEntry>; READ_BATCH_ENTRIES]) -> ReadB
     entries.map(|entry| entry.map(|entry| materialize_owned_entry(entry, 0)))
 }
 
-fn finish_read_batch(mut outcomes: ReadBatch, stream_threshold_bytes: u64) -> ReadBatch {
+#[cfg(test)]
+fn finish_read_batch(outcomes: ReadBatch, stream_threshold_bytes: u64) -> ReadBatch {
+    finish_read_batch_with_budget(
+        outcomes,
+        stream_threshold_bytes.min(PREFETCH_FILE_BYTES),
+        None,
+    )
+}
+
+fn finish_read_batch_with_budget(
+    mut outcomes: ReadBatch,
+    stream_threshold_bytes: u64,
+    budget: Option<&Arc<PrefetchBudget>>,
+) -> ReadBatch {
     struct SharedEntry {
         descriptor: BundleEntryDescriptor,
         mode: u32,
         range: Range<usize>,
     }
 
-    let stream_threshold_bytes = stream_threshold_bytes.min(PREFETCH_FILE_BYTES);
-    let mut reserved: usize = outcomes
+    let sizes = std::array::from_fn(|index| match &outcomes[index] {
+        Some(Ok(ReadDecision::Streamed(file)))
+            if file.descriptor.size_at_open <= stream_threshold_bytes =>
+        {
+            usize::try_from(file.descriptor.size_at_open).unwrap_or(usize::MAX)
+        }
+        _ => 0,
+    });
+    // Одна reservation на batch. Никогда не ждём память: planner может держать
+    // предыдущие slabs до сжатия bundle; ожидание здесь создало бы взаимную блокировку.
+    let (selected, mut reservation) = match budget {
+        Some(budget) => budget.reserve_batch(sizes),
+        None => (sizes.map(|size| size != 0), None),
+    };
+    let mut reserved: usize = sizes
         .iter()
-        .filter_map(|outcome| match outcome {
-            Some(Ok(ReadDecision::Streamed(file)))
-                if file.descriptor.size_at_open <= stream_threshold_bytes =>
-            {
-                Some(file.descriptor.size_at_open as usize)
-            }
-            _ => None,
-        })
+        .zip(selected)
+        .filter_map(|(&size, selected)| selected.then_some(size))
         .sum();
     let mut bytes = Vec::with_capacity(reserved);
     let mut shared_entries: [Option<SharedEntry>; READ_BATCH_ENTRIES] =
         std::array::from_fn(|_| None);
     for (index, outcome) in outcomes.iter_mut().enumerate() {
-        if !matches!(outcome, Some(Ok(ReadDecision::Streamed(file)))
-            if file.descriptor.size_at_open <= stream_threshold_bytes)
-        {
+        if !selected[index] {
             continue;
         }
         let Some(Ok(ReadDecision::Streamed(mut file))) = outcome.take() else {
@@ -303,10 +451,16 @@ fn finish_read_batch(mut outcomes: ReadBatch, stream_threshold_bytes: u64) -> Re
                 // Освобождаем reservation до Owned retry, чтобы оба payload
                 // одновременно не удваивали ограниченное окно prefetch.
                 bytes.shrink_to(reserved);
+                if let Some(reservation) = &mut reservation {
+                    reservation.release(file.descriptor.size_at_open as usize);
+                }
                 // Retry не меняет уже заполненный slab. Его новый size_at_open
                 // может вырасти; редкий повтор читает в отдельный Owned payload.
                 *outcome = Some(match reopen_after_short_read(&mut file) {
                     Some(reason) => Ok(skipped_regular(file, reason)),
+                    // После изменения размера planner продолжит уже открытую
+                    // попытку; worker не выходит за общую reservation новым payload.
+                    None if budget.is_some() => Ok(ReadDecision::Streamed(file)),
                     None => finish_materializing(file, stream_threshold_bytes),
                 });
             }
@@ -320,7 +474,10 @@ fn finish_read_batch(mut outcomes: ReadBatch, stream_threshold_bytes: u64) -> Re
     }
     if !bytes.is_empty() {
         // Arc<Vec> переносит allocation без копии payload; Arc<[u8]> скопировал бы её.
-        let bytes = Arc::new(bytes);
+        let bytes = Arc::new(SharedContents {
+            bytes,
+            _reservation: reservation,
+        });
         for (outcome, entry) in outcomes.iter_mut().zip(shared_entries) {
             if let Some(entry) = entry {
                 *outcome = Some(Ok(ReadDecision::Accepted(MaterializedEntry {
@@ -727,6 +884,84 @@ mod tests {
             panic!("batch omitted a readable file");
         };
         entry
+    }
+
+    #[test]
+    fn medium_prefetch_budget_transfers_to_planner_and_releases_on_cancel() {
+        let dir = TestDir::new();
+        const SIZE: usize = 300_000;
+        for index in 0..4 {
+            fs::write(dir.path().join(format!("{index}")), vec![index as u8; SIZE]).unwrap();
+        }
+        let budget = Arc::new(PrefetchBudget {
+            available: AtomicUsize::new(2 * SIZE),
+        });
+        let [first, second, third, fourth] =
+            materialize_budgeted_batch(scanned_batch(dir.path()), 1024 * 1024, &budget);
+        let first = accepted(first);
+        let second = accepted(second);
+        assert_eq!(first.contents, vec![0; SIZE]);
+        assert_eq!(second.contents, vec![1; SIZE]);
+        assert_eq!(budget.available.load(Ordering::Relaxed), 0);
+        let ReadDecision::Streamed(third) = third.unwrap().unwrap() else {
+            panic!("prefetch exceeded its shared byte budget");
+        };
+        assert_eq!(third.open_attempts, 1);
+        assert!(matches!(fourth, Some(Ok(ReadDecision::Streamed(_)))));
+        fs::OpenOptions::new()
+            .append(true)
+            .open(dir.path().join("2"))
+            .unwrap()
+            .write_all(b"appended-tail")
+            .unwrap();
+        first.contents.delivered_from_prefetch();
+        assert_eq!(budget.available.load(Ordering::Relaxed), 0);
+        second.contents.delivered_from_prefetch();
+        assert_eq!(budget.available.load(Ordering::Relaxed), 2 * SIZE);
+        assert_eq!(first.contents, vec![0; SIZE]);
+        assert_eq!(second.contents, vec![1; SIZE]);
+        drop(first);
+        drop(second);
+        assert_eq!(budget.available.load(Ordering::Relaxed), 2 * SIZE);
+        let ReadDecision::Accepted(third) = finish_materializing(third, 1024 * 1024).unwrap()
+        else {
+            panic!("fallback lost the previously opened file");
+        };
+        assert_eq!(third.contents, vec![2; SIZE]);
+
+        let pending = materialize_budgeted_batch(scanned_batch(dir.path()), 1024 * 1024, &budget);
+        assert_eq!(budget.available.load(Ordering::Relaxed), 0);
+        drop(pending);
+        assert_eq!(budget.available.load(Ordering::Relaxed), 2 * SIZE);
+    }
+
+    #[test]
+    fn budgeted_short_read_releases_payload_without_resetting_attempts() {
+        let _guard = test_hooks::lock();
+        test_hooks::clear();
+        let dir = TestDir::new();
+        let path = dir.path().join("file");
+        fs::write(&path, vec![42; 300_000]).unwrap();
+        for _ in 0..3 {
+            test_hooks::force_short_read_after_next_open(&path, 2);
+        }
+        let budget = PrefetchBudget::new();
+        let [file, _, _, _] =
+            materialize_budgeted_batch(scanned_batch(dir.path()), 1024 * 1024, &budget);
+        let ReadDecision::Streamed(file) = file.unwrap().unwrap() else {
+            panic!("failed prefetch must defer the reopened attempt");
+        };
+        assert_eq!(file.open_attempts, 2);
+        assert_eq!(
+            budget.available.load(Ordering::Relaxed),
+            PREFETCH_PAYLOAD_BYTES
+        );
+        let ReadDecision::Skipped(skipped) = finish_materializing(file, 1024 * 1024).unwrap()
+        else {
+            panic!("prefetch reset the shared three-attempt limit");
+        };
+        assert_eq!(skipped.reason, SkipReason::UnstableAfterRetries);
+        test_hooks::clear();
     }
 
     #[test]

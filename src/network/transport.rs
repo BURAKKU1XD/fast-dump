@@ -24,12 +24,32 @@ pub enum TransportMode {
 
 pub trait CloneableStream: Read + Write + Send + 'static + Sized {
     fn try_clone_stream(&self) -> Result<Self>;
+
+    // Должен прервать блокирующий I/O на всех клонах перед завершением reader-потоков.
+    fn shutdown_stream(&self) -> Result<()>;
 }
 
 impl CloneableStream for TcpStream {
     fn try_clone_stream(&self) -> Result<Self> {
         self.try_clone()
             .context("failed to clone v4 transport stream")
+    }
+
+    fn shutdown_stream(&self) -> Result<()> {
+        let result = self.shutdown(std::net::Shutdown::Both);
+        #[cfg(windows)]
+        {
+            use std::os::windows::io::AsRawSocket;
+            // Winsock recv может ждать асинхронный запрос даже у blocking socket.
+            // shutdown запрещает новые операции, CancelIoEx снимает уже начатую.
+            unsafe {
+                windows_sys::Win32::System::IO::CancelIoEx(
+                    self.as_raw_socket() as _,
+                    std::ptr::null(),
+                );
+            }
+        }
+        result.context("failed to shut down v4 transport stream")
     }
 }
 

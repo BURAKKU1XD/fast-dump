@@ -27,33 +27,97 @@ behavior, hard constraints, and navigation.
 - The active CLI/runtime contract is packet version `4`.
 - Mainline execution path uses the bundle-first runtime in canonical module
   locations.
-- Source scanning uses up to `8` subtree workers and merges results in the same
-  deterministic depth-first order.
-- File reads use ordered, bounded read-ahead: `4` entries per reader and at most
-  `256 KiB` per prefetched regular-file payload. The default reader maximum of
-  `32` bounds this window to `128` entries and `32 MiB` of file payload.
-  Workers process up to four adjacent entries per job; small-file payloads share
-  one immutable buffer sized from opened handles. A batch crossing a bundle
-  boundary can retain up to `3 * 256 KiB` of already-consumed payload in addition
-  to the window until its last entry is released.
-  Larger files retain bounded open handles until the planner materializes or
-  streams them.
-- `--min-readers` (default `2`) and `--max-readers` (default `32`) bound the
-  requested available-parallelism reader count; actual workers are capped at
-  `ceil(pending entries / 32)` to amortize startup. A count of `1`, including
-  pending sets of at most `32` entries, uses the serial path.
+- Source scanning uses up to `2` subtree workers on Windows and `8` on other
+  platforms, merging results in the same deterministic depth-first order.
+  Batches contain up to `1024` entries on Windows and `64` on other platforms;
+  each scanner channel holds at most two batches. These are entry-count limits,
+  not a metadata byte cap. Variable-length paths, producer/consumer batches,
+  and sorted directories retained by active DFS walks use additional memory.
+  The scanner limit does not change the physical-core file-reader bounds.
+  Enumerate and sort each directory fully, but feed ordinary trees to reading
+  before the complete scan finishes. Read
+  at most `32 * requested readers` pending entries initially to preserve the
+  worker cap. Validate the committed resume prefix before opening pending files.
+  At a directory containing any native basename with backslashes or lossy
+  Unicode, collect that entire subtree before publication. Preserve suppression
+  of all normalized paths colliding with unsupported entries, without changing
+  public scan entries or any resume ordinal.
+- File reads use ordered, bounded read-ahead: `4` entries per actual reader
+  (`64` entries for `16` readers, `704` for `176`). A shared `8 MiB`
+  budget limits prefetched payload pending delivery, independently of reader
+  count. Up to four adjacent entries share one immutable buffer sized from
+  opened handles. Whole files up to the configured materialization threshold
+  are eligible if they fit the remaining budget; a single file or batch buffer
+  cannot exceed `8 MiB`. Release a batch's reservation only after its last
+  successful prefetched entry is delivered to the planner, or on cancellation.
+  Already-delivered slices stay charged until then. The planner's materialized
+  bundle is separate; one buffer crossing a bundle boundary can retain up to
+  `8 MiB` of already-consumed payload until its remaining entries are released.
+  When no budget is available, return bounded open handles without waiting;
+  the planner materializes or streams those same handles.
+- `--min-readers` (default `1`) and `--max-readers` (default: detected physical
+  cores) bound the requested physical-core count; there is no fixed `32`-reader
+  ceiling. Actual workers are capped at `ceil(pending entries / 32)` to amortize
+  startup. A count of `1`, including pending sets of at most `32` entries, uses
+  the serial path. Library defaults use the same detected core count. Explicit
+  equal min/max selects a fixed count while retaining the pending-entry cap.
+  Cache core detection: Windows includes all processor groups; Linux counts
+  cores allowed by CPU affinity and caps the result by available logical
+  parallelism for CPU quotas. Fall back to available logical parallelism,
+  minimum `1`, when physical topology is unavailable.
   `--threads` controls zstd compression workers (`1` is synchronous);
   `--read-buffer-kb` is still validated but does not tune the data path.
 - Bundle `1` uses aggregation target `min(configured target, 4 MiB)`; later
   bundles use the configured target (`64 MiB` by CLI default). Whole files may
   exceed the aggregation target. The materialization/streaming threshold always
   remains the configured target.
-- Buffered and streamed sender paths reuse zstd contexts across bundles and
-  retries while producing independent frames.
-- Streamed reading/compression overlaps network writes through a two-chunk
-  queue. Four reused `4 MiB` buffers bound this stage to `16 MiB` of compressed
-  payload, excluding zstd workspace. Cancel and join the producer before abort,
-  retry, or returning a network error.
+- Materialized and streamed sender paths share one zstd context across
+  successfully completed frames. After unfinished, failed, or aborted compression,
+  recreate the context with the same settings before the next attempt to avoid
+  stale worker state. Keep reusing the chunk pool; failure recovery changes no
+  CLI fields or wire messages. Each attempt starts an independent frame.
+  Zstd writes directly into the final compressed chunks. Send the plan before
+  compression and stream chunks
+  without retaining a complete compressed bundle.
+- Release each materialized entry's source payload after its successful tar/zstd
+  append, preserving the descriptor for the bundle plan. A shared slab is freed
+  after its last slice is released, including a slice carried to the next bundle.
+- Planner handoff uses a zero-capacity rendezvous. Materialized source payload
+  may include the current bundle, the next bundle, and one carried whole file,
+  each bounded by the configured target. Read-ahead, shared-slab retention,
+  metadata, and zstd workspace are additional. The four-bundle ACK window
+  retains no sent payload.
+- All bundle compression overlaps network writes through a two-chunk queue.
+  Four reused `4 MiB` buffers bound this stage to `16 MiB` of compressed payload,
+  excluding zstd workspace. Allocate them on first use and reuse across bundles
+  and attempts. Allocate the separate `1 MiB` source-read buffer only on first
+  streamed-file use and reuse it thereafter. Each
+  attempt still owns a scoped producer. Cancel and join it before abort, retry,
+  or returning a network error.
+- Receiver data reads reuse a lazy pool of at most ten `4 MiB` buffers, bounded
+  to `40 MiB` of payload storage. Write/hash only the current packet length;
+  return buffers after consumption and discarded late/orphan data.
+- Receiver sessions own both network reader threads. Every exit shuts down
+  channels, cancels buffer-pool waits, disconnects result queues, and joins the
+  readers before releasing the listener session slot. Windows shutdown also
+  calls `CancelIoEx` to interrupt pending Winsock reads. Both library channel
+  types implement `CloneableStream`, including interruptible `shutdown_stream`.
+  Detected data-reader failure also wakes orphan-plan waiting. After `Finish`,
+  waiting for pending data observes control errors and rejects further controls.
+  Silent connected peers have no general idle-session deadline.
+- Receiver periodic archive sync remains at `64 MiB`. Skip a commit's archive
+  sync only when a successful previous sync covered all writes and no creation
+  or truncation remains dirty; WAL sync before acknowledgement is unchanged.
+  Additive receiver profile fields separate write I/O, periodic sync, and clean
+  commit-sync skips while preserving existing aggregate fields and CLI stdout.
+- Before checking ready commits, consume at most eight already-queued control
+  messages without waiting for additional controls. Afterwards, give ready data
+  a turn unless orphan data requires a plan first. Group thresholds and durable
+  archive/WAL/ACK ordering remain unchanged.
+- Scan duration excludes batch-send backpressure but is elapsed time, not CPU
+  time. Time to first bundle means task/plan availability before compression,
+  payload delivery, or acknowledgement. Overlapping stage durations are not
+  additive.
 - Current active protocol reference lives in `src/network/protocol.md`.
 
 ## Hard Contract
@@ -168,3 +232,9 @@ behavior, hard constraints, and navigation.
 - `cargo test --quiet`
 - `cargo clippy --all-targets --all-features`
 - `cargo check --benches`
+- Push/PR CI covers Windows/Linux and Rust `1.89.0`/stable with locked
+  dependencies. Manual release packaging additionally gates on release tests
+  and correctness stress, then records source/compiler/binary hashes.
+- Keep storage fault hooks under `cfg(test)`; release I/O must not pay for
+  injection checks. Lifecycle regressions must leave the other peer channel
+  open until the receiver returns and verify that its reader handles are gone.

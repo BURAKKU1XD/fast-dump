@@ -42,6 +42,12 @@ completion.
   Keep these coordination files when copying or restoring receiver state.
 - Integration and module-level coverage exists for transport, roundtrip, resume,
   skip persistence, large-file retries, and listener session limits.
+- Receiver sessions own and join both network readers on every exit. Cleanup
+  shuts down both channels and cancels blocked reads, queue sends, and buffer-pool
+  waits; Windows additionally cancels pending socket I/O. A detected data-reader
+  failure interrupts waiting for its plan. While finishing pending payload,
+  control-channel failure or an unexpected control message ends the session.
+  No general idle-session deadline is imposed on a connected but silent peer.
 
 ## CLI
 
@@ -77,8 +83,8 @@ Optional:
 - `--token <TOKEN>`
 - `-l, --level <N>` default `3`
 - `--threads <N|auto>` default `auto`
-- `--min-readers <N>` default `2`
-- `--max-readers <N>` default `32`
+- `--min-readers <N>` default `1`
+- `--max-readers <N>` defaults to the detected physical-core count
 - `--read-buffer-kb <N>` default `1024`
 - `--frame-target-mb <N>` default `64`
 
@@ -93,10 +99,17 @@ Notes:
 - `--threads auto` resolves to `available_parallelism() - 1`, with a minimum of
   `1`. `--threads 1` compresses synchronously; larger values enable that many
   zstd compression workers within each frame.
-- File-reader concurrency uses `available_parallelism()` clamped between
-  `--min-readers` and `--max-readers`, then capped at `ceil(pending entries / 32)`
-  to amortize worker startup. A resulting count of `1`, including all sets of at
-  most `32` pending entries, uses the serial path.
+- File-reader concurrency uses the detected physical-core count, clamped
+  between `--min-readers` and `--max-readers` (defaults `1` and the detected core
+  count), then capped at `ceil(pending entries / 32)` to amortize worker startup.
+  A resulting count of `1`, including all sets of at most `32` pending entries,
+  uses the serial path. There is no fixed `32`-reader ceiling: `176` detected
+  cores request `176` readers before the entry-count cap. Equal explicit reader
+  bounds select a fixed count before that cap.
+- Physical-core detection is cached. Windows includes all processor groups;
+  Linux counts cores available through CPU affinity and caps the result by
+  available logical parallelism to respect CPU quotas. If topology is
+  unavailable, use available logical parallelism, with a minimum of `1`.
 - `--read-buffer-kb` remains accepted and validated, but does not currently tune
   the `v4` data path.
 - `--frame-target-mb` is the public bundle-size target for the current `v4`
@@ -218,37 +231,92 @@ paging; the successful-file count does not impose this particular limit.
 - Source traversal is deterministic:
   - depth-first
   - entries within each directory are sorted by normalized relative path
-- Independent directory subtrees are scanned by up to `8` workers and merged
-  back into the same deterministic traversal order.
+- Independent directory subtrees are scanned by up to `2` workers on Windows
+  and `8` on other platforms, then merged in the same deterministic traversal
+  order. Scanner batches contain up to `1024` entries on Windows and `64` on
+  other platforms, with at most two queued batches per channel. These are
+  entry-count limits, not a metadata byte budget: paths vary in length, and
+  batches being produced or consumed and sorted directories retained by active
+  DFS walks use additional memory. Each directory is fully enumerated and
+  sorted; ordinary trees do not require a complete in-memory file list.
+  Larger Windows batches reduce handoffs but can delay the first entries while
+  a batch fills. The scanner limit is independent of the physical-core file
+  reader count. The reader initially collects
+  up to `32 * requested readers` pending entries to preserve its worker cap.
+  The committed resume prefix is checked before pending files are opened.
+  A native filename containing a backslash or requiring lossy Unicode conversion
+  can alias another normalized path. Its containing subtree is collected before
+  publication so unsupported entries suppress all colliding pending paths while
+  public scan entries, traversal order, and resume ordinals remain unchanged.
 - File reading uses an ordered, bounded read-ahead window of `4` entries per
-  reader (up to `128` entries with the default maximum of `32` readers). Each
-  prefetched regular-file payload is at most `256 KiB`, so this window holds at
-  most `32 MiB` of file payload with default settings. Workers process up to
-  four adjacent entries per job: they open regular files first, then read small
-  payloads directly into one shared buffer sized from those handles. Entries
-  retain immutable slices of that buffer without copying their payloads.
-  A batch crossing a bundle boundary can retain up to three already-consumed
-  payloads (`768 KiB` extra) until its last entry is released. Larger files occupy
-  bounded open-handle slots instead. The planner materializes those files up to
-  the configured bundle-size target and streams larger files. The smaller
-  first-bundle aggregation target does not change this materialization threshold.
+  actual reader (`64` entries for `16` readers, `704` for `176`). A shared
+  `8 MiB` byte budget bounds prefetched payload pending delivery, independently
+  of the reader count. Workers open up to four adjacent entries per job and
+  reserve space using their opened-handle sizes. Regular files up to the
+  configured materialization threshold can be prefetched when their entire
+  payload fits the remaining budget; a single payload or shared batch buffer
+  cannot exceed `8 MiB`. Entries retain immutable slices without copying bytes.
+  A batch's reservation is released after its last successful prefetched entry
+  is delivered to the planner, or when cancellation drops its buffer. Until
+  delivery completes, already-delivered slices remain charged to that budget.
+  The planner's current materialized bundle is separate from the pending budget;
+  one shared buffer crossing a bundle boundary can additionally retain up to
+  `8 MiB` of already-consumed payload until its remaining entries are released.
+  When the budget is unavailable, workers return bounded open handles without
+  waiting. The planner reads those same handles up to the configured bundle-size
+  target and streams larger files. The smaller first-bundle aggregation target
+  does not change this materialization threshold.
 - Bundle plans also obey the `4 MiB` control-body limit. If metadata would
   exceed it, the next complete entry moves to the next bundle, including for
   empty files or long paths. A single descriptor that cannot fit causes an
   explicit error.
-- Prepared bundles aggregate small tar writes in a `128 KiB` input buffer before
+- Materialized bundles aggregate small tar writes in a `128 KiB` input buffer before
   zstd; large file slices bypass that buffer. Streamed file bodies feed zstd
-  directly. Numeric tar header fields use allocation-free encoding equivalent
+  directly. After each successful entry append, the sender releases its source
+  payload while keeping its descriptor for the bundle plan. A shared slab is
+  freed after its last slice is released, which may be in the next bundle.
+  Numeric tar header fields use allocation-free encoding equivalent
   to the tar library, with its GNU extended-size fallback.
   Bundle frames contain no tar end markers; the receiver appends those only once
   after the final durable commit.
-- Sender compression contexts are reused across bundles and retries; each
-  attempt still starts an independent zstd frame.
-- Streamed files use a producer for reading/compression while the sending thread
-  writes completed chunks to the network. The queue holds at most two `4 MiB`
-  chunks; four reusable buffers, including producer and consumer, bound this
-  stage's compressed payload memory to `16 MiB`, excluding zstd's workspace.
+- Materialized bundles and streamed files share one sender compression context
+  across successfully completed frames; each attempt starts an independent zstd
+  frame. After unfinished, failed, or aborted compression, the sender recreates
+  the context with the same settings before the next attempt. This avoids stale
+  worker state after an abandoned frame; the chunk pool remains reusable, and
+  failure recovery changes no CLI fields or wire messages.
+  Zstd writes directly into the final compressed chunk allocation. The sender
+  sends `BundlePlan` before compression and begins transmitting completed chunks
+  while the remaining payload is still being compressed; it does not retain a
+  complete compressed bundle.
+- The planner hands off materialized payload through a zero-capacity rendezvous
+  channel. The sender can own the current bundle while the planner prepares the
+  next and retains one whole file carried forward. Each of those three source
+  payloads is at most the configured bundle target; read-ahead, shared-slab
+  retention, metadata, and zstd workspace are additional memory costs. The
+  four-bundle acknowledgement window does not retain sent payloads.
+- Both input paths use a producer while the sending thread writes completed
+  chunks to the network. The queue holds at most two `4 MiB` chunks; four reusable
+  buffers, including producer and consumer, bound this stage's compressed payload
+  memory to `16 MiB`, excluding zstd's workspace. They are allocated on first use
+  and reused across bundles and attempts. A separate `1 MiB` source-read buffer
+  is allocated only when a streamed file first needs it. A scoped producer is
+  started for each attempt.
   A failed attempt is fully stopped before abort/retry; no producer is detached.
+- The receiver reuses up to ten `4 MiB` data buffers (`40 MiB` total payload
+  storage), allocated and grown only as needed. Only the current packet's payload
+  is written and hashed; retained buffer tails are never part of the archive.
+  Buffers also return to the pool when late or orphaned data is discarded.
+- Archive writes are periodically synced after `64 MiB`. A commit still makes
+  archive data durable before syncing its WAL records and acknowledging progress.
+  If a successful sync already covered every write and no truncation followed,
+  the receiver skips a redundant archive sync. Creation, writes, and truncation
+  mark the archive dirty; periodic sync alone never advances resumable state.
+- Before its next commit check, the receiver processes up to eight already-ready
+  control messages so queued plans and commits can join the same group. It never
+  waits for new control messages to enlarge a group. After that bounded burst,
+  ready data gets priority unless an orphan packet still needs its plan. The
+  archive-sync, WAL-sync, and acknowledgement ordering is unchanged.
 - Tar paths are stored relative to the selected root and normalized to `/`.
 - Live files use best-effort snapshot semantics:
   - sender opens the file immediately before an attempt
@@ -264,8 +332,16 @@ paging; the successful-file count does not impose this particular limit.
   publishes `<dump_id>.tar.zst.issues.tsv` before acknowledging successful finish.
 
 Library callers can set `BundlePlanOptions.readers` and
-`BundlePlanOptions.compression_threads` independently. Their defaults are up to
-`32` readers, limited by available parallelism, and `1` compression thread.
+`BundlePlanOptions.compression_threads` independently. The library defaults to
+the same detected physical-core count as the CLI, with a minimum of `1`, and
+`1` compression thread. The actual reader count still obeys the pending-entry
+cap.
+
+Receiver library calls now require `CloneableStream` for both channels.
+Custom implementations must provide `shutdown_stream` that prevents further I/O
+and interrupts pending reads across clones. This is a Rust source API change;
+the CLI and protocol version `4` remain compatible. Receiver-owned channels are
+closed when the call returns, including successful completion.
 
 ## Repository Layout
 
@@ -294,12 +370,38 @@ Run tests:
 cargo test --quiet
 ```
 
-The scheduled stress workflow runs the ignored binary roundtrip with `10,116`
-files, including streamed payloads, and verifies every file hash. It checks that
-the named test exists before running it; a removed test cannot silently pass CI.
+Push/PR CI checks Windows and Linux with Rust `1.89.0` and the current stable
+toolchain. It uses the committed `Cargo.lock`, runs default/all-feature tests,
+Clippy with warnings denied, bench compilation, and formatting checks.
+Storage fault tests exercise real partial writes and injected disk-full, archive
+sync, WAL append/sync, rename, and cleanup errors. They verify acknowledgement
+barriers and recovery; these are not hardware power-loss simulations.
+
+The manual **Release artifacts** workflow builds the selected branch/tag only
+after CI and release stress checks pass. It produces Windows MSVC and Linux GNU
+archives with a build manifest and SHA-256 checksums; it does not publish a release.
+The manifest records the clean source commit/tree, compiler, target, lockfile,
+and binary hash. The existing local MUSL build script remains separate.
+
+For a local default-feature release, build from a clean commit and record it:
+
+```powershell
+cargo build --locked --release --bin fast-dump
+./scripts/write-release-manifest.ps1 -Binary target/release/fast-dump.exe -Target x86_64-pc-windows-msvc -OutputPath target/release-artifacts/manifest.json
+```
+
+The Windows/Linux scheduled stress workflow runs three explicit ignored tests:
+the binary roundtrip with `10,116` files and per-file hashes; process-kill and
+resume in both push and pull modes with a durable prefix and an uncommitted tail;
+and `128` complete sessions with byte-for-byte archive checks and no retained
+receiver reader handles before the peer closes. These checks exercise process
+failure, not power loss or a physical 1/10 GbE link. The workflow checks that each
+named test exists before running it; a removed test cannot silently pass CI.
 
 ```powershell
 cargo test --release --test integration connectivity::roundtrip_fast::sender_and_receiver_roundtrip_random_files_and_verify_hashes -- --exact --ignored --nocapture
+cargo test --release --test integration connectivity::recovery_stress::receiver_process_kill_and_resume_preserves_archive_push_and_pull -- --exact --ignored --nocapture
+cargo test --release --lib receiver::network::lifecycle_tests::repeated_full_transfers_release_all_reader_handles -- --exact --ignored --nocapture
 ```
 
 Run lints:
@@ -360,6 +462,16 @@ Compare two saved binaries with matching instrumentation:
 ```powershell
 python scripts/bench-files-paired.py --before path/to/baseline --after path/to/candidate --source path/to/fixed-source --output target/file-comparison --repeats 7 --stages scan,read --readers 1,4,8,32
 ```
+
+Build source snapshots in separate Cargo target directories and retain each
+binary before measuring. Both paired drivers reject identical binary SHA-256
+hashes by default. Intentional A/A calibration requires
+`--allow-identical-binaries`; the manifest records the comparison type.
+The end-to-end paired driver also accepts `--readers N`, separate
+`--before-readers N` / `--after-readers N`, and `--source DIR` for a prepared
+fixture. Explicit readers cannot be combined with matrix `--resume`, because
+the historical CSV scenario key does not include that override. Keep output
+directories outside the source fixture.
 
 The driver alternates AB/BA pairs and keeps every sample. `samples.csv` retains
 raw counts and adds counts per entry and per MiB (`1048576` fixture bytes).
@@ -529,16 +641,32 @@ the memory-budget view.
 The CSV schema retains historical manifest columns for compatibility. In `v4`,
 `manifest_build_duration_ms` represents source scanning and `manifest_build_bytes`
 is the discovered entry count; manifest transfer, spool, and replay columns are
-zero because those stages no longer exist. With parallel read-ahead,
+zero because those stages no longer exist. Scanning overlaps reading and
+compression. Its elapsed-time counter excludes scanner batch-send backpressure;
+it is not a measurement of scanner CPU time. `time_to_first_frame_ms` maps to
+`time_to_first_bundle`: the first materialized or streamed task is available to
+the sender and its `BundlePlan` can be sent. It does not measure completion of
+compression, first payload delivery, or acknowledgement. With parallel read-ahead,
 `read_duration_ms` measures the planner's time obtaining ordered results,
 including planner-side materialization, rather than summed worker time.
-Streamed source reads and compression run in a producer while the main thread
-sends compressed chunks. Streamed compression duration excludes source reads
-and producer queue waits, while retaining tar work. Overlapping stage durations
+All bundle compression runs in a producer while the main thread sends compressed
+chunks. Compression duration excludes producer queue waits and, for streamed
+files, source reads, while retaining tar work. Overlapping stage durations
 are not an additive breakdown of total elapsed time.
 Receiver frame-write duration includes periodic archive synchronization every
 `64 MiB`; the separate frame-sync duration measures commit-group synchronization.
 These elapsed-time counters are not isolated CPU or disk-throughput measurements.
+Additive receiver profile fields separate the work for committed bundles:
+
+| Profile field | Meaning |
+| --- | --- |
+| `bundle_write_io` | Compressed bytes appended and write duration excluding periodic sync |
+| `bundle_periodic_sync` | Periodic sync duration; its `bytes` member counts sync calls |
+| `bundle_sync_skipped` | Commit-group archive sync calls skipped because the archive was already clean |
+
+Existing aggregate fields retain their meanings. `bundle_sync.bytes` counts
+commit-group sync checks, including clean skips. The matrix runner emits the new
+details in `[bench-receiver-work]` log lines without changing sender CLI stdout.
 
 Related docs:
 

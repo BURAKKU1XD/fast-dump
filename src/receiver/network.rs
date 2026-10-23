@@ -1,16 +1,17 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{Read, Write};
+use std::ops::Deref;
 use std::path::PathBuf;
 use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
-use crossbeam_channel::{Receiver, bounded, select};
+use crossbeam_channel::{Receiver, Sender, TryRecvError, bounded, select};
 use xxhash_rust::xxh3::Xxh3Default;
 
 use crate::network::protocol::wire::{
-    self, BundleAbort, BundleAbortAck, BundleAck, BundleCommit, BundleData, Finish, Message,
-    ResumeQuery, SkipAck,
+    self, BundleAbort, BundleAbortAck, BundleAck, BundleCommit, Finish, Message, ResumeQuery,
+    SkipAck,
 };
 use crate::network::protocol::{
     BundleCommitDescriptor, BundleDescriptor, BundlePlanDescriptor, ResumeState,
@@ -23,6 +24,7 @@ use super::session::ReceiverSession;
 const COMMIT_GROUP_MAX_BUNDLES: usize = 4;
 const COMMIT_GROUP_MAX_BYTES: u64 = 1024 * 1024 * 1024;
 const READER_QUEUE_CAPACITY: usize = 8;
+const DATA_BUFFER_COUNT: usize = READER_QUEUE_CAPACITY + 2;
 
 #[derive(Debug, Clone)]
 pub struct ReceiveReport {
@@ -54,15 +56,52 @@ struct PendingBundle {
     archive_len_after_append: Option<u64>,
     checksum: Xxh3Default,
     write_duration: Duration,
+    periodic_sync_duration: Duration,
+    periodic_sync_count: u64,
     commit: Option<BundleCommitDescriptor>,
     data_finished: bool,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 struct PendingDataChunk {
     key: AttemptKey,
     is_last: bool,
-    bytes: Vec<u8>,
+    bytes: DataBuffer,
+}
+
+#[derive(Debug)]
+struct DataBuffer {
+    storage: Vec<u8>,
+    payload_len: usize,
+    recycle: Option<Sender<Vec<u8>>>,
+}
+
+impl Deref for DataBuffer {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        &self.storage[..self.payload_len]
+    }
+}
+
+impl Drop for DataBuffer {
+    fn drop(&mut self) {
+        if let Some(recycle) = &self.recycle {
+            // Возврат не блокирует отмену; тот же путь обслуживает abort и orphan.
+            let _ = recycle.try_send(std::mem::take(&mut self.storage));
+        }
+    }
+}
+
+#[cfg(test)]
+impl From<Vec<u8>> for DataBuffer {
+    fn from(storage: Vec<u8>) -> Self {
+        Self {
+            payload_len: storage.len(),
+            storage,
+            recycle: None,
+        }
+    }
 }
 
 struct ReadyBundle {
@@ -73,21 +112,24 @@ struct ReadyBundle {
 
 enum ReceiveEvent {
     Control(Message),
-    Data(BundleData),
+    Data(PendingDataChunk),
 }
 
 fn receive_next_event(
     control_rx: &Receiver<Result<Message>>,
-    data_rx: &Receiver<Result<BundleData>>,
+    data_rx: &Receiver<Result<PendingDataChunk>>,
+    data_failed: &Receiver<()>,
     wait_for_plan: bool,
 ) -> Result<ReceiveEvent> {
     // Один data-пакет может обогнать план. Дальше читаем только control, чтобы
     // ограниченная очередь и TCP удерживали оставшийся payload вне orphan_data.
     if wait_for_plan {
-        return control_rx
-            .recv()
-            .context("v4 control reader thread terminated unexpectedly")?
-            .map(ReceiveEvent::Control);
+        return select! {
+            recv(control_rx) -> event => event
+                .context("v4 control reader thread terminated unexpectedly")?
+                .map(ReceiveEvent::Control),
+            recv(data_failed) -> _ => bail!("v4 data reader failed while waiting for bundle plan"),
+        };
     }
     select! {
         recv(control_rx) -> event => {
@@ -101,6 +143,46 @@ fn receive_next_event(
     }
 }
 
+fn receive_event_before_commit<F>(
+    control_rx: &Receiver<Result<Message>>,
+    data_rx: &Receiver<Result<PendingDataChunk>>,
+    data_failed: &Receiver<()>,
+    wait_for_plan: bool,
+    consecutive_controls: &mut usize,
+    commit_ready: F,
+) -> Result<ReceiveEvent>
+where
+    F: FnOnce() -> Result<()>,
+{
+    // Уже пришедший следующий план может объединить готовый prefix в одну
+    // commit-группу. Не ждём новых control и ограничиваем приоритет очередью.
+    if *consecutive_controls < READER_QUEUE_CAPACITY {
+        match control_rx.try_recv() {
+            Ok(event) => {
+                *consecutive_controls += 1;
+                return event.map(ReceiveEvent::Control);
+            }
+            Err(TryRecvError::Empty | TryRecvError::Disconnected) => {}
+        }
+    }
+
+    commit_ready()?;
+    *consecutive_controls = 0;
+    // После control-burst готовый payload обязательно получает ход. При orphan
+    // по-прежнему нужен его план: второй data-пакет нельзя брать из очереди.
+    if !wait_for_plan {
+        match data_rx.try_recv() {
+            Ok(event) => return event.map(ReceiveEvent::Data),
+            Err(TryRecvError::Empty | TryRecvError::Disconnected) => {}
+        }
+    }
+    let event = receive_next_event(control_rx, data_rx, data_failed, wait_for_plan)?;
+    if matches!(&event, ReceiveEvent::Control(_)) {
+        *consecutive_controls = 1;
+    }
+    Ok(event)
+}
+
 pub fn receive_dump<TControl, TData>(
     control_stream: TControl,
     data_stream: TData,
@@ -109,7 +191,7 @@ pub fn receive_dump<TControl, TData>(
 ) -> Result<ReceiveReport>
 where
     TControl: CloneableStream,
-    TData: Read + Send + 'static,
+    TData: CloneableStream,
 {
     Ok(receive_dump_profile(control_stream, data_stream, data_dir, dump_id)?.0)
 }
@@ -122,7 +204,7 @@ pub fn receive_dump_profile<TControl, TData>(
 ) -> Result<(ReceiveReport, ReceiverProfile)>
 where
     TControl: CloneableStream,
-    TData: Read + Send + 'static,
+    TData: CloneableStream,
 {
     let total_started = Instant::now();
     let recovery_started = Instant::now();
@@ -138,23 +220,32 @@ where
         receiver.resume_state().clone(),
     )?;
 
-    let control_rx = spawn_control_reader(control_stream.try_clone_stream()?);
-    let data_rx = spawn_data_reader(data_stream);
+    let control_rx = spawn_control_reader(control_stream.try_clone_stream()?)?;
+    let data_rx = spawn_data_reader(data_stream)?;
 
     let mut pending_bundles = VecDeque::<PendingBundle>::new();
     let mut orphan_data = HashMap::<AttemptKey, Vec<PendingDataChunk>>::new();
     let mut aborted_attempts = HashSet::<AttemptKey>::new();
+    let mut consecutive_controls = 0;
 
     loop {
-        drain_ready_commits(
-            &mut control_stream,
-            &mut receiver,
-            &mut pending_bundles,
-            &mut profile,
-            false,
+        let event = receive_event_before_commit(
+            &control_rx,
+            &data_rx,
+            &data_rx.failed,
+            !orphan_data.is_empty(),
+            &mut consecutive_controls,
+            || {
+                drain_ready_commits(
+                    &mut control_stream,
+                    &mut receiver,
+                    &mut pending_bundles,
+                    &mut profile,
+                    false,
+                )
+            },
         )?;
-
-        match receive_next_event(&control_rx, &data_rx, !orphan_data.is_empty())? {
+        match event {
             ReceiveEvent::Control(event) => match event {
                 Message::SkipEntries(chunk) => {
                     if !pending_bundles.is_empty() {
@@ -196,6 +287,8 @@ where
                         archive_len_after_append: None,
                         checksum: Xxh3Default::new(),
                         write_duration: Duration::ZERO,
+                        periodic_sync_duration: Duration::ZERO,
+                        periodic_sync_count: 0,
                         commit: None,
                         data_finished: false,
                     });
@@ -270,6 +363,7 @@ where
                         bail!("unexpected v4 finish before bundle commit");
                     }
                     wait_for_pending_bundle_data(
+                        &control_rx,
                         &data_rx,
                         &mut receiver,
                         &mut pending_bundles,
@@ -341,60 +435,139 @@ where
                     &mut pending_bundles,
                     &mut orphan_data,
                     &aborted_attempts,
-                    PendingDataChunk {
-                        key: AttemptKey::new(data.bundle_no, data.attempt_no),
-                        is_last: data.is_last,
-                        bytes: data.bytes,
-                    },
+                    data,
                 )?;
             }
         }
     }
 }
 
-fn spawn_control_reader<T>(stream: T) -> Receiver<Result<Message>>
-where
-    T: Read + Send + 'static,
-{
-    let (tx, rx) = bounded::<Result<Message>>(READER_QUEUE_CAPACITY);
-    thread::spawn(move || {
-        let mut stream = stream;
-        loop {
-            let item = wire::read_message(&mut stream);
-            if tx.send(item).is_err() {
-                return;
-            }
-        }
-    });
-    rx
+struct ReaderThread<T: CloneableStream, Item> {
+    stream: T,
+    receiver: Option<Receiver<Result<Item>>>,
+    cancellation: Option<Sender<()>>,
+    failed: Receiver<()>,
+    handle: Option<thread::JoinHandle<()>>,
 }
 
-fn spawn_data_reader<T>(stream: T) -> Receiver<Result<BundleData>>
-where
-    T: Read + Send + 'static,
-{
-    let (tx, rx) = bounded::<Result<BundleData>>(READER_QUEUE_CAPACITY);
-    thread::spawn(move || {
-        let mut stream = stream;
-        loop {
-            let item = match wire::read_message(&mut stream) {
-                Ok(Message::BundleData(data)) => Ok(data),
-                Ok(Message::Error(error)) => Err(anyhow::anyhow!(
-                    "peer reported v4 data-channel error: {}",
-                    error.message
-                )),
-                Ok(other) => Err(anyhow::anyhow!(
-                    "unexpected v4 message on data channel: {:?}",
-                    other.kind()
-                )),
-                Err(error) => Err(error),
-            };
-            if tx.send(item).is_err() {
-                break;
-            }
+impl<T: CloneableStream, Item: Send + 'static> ReaderThread<T, Item> {
+    fn spawn(
+        name: &str,
+        stream: T,
+        read: impl FnOnce(T, Sender<Result<Item>>, Receiver<()>, Sender<()>) + Send + 'static,
+    ) -> Result<Self> {
+        let interrupt = stream.try_clone_stream()?;
+        let (tx, rx) = bounded(READER_QUEUE_CAPACITY);
+        let (cancel_tx, cancel_rx) = bounded(0);
+        let (failure_tx, failure_rx) = bounded(1);
+        let handle = thread::Builder::new()
+            .name(name.to_owned())
+            .spawn(move || read(stream, tx, cancel_rx, failure_tx))
+            .context("failed to spawn v4 receiver reader")?;
+        Ok(Self {
+            stream: interrupt,
+            receiver: Some(rx),
+            cancellation: Some(cancel_tx),
+            failed: failure_rx,
+            handle: Some(handle),
+        })
+    }
+}
+
+impl<T: CloneableStream, Item> Deref for ReaderThread<T, Item> {
+    type Target = Receiver<Result<Item>>;
+
+    fn deref(&self) -> &Self::Target {
+        self.receiver.as_ref().unwrap()
+    }
+}
+
+impl<T: CloneableStream, Item> Drop for ReaderThread<T, Item> {
+    fn drop(&mut self) {
+        // Снимаем все три вида ожидания: socket read, send в заполненную очередь
+        // и получение буфера из пула. Join завершается до освобождения слота сессии.
+        self.cancellation.take();
+        let _ = self.stream.shutdown_stream();
+        self.receiver.take();
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
         }
-    });
-    rx
+    }
+}
+
+fn spawn_control_reader<T>(stream: T) -> Result<ReaderThread<T, Message>>
+where
+    T: CloneableStream,
+{
+    ReaderThread::spawn(
+        "dump-control-read",
+        stream,
+        |mut stream, tx, _cancel, failed_tx| {
+            loop {
+                let item = wire::read_message(&mut stream);
+                let failed = item.is_err();
+                if failed {
+                    let _ = failed_tx.try_send(());
+                }
+                if tx.send(item).is_err() || failed {
+                    return;
+                }
+            }
+        },
+    )
+}
+
+fn spawn_data_reader<T>(stream: T) -> Result<ReaderThread<T, PendingDataChunk>>
+where
+    T: CloneableStream,
+{
+    let (recycle_tx, recycle_rx) = bounded(DATA_BUFFER_COUNT);
+    ReaderThread::spawn(
+        "dump-data-read",
+        stream,
+        move |mut stream, tx, cancel, failed_tx| {
+            let mut allocated_buffers = 0;
+            loop {
+                // Сначала используем вернувшийся буфер; новые нужны только при
+                // отставании writer. Общий предел: очередь + текущий/orphan + reader.
+                let mut storage = match recycle_rx.try_recv() {
+                    Ok(storage) => storage,
+                    Err(TryRecvError::Empty) if allocated_buffers < DATA_BUFFER_COUNT => {
+                        allocated_buffers += 1;
+                        Vec::new()
+                    }
+                    Err(_) => select! {
+                        recv(recycle_rx) -> storage => match storage {
+                            Ok(storage) => storage,
+                            Err(_) => break,
+                        },
+                        recv(cancel) -> _ => break,
+                    },
+                };
+                let item =
+                    wire::read_bundle_data_message_into(&mut stream, &mut storage).map(|header| {
+                        PendingDataChunk {
+                            key: AttemptKey::new(header.bundle_no, header.attempt_no),
+                            is_last: header.is_last,
+                            bytes: DataBuffer {
+                                storage,
+                                payload_len: header.payload_len,
+                                recycle: Some(recycle_tx.clone()),
+                            },
+                        }
+                    });
+                let failed = item.is_err();
+                if failed {
+                    // Основная очередь может быть заполнена: orphan-ожидание должно
+                    // увидеть ошибку без чтения дополнительных payload-пакетов.
+                    let _ = failed_tx.try_send(());
+                }
+                if tx.send(item).is_err() || failed {
+                    break;
+                }
+            }
+        },
+    )
 }
 
 fn apply_orphan_data(
@@ -456,8 +629,12 @@ fn apply_data_chunk(
     pending
         .archive_len_before_append
         .get_or_insert(receiver.current_archive_len());
-    receiver.append_bundle_chunk(&chunk.bytes)?;
+    let periodic_sync_duration = receiver.append_bundle_chunk(&chunk.bytes)?;
     pending.write_duration += write_started.elapsed();
+    if let Some(duration) = periodic_sync_duration {
+        pending.periodic_sync_duration += duration;
+        pending.periodic_sync_count += 1;
+    }
     pending.checksum.update(&chunk.bytes);
     pending.bytes_received = next_len;
     if chunk.is_last {
@@ -494,26 +671,31 @@ fn abort_bundle(
 }
 
 fn wait_for_pending_bundle_data(
-    data_rx: &Receiver<Result<BundleData>>,
+    control_rx: &Receiver<Result<Message>>,
+    data_rx: &Receiver<Result<PendingDataChunk>>,
     receiver: &mut ReceiverSession,
     pending_bundles: &mut VecDeque<PendingBundle>,
     orphan_data: &mut HashMap<AttemptKey, Vec<PendingDataChunk>>,
     aborted_attempts: &HashSet<AttemptKey>,
 ) -> Result<()> {
     while pending_bundles.iter().any(|pending| !pending.data_finished) {
-        let data = data_rx
-            .recv()
-            .context("v4 data reader channel closed while waiting for pending bundle data")??;
+        let data = select! {
+            recv(data_rx) -> data => data
+                .context("v4 data reader channel closed while waiting for pending bundle data")??,
+            recv(control_rx) -> control => {
+                let message = control.context("v4 control reader closed while finishing dump")??;
+                if let Message::Error(error) = message {
+                    bail!("peer reported v4 error while finishing dump: {}", error.message);
+                }
+                bail!("unexpected v4 control message after Finish: {:?}", message.kind());
+            },
+        };
         apply_data_chunk(
             receiver,
             pending_bundles,
             orphan_data,
             aborted_attempts,
-            PendingDataChunk {
-                key: AttemptKey::new(data.bundle_no, data.attempt_no),
-                is_last: data.is_last,
-                bytes: data.bytes,
-            },
+            data,
         )?;
     }
     Ok(())
@@ -563,6 +745,8 @@ where
     let mut ready = Vec::<ReadyBundle>::new();
     let mut group_bytes = 0_u64;
     let mut write_duration = Duration::ZERO;
+    let mut periodic_sync_duration = Duration::ZERO;
+    let mut periodic_sync_count = 0_u64;
 
     for _ in 0..ready_prefix {
         let commit = pending_bundles
@@ -573,6 +757,8 @@ where
             .pop_front()
             .context("ready v4 pending bundle disappeared from queue")?;
         let bundle_write_duration = pending.write_duration;
+        periodic_sync_duration += pending.periodic_sync_duration;
+        periodic_sync_count += pending.periodic_sync_count;
         let archive_len = pending
             .archive_len_after_append
             .context("ready v4 bundle is missing its archive boundary")?;
@@ -587,7 +773,7 @@ where
     }
 
     let sync_started = Instant::now();
-    receiver.sync_archive()?;
+    let archive_synced = receiver.sync_archive()?;
     let archive_sync_duration = sync_started.elapsed();
 
     let wal_started = Instant::now();
@@ -608,7 +794,16 @@ where
         + archive_sync_duration
         + wal_duration;
     profile.record_bundle_write(group_bytes, write_duration);
+    profile.record_bundle_write_details(
+        group_bytes,
+        write_duration.saturating_sub(periodic_sync_duration),
+        periodic_sync_duration,
+        periodic_sync_count,
+    );
     profile.record_bundle_sync(archive_sync_duration);
+    if !archive_synced {
+        profile.bundle_sync_skipped = profile.bundle_sync_skipped.saturating_add(1);
+    }
     profile.record_wal_append(group_bytes, wal_duration);
     profile.record_bundle_commit_batch(group_bytes, commit_duration, ready.len() as u64);
 
@@ -725,3 +920,7 @@ where
 #[cfg(test)]
 #[path = "network_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "lifecycle_tests.rs"]
+mod lifecycle_tests;

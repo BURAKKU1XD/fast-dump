@@ -52,12 +52,18 @@ impl Display for ExecutorMode {
     about = "Run sender->receiver loopback matrix benchmarks without Criterion warmup/measurement"
 )]
 struct MatrixArgs {
+    /// Отдельный неизменяемый fixture; его создание не входит в измерение.
+    #[arg(long, conflicts_with = "datasets")]
+    source: Option<PathBuf>,
     #[arg(long = "dataset", value_delimiter = ',', num_args = 1..)]
     datasets: Vec<String>,
     #[arg(long = "network-profile", value_delimiter = ',', num_args = 1..)]
     network_profiles: Vec<String>,
     #[arg(long, value_delimiter = ',', num_args = 1..)]
     threads: Vec<u32>,
+    /// Фиксирует число readers для отдельного эксперимента; сохраняется в run.log.
+    #[arg(long)]
+    readers: Option<usize>,
     #[arg(long = "frames", value_delimiter = ',', num_args = 1..)]
     frames_mb: Vec<u64>,
     #[arg(long = "buffers", value_delimiter = ',', num_args = 1..)]
@@ -224,6 +230,13 @@ fn run_matrix(args: MatrixArgs) -> Result<()> {
     if args.repeats == 0 {
         bail!("--repeats must be at least 1");
     }
+    if args.readers == Some(0) {
+        bail!("--readers must be at least 1");
+    }
+    // Старый CSV key не содержит readers: нельзя продолжать иной эксперимент.
+    if args.readers.is_some() && args.resume {
+        bail!("--readers requires a fresh output directory, without --resume");
+    }
 
     let output_dir = std::env::var_os("FAST_DUMP_BENCH_MATRIX_DIR")
         .map(PathBuf::from)
@@ -250,7 +263,17 @@ fn run_matrix(args: MatrixArgs) -> Result<()> {
                 .unwrap_or_else(std::env::temp_dir)
                 .join("fast-dump-bench-datasets")
         });
-    let datasets = resolve_datasets(&args.datasets, &dataset_root)?;
+    let datasets = if let Some(source) = &args.source {
+        if !source.is_dir() {
+            bail!("--source must be an existing fixture directory");
+        }
+        vec![MatrixDataset {
+            name: "custom",
+            path: source.clone(),
+        }]
+    } else {
+        resolve_datasets(&args.datasets, &dataset_root)?
+    };
     let network_profiles = resolve_network_profiles(&args.network_profiles)?;
     let threads = resolve_values("threads", &matrix_thread_counts(), &args.threads)?;
     let frames_mb = resolve_values("frames", &matrix_frame_target_values_mb(), &args.frames_mb)?;
@@ -353,11 +376,16 @@ fn run_matrix(args: MatrixArgs) -> Result<()> {
                 scenario.large_file_single_frame_threshold_mib * MIB,
             );
             let _executor_guard = ExecutorEnvGuard::set(executor_mode);
-            let options = scenario_options(
+            let mut options = scenario_options(
                 scenario.threads,
                 scenario.frame_target_mb,
                 scenario.read_buffer_kb,
             );
+            if let Some(readers) = args.readers {
+                options.min_readers = readers;
+                options.max_readers = readers;
+                eprintln!("[bench-readers] requested={readers}");
+            }
             let metrics = run_loopback_scenario(&dataset.path, &options, network_profile);
             let row = raw_row(scenario.clone(), repeat_index, metrics);
 

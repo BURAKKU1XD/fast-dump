@@ -146,19 +146,49 @@ so normal tar readers see all entries across bundle boundaries.
 
 ## Sender Preparation
 
-Up to `8` workers scan independent subtrees, but entries and work ordinals retain
-deterministic depth-first order with each directory sorted by normalized relative
-path. File read-ahead is bounded to four entries per reader and consumed in that
-same order. The default reader maximum is `32`, reduced for available parallelism
-and capped at `ceil(pending entries / 32)` to amortize startup. A resulting count
-of `1` uses serial reading. Each prefetched regular-file payload is at most
-`256 KiB`, so the read-ahead window holds at most `128` entries and `32 MiB` of
-file payload with default settings; larger files occupy bounded open-handle slots.
-Workers process up to four adjacent entries per job, with small-file payloads
-sharing one immutable buffer sized from their opened handles. If a batch crosses
-a bundle boundary, its remaining entries can retain up to `768 KiB` of
-already-consumed payload beyond the read-ahead window. Sharing does not change
-entry order, per-file attempt limits, or the bytes described by `size_at_open`.
+Up to `2` workers on Windows and `8` on other platforms scan independent
+subtrees. Entries and work ordinals retain deterministic depth-first order with
+each directory sorted by normalized relative path. Each directory is fully
+enumerated and sorted, then scanner channels carry batches of at most `1024`
+entries on Windows and `64` on other platforms, with at most two queued batches
+per channel. These limits count entries, not metadata bytes; variable-length
+paths, producer/consumer batches, and sorted directories retained by active DFS
+walks require additional memory. Scanner concurrency is independent of the
+physical-core file-reader count.
+Ordinary trees start feeding readers before the complete scan finishes. A native
+basename containing a backslash or requiring lossy Unicode conversion triggers
+full collection of its containing subtree before any of that subtree is
+published. This preserves suppression of regular/symlink paths colliding with
+unsupported entries after normalization. Public scan entries and all work
+ordinals remain unchanged, including entries suppressed from pending work.
+The committed resume prefix is validated before pending files are opened.
+
+File read-ahead is bounded to four entries per reader and consumed in that
+same order. The requested count is the detected physical-core count, clamped
+to the CLI's reader bounds (default minimum `1`, maximum the detected core count).
+Library defaults use the same count; there is no fixed `32`-reader ceiling.
+Detection is cached and includes all Windows processor groups. Linux counts
+cores allowed by CPU affinity and caps the result by available logical
+parallelism for CPU quotas. Unavailable topology falls back to available
+logical parallelism, minimum `1`. Equal explicit CLI bounds select a fixed
+count. The actual worker count is capped at `ceil(pending entries / 32)` to
+amortize startup. Initial lookahead reads at most `32 * requested readers`
+pending entries to resolve that cap without collecting the entire tree.
+A resulting count of `1` uses serial reading. The parallel
+window holds four entries per actual reader (`64` for `16`, `704` for `176`).
+A separate shared `8 MiB` budget limits prefetched payload
+pending delivery, independently of the reader count. Workers process up to four
+adjacent entries per job, reserving their opened-handle sizes and sharing one
+immutable buffer. Files up to the configured materialization threshold may be
+prefetched if the whole payload fits; no single payload or batch buffer exceeds
+`8 MiB`. A reservation is released after the batch's last successful prefetched
+entry is delivered to the planner, or when cancellation drops the buffer.
+Already-delivered slices remain charged until that last delivery. The planner's
+materialized bundle is separate; a buffer spanning bundle boundaries can retain
+up to `8 MiB` of already-consumed payload until its remaining entries are released.
+Workers never wait for byte-budget capacity: they return bounded open handles
+for the planner to materialize or stream. Sharing does not change entry order,
+per-file attempt limits, or the bytes described by `size_at_open`.
 
 Bundle `1` uses an aggregation target of `min(configured target, 4 MiB)`;
 subsequent bundles use the configured target (`64 MiB` by CLI default). Files
@@ -166,10 +196,40 @@ remain whole and can individually exceed the aggregation target. The configured
 target still determines whether a regular file is materialized or streamed.
 Resume after a committed bundle uses the normal configured target.
 
+After each materialized entry is successfully appended to tar/zstd, its source
+payload is released while its descriptor remains available for the bundle plan.
+A shared slab is freed after its last slice is released, including slices carried
+to the next bundle.
+
 Compression may use synchronous zstd or multiple workers within a frame.
-Contexts are reused across bundles and retries, but each attempt starts an
-independent frame. These choices preserve packet fields, entry order, and durable
+Materialized bundles and streamed files share one sender context across
+successfully completed frames, but each attempt starts an independent frame.
+After unfinished, failed, or aborted compression, the sender recreates the
+context with the same settings before the next attempt, avoiding stale worker
+state from an abandoned frame. The chunk pool remains reusable. This failure
+recovery changes no CLI fields or wire messages. `BundlePlan` is sent
+before compression; zstd writes directly into the final chunks, which can be
+transmitted before compression finishes. No complete compressed bundle is held
+for later sending; `BundleCommit` carries the final compressed length and hash.
+
+Planner handoff uses a zero-capacity rendezvous. At most the current materialized
+bundle, the next materialized bundle, and one whole file carried forward retain
+source payload, each at most the configured bundle target. Read-ahead, retained
+shared slabs, metadata, and zstd workspace are additional costs. The unchanged
+four-bundle acknowledgement window does not retain sent payloads.
+
+Both input paths overlap compression and network writes through a two-chunk
+queue. Four `4 MiB` compressed buffers are allocated on first use and reused
+across bundles and attempts. One separate `1 MiB` source-read buffer is allocated
+only on first streamed-file use and reused thereafter. Each attempt starts a
+scoped producer, which is cancelled and joined before abort/retry or returning
+a network error. These choices preserve packet fields, entry order, and durable
 resume boundaries.
+
+Scanner profiling measures elapsed scan duration excluding batch-send
+backpressure, not CPU time. Time to first bundle measures task/plan availability
+before compression completes, payload delivery, or acknowledgement. Scan, read,
+compression, and send durations overlap and cannot be added as sequential stages.
 
 ## Receiver Rules
 
@@ -186,9 +246,26 @@ resume boundaries.
   preceding bundles, even when control messages arrived ahead of their data.
 - Late `BundleData` for an aborted attempt is ignored by `(bundle_no, attempt_no)`.
 
+The data reader allocates reusable buffers lazily, with at most ten buffers of
+up to `4 MiB` each (`40 MiB` payload storage). This covers its bounded queue,
+the current/orphan chunk, and its next read. Each packet carries its actual
+payload length separately from retained storage length; only those payload
+bytes are written and hashed. Buffers return after consumption or discarded
+late/orphan data, without blocking cancellation. This is a local implementation
+choice and does not alter packet framing or limits.
+
 Receiver still commits bundles in bundle order. Windowing exists on sender side:
 the sender may continue sending later bundles while earlier durable acks are still
 unread.
+
+The receiver owns both network readers through session exit. It shuts down the
+channels, cancels blocked I/O and buffer-pool waits, disconnects queues, and joins
+both readers on success or error. Windows additionally uses `CancelIoEx` for
+already-pending Winsock reads. A separate bounded failure notification wakes
+orphan-plan waiting without draining additional payload. After `Finish`, control
+errors and unexpected further controls interrupt waiting for pending data.
+These are local lifecycle rules; packet formats, durable boundaries, and CLI
+fields are unchanged. There is no general deadline for a silent connected peer.
 
 ## Group Commit
 
@@ -198,6 +275,12 @@ Current `v4` receiver commits a ready group when it reaches either threshold:
 - `1 GiB` compressed payload in one group
 
 A single bundle can exceed the byte threshold; it is not split for group commit.
+
+Before the next ready-group check, the receiver handles up to eight already-ready
+control messages so queued plans and commits can join a group. It does not wait
+for new control messages to fill that group. After the bounded control burst,
+ready data receives priority unless an orphan packet needs its plan first.
+This scheduling changes neither group thresholds nor archive/WAL/ACK ordering.
 
 Receiver keeps batching while a later in-flight bundle is still pending. A ready
 prefix is flushed when one of these happens:
@@ -217,7 +300,16 @@ several bundles share a commit group. The archive is also synced whenever
 appended bytes since its last sync reach `64 MiB`, spreading writeback across a
 large transfer. These periodic syncs do not advance resumable state. Group commit
 still requires archive sync, per-bundle WAL records, and WAL sync before
-acknowledgement.
+acknowledgement. A successful periodic or prior commit sync satisfies the archive
+barrier only while no subsequent write, creation, or truncation remains dirty;
+in that case the duplicate archive sync call is skipped. New writes and all
+truncations restore the dirty state before the filesystem operation. Only a
+successful sync clears it; WAL records are still synced before `BundleAck`.
+
+Receiver profiling retains the existing aggregate write/sync fields and adds
+`bundle_write_io`, `bundle_periodic_sync`, and `bundle_sync_skipped` to distinguish
+write I/O, periodic sync work, and avoided clean commit-sync calls. These local
+measurements do not add protocol fields or change sender CLI stdout.
 
 ## Resume State
 

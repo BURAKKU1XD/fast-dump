@@ -64,11 +64,19 @@ impl WalWriter {
     }
 
     pub(crate) fn append_commit_record(&mut self, record: &WalRecord) -> Result<()> {
+        #[cfg(test)]
+        super::storage_faults::write_failure(
+            super::storage_faults::Point::WalAppend,
+            &mut self.file,
+            format!("{}\n", format_record(record)).as_bytes(),
+        )?;
         writeln!(self.file, "{}", format_record(record))
             .with_context(|| "failed to append v4 wal commit record")
     }
 
     pub(crate) fn sync(&mut self) -> Result<()> {
+        #[cfg(test)]
+        super::storage_faults::check(super::storage_faults::Point::WalSync)?;
         self.file
             .sync_all()
             .with_context(|| "failed to sync v4 wal commit record")

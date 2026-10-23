@@ -6,6 +6,9 @@ mod recovery;
 mod session;
 mod wal;
 
+#[cfg(test)]
+mod storage_faults;
+
 use std::path::PathBuf;
 
 use anyhow::{Result, bail};

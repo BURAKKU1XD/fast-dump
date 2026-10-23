@@ -1,25 +1,58 @@
+use std::collections::{BTreeSet, VecDeque};
 use std::thread::{self, JoinHandle};
 
 use anyhow::{Context, Result};
 use crossbeam_channel::{Receiver, Sender, bounded};
 
 use super::read::{
-    PREFETCH_FILE_BYTES, READ_BATCH_ENTRIES, ReadBatch, ReadDecision, finish_materializing,
-    materialize_batch, materialize_owned_entry,
+    PrefetchBudget, READ_BATCH_ENTRIES, ReadBatch, ReadDecision, finish_materializing,
+    materialize_budgeted_batch, materialize_owned_entry,
 };
-use super::scan::ScannedEntry;
+use crate::network::protocol::SkippedEntry;
 
-// Ограничиваем не только число задач, но и размер каждого результата. Большие
-// файлы возвращаются открытыми, без payload; их читает planner либо network.
+use super::scan::{ScanProgress, ScannedEntry, StreamingScan};
+
+// Окно ограничивает handles; отдельный общий byte budget ограничивает payload
+// независимо от числа readers. При нехватке памяти planner дочитает открытый handle.
 const JOBS_PER_READER: usize = 4;
 
 type Job = (usize, [Option<ScannedEntry>; READ_BATCH_ENTRIES]);
 type Outcome = (usize, Result<ReadBatch>);
 
 pub(crate) struct OrderedReader {
-    entries: std::vec::IntoIter<ScannedEntry>,
+    entries: EntrySource,
+    lookahead: VecDeque<ScannedEntry>,
     stream_threshold: u64,
     parallel: Option<ParallelReader>,
+}
+
+enum EntrySource {
+    #[cfg(any(test, feature = "bench-internals"))]
+    Buffered(std::vec::IntoIter<ScannedEntry>),
+    Streaming {
+        scan: StreamingScan,
+        terminal_paths: BTreeSet<String>,
+    },
+}
+
+impl EntrySource {
+    fn next(&mut self) -> Result<Option<ScannedEntry>> {
+        match self {
+            #[cfg(any(test, feature = "bench-internals"))]
+            Self::Buffered(entries) => Ok(entries.next()),
+            Self::Streaming {
+                scan,
+                terminal_paths,
+            } => {
+                while let Some(entry) = scan.next_pending_entry()? {
+                    if !terminal_paths.contains(&entry.relative_path) {
+                        return Ok(Some(entry));
+                    }
+                }
+                Ok(None)
+            }
+        }
+    }
 }
 
 struct ParallelReader {
@@ -32,22 +65,66 @@ struct ParallelReader {
 }
 
 impl OrderedReader {
+    #[cfg(any(test, feature = "bench-internals"))]
     pub(crate) fn new(
         entries: Vec<ScannedEntry>,
         readers: usize,
         stream_threshold: u64,
     ) -> Result<Self> {
         anyhow::ensure!(readers > 0, "reader count must be greater than zero");
+        let count = entries.len();
+        Self::start(
+            EntrySource::Buffered(entries.into_iter()),
+            VecDeque::new(),
+            count,
+            readers,
+            stream_threshold,
+        )
+    }
+
+    pub(crate) fn from_stream(
+        scan: StreamingScan,
+        terminal_paths: BTreeSet<String>,
+        readers: usize,
+        stream_threshold: u64,
+    ) -> Result<Self> {
+        anyhow::ensure!(readers > 0, "reader count must be greater than zero");
+        let limit = readers.saturating_mul(32);
+        let mut entries = EntrySource::Streaming {
+            scan,
+            terminal_paths,
+        };
+        let mut lookahead = VecDeque::new();
+        // До запуска IO узнаём ровно столько pending entries, сколько нужно
+        // для прежнего ceil(pending / 32), не собирая весь manifest в памяти.
+        while lookahead.len() < limit {
+            let Some(entry) = entries.next()? else {
+                break;
+            };
+            lookahead.push_back(entry);
+        }
+        let count = lookahead.len();
+        Self::start(entries, lookahead, count, readers, stream_threshold)
+    }
+
+    fn start(
+        entries: EntrySource,
+        lookahead: VecDeque<ScannedEntry>,
+        count: usize,
+        readers: usize,
+        stream_threshold: u64,
+    ) -> Result<Self> {
         // Поток должен обработать достаточно файлов, чтобы окупить свой запуск.
         // Лимит окна остаётся отдельным: только четыре результата на worker.
-        let readers = readers.min(entries.len().div_ceil(32)).max(1);
+        let readers = readers.min(count.div_ceil(32)).max(1);
         let mut reader = Self {
-            entries: entries.into_iter(),
+            entries,
+            lookahead,
             stream_threshold,
             parallel: None,
         };
         // Для нескольких больших файлов запуск пула дороже полезной работы.
-        if readers == 1 || reader.entries.len() < 32 {
+        if readers == 1 {
             return Ok(reader);
         }
         let window = readers * JOBS_PER_READER;
@@ -61,18 +138,20 @@ impl OrderedReader {
             submitted: 0,
             consumed: 0,
         };
-        let threshold = stream_threshold.min(PREFETCH_FILE_BYTES);
+        let budget = PrefetchBudget::new();
         for _ in 0..readers {
             let jobs = job_rx.clone();
             let results = result_tx.clone();
+            let budget = budget.clone();
             parallel.workers.push(
                 thread::Builder::new()
                     .name("dump-reader".into())
                     .spawn(move || {
                         while let Ok((index, entries)) = jobs.recv() {
-                            let result =
-                                std::panic::catch_unwind(|| materialize_batch(entries, threshold))
-                                    .map_err(|_| anyhow::anyhow!("file reader panicked"));
+                            let result = std::panic::catch_unwind(|| {
+                                materialize_budgeted_batch(entries, stream_threshold, &budget)
+                            })
+                            .map_err(|_| anyhow::anyhow!("file reader panicked"));
                             if results.send((index, result)).is_err() {
                                 break;
                             }
@@ -89,24 +168,29 @@ impl OrderedReader {
     }
 
     fn fill_window(&mut self) -> Result<()> {
-        let Some(parallel) = &mut self.parallel else {
-            return Ok(());
-        };
         loop {
-            let count = self.entries.len().min(READ_BATCH_ENTRIES);
+            let Some(parallel) = &self.parallel else {
+                return Ok(());
+            };
             let available = parallel.ready.len() - (parallel.submitted - parallel.consumed);
             // Ждём место для целой четвёрки, иначе после initial window каждое
             // next породит single-entry batch. Частичный batch допустим только в EOF.
-            if count == 0 || available < count {
+            if available < READ_BATCH_ENTRIES {
                 break;
             }
-            let entries = std::array::from_fn(|index| {
-                if index < count {
-                    self.entries.next()
-                } else {
-                    None
-                }
-            });
+            let mut entries = std::array::from_fn(|_| None);
+            let mut count = 0;
+            for slot in &mut entries {
+                let Some(entry) = self.next_entry()? else {
+                    break;
+                };
+                *slot = Some(entry);
+                count += 1;
+            }
+            if count == 0 {
+                break;
+            }
+            let parallel = self.parallel.as_mut().unwrap();
             parallel
                 .jobs
                 .as_ref()
@@ -118,11 +202,33 @@ impl OrderedReader {
         Ok(())
     }
 
+    fn next_entry(&mut self) -> Result<Option<ScannedEntry>> {
+        match self.lookahead.pop_front() {
+            Some(entry) => Ok(Some(entry)),
+            None => self.entries.next(),
+        }
+    }
+
+    pub(crate) fn take_scan_skips(&mut self) -> Vec<SkippedEntry> {
+        match &mut self.entries {
+            EntrySource::Streaming { scan, .. } => scan.take_skips(),
+            #[cfg(any(test, feature = "bench-internals"))]
+            EntrySource::Buffered(_) => Vec::new(),
+        }
+    }
+
+    pub(crate) fn scan_progress(&self) -> ScanProgress {
+        match &self.entries {
+            EntrySource::Streaming { scan, .. } => scan.progress(),
+            #[cfg(any(test, feature = "bench-internals"))]
+            EntrySource::Buffered(_) => ScanProgress::default(),
+        }
+    }
+
     pub(crate) fn next(&mut self) -> Result<Option<ReadDecision>> {
         let Some(parallel) = &mut self.parallel else {
             return self
-                .entries
-                .next()
+                .next_entry()?
                 .map(|entry| materialize_owned_entry(entry, self.stream_threshold))
                 .transpose();
         };
@@ -147,6 +253,9 @@ impl OrderedReader {
                 }
             }
         };
+        if let ReadDecision::Accepted(entry) = &decision {
+            entry.contents.delivered_from_prefetch();
+        }
         parallel.consumed += 1;
         self.fill_window()?;
         match decision {
@@ -182,6 +291,100 @@ mod tests {
     use std::fs;
     use std::sync::Arc;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn streamed_source_keeps_worker_cap_and_filters_known_terminal_paths() {
+        let dir = TestDir::new();
+        for index in 0..129 {
+            fs::write(dir.path().join(format!("{index:03}")), [index as u8; 17]).unwrap();
+        }
+        for pending in [0_usize, 1, 32, 33, 65, 129] {
+            let terminal = (pending..129).map(|index| format!("{index:03}")).collect();
+            let scan = StreamingScan::new(dir.path()).unwrap();
+            let mut reader = OrderedReader::from_stream(scan, terminal, 4, 1024).unwrap();
+            let expected_workers = 4.min(pending.div_ceil(32)).max(1);
+            assert_eq!(
+                reader
+                    .parallel
+                    .as_ref()
+                    .map_or(1, |parallel| parallel.workers.len()),
+                expected_workers
+            );
+            assert!(reader.lookahead.len() <= 4 * 32);
+            for index in 0..pending {
+                let Some(ReadDecision::Accepted(entry)) = reader.next().unwrap() else {
+                    panic!("streamed scan lost a pending entry");
+                };
+                assert_eq!(entry.descriptor.work_ordinal, index as u64 + 1);
+                assert_eq!(entry.contents, [index as u8; 17]);
+            }
+            assert!(reader.next().unwrap().is_none());
+            assert_eq!(reader.scan_progress().discovered_entries, 129);
+        }
+    }
+
+    #[test]
+    fn streamed_lookahead_does_not_collect_the_complete_tree() {
+        let dir = TestDir::new();
+        for index in 0..193 {
+            fs::write(dir.path().join(format!("{index:03}")), []).unwrap();
+        }
+        let scan = StreamingScan::new(dir.path()).unwrap();
+        let reader = OrderedReader::from_stream(scan, BTreeSet::new(), 2, 1024).unwrap();
+        assert_eq!(reader.scan_progress().discovered_entries, 64);
+        assert_eq!(reader.lookahead.len(), 64 - 2 * JOBS_PER_READER);
+        assert_eq!(reader.parallel.as_ref().unwrap().workers.len(), 2);
+        drop(reader);
+        fs::remove_dir_all(dir.path()).unwrap();
+    }
+
+    #[test]
+    fn streamed_tiny_source_caps_even_maximum_requested_reader_count() {
+        let dir = TestDir::new();
+        for index in 0..3 {
+            fs::write(dir.path().join(format!("{index}")), [index as u8; 17]).unwrap();
+        }
+        let scan = StreamingScan::new(dir.path()).unwrap();
+        let mut reader =
+            OrderedReader::from_stream(scan, BTreeSet::new(), usize::MAX, 1024).unwrap();
+        assert!(reader.parallel.is_none());
+        for index in 0..3 {
+            let Some(ReadDecision::Accepted(entry)) = reader.next().unwrap() else {
+                panic!("large requested reader count lost a tiny source entry");
+            };
+            assert_eq!(entry.descriptor.work_ordinal, index + 1);
+            assert_eq!(entry.contents, [index as u8; 17]);
+        }
+        assert!(reader.next().unwrap().is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn streamed_reader_never_opens_a_file_colliding_with_late_scan_skip() {
+        let _guard = test_hooks::lock();
+        test_hooks::clear();
+        let dir = TestDir::new();
+        fs::create_dir(dir.path().join("a")).unwrap();
+        let suppressed = dir.path().join("a/b");
+        fs::write(&suppressed, b"must not open").unwrap();
+        fs::write(dir.path().join("z"), b"keep").unwrap();
+        let _socket = std::os::unix::net::UnixListener::bind(dir.path().join("a\\b")).unwrap();
+        test_hooks::fail_next_open(&suppressed);
+        let scan = StreamingScan::new(dir.path()).unwrap();
+        let mut reader = OrderedReader::from_stream(scan, BTreeSet::new(), 4, 1024).unwrap();
+        let Some(ReadDecision::Accepted(entry)) = reader.next().unwrap() else {
+            panic!("expected the non-colliding file");
+        };
+        assert_eq!(entry.descriptor.relative_path, "z");
+        assert_eq!(entry.descriptor.work_ordinal, 2);
+        assert!(reader.next().unwrap().is_none());
+        assert_eq!(reader.scan_progress().discovered_entries, 2);
+        let skips = reader.take_scan_skips();
+        assert_eq!(skips.len(), 1);
+        assert_eq!(skips[0].relative_path, "a/b");
+        assert!(test_hooks::before_open(&suppressed).is_err());
+        test_hooks::clear();
+    }
 
     #[test]
     fn parallel_reads_preserve_every_byte_and_dfs_order_across_windows() {

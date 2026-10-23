@@ -27,7 +27,9 @@ use windows_sys::Win32::System::ProcessStatus::{
     GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS, PROCESS_MEMORY_COUNTERS_EX,
 };
 #[cfg(target_os = "windows")]
-use windows_sys::Win32::System::Threading::{GetCurrentProcess, GetProcessTimes};
+use windows_sys::Win32::System::Threading::{
+    GetCurrentProcess, GetProcessIoCounters, GetProcessTimes, IO_COUNTERS,
+};
 
 #[cfg(target_os = "windows")]
 use super::shared::available_logical_cpus;
@@ -276,7 +278,7 @@ const BENCHMARK_METRIC_PLAN: &[BenchmarkMetricPlan] = &[
         title: "Time until first bundle is ready",
         coverage: BenchmarkCoverage::Implemented,
         current_source: "LoopbackRunMetrics.time_to_first_frame_ms",
-        notes: "Legacy frame name maps to time_to_first_bundle: elapsed sender time when the first prepared or streamed task is received, before that bundle is sent or acknowledged.",
+        notes: "Legacy frame name maps to time_to_first_bundle: elapsed sender time when the first materialized or streamed task is received, before compression, payload delivery, or acknowledgement.",
     },
     BenchmarkMetricPlan {
         id: "reconnect-and-replay-latency",
@@ -497,6 +499,10 @@ where
             write_shaper: self.write_shaper,
             shared_read_pacer: self.shared_read_pacer.clone(),
         })
+    }
+
+    fn shutdown_stream(&self) -> anyhow::Result<()> {
+        self.inner.shutdown_stream()
     }
 }
 
@@ -798,7 +804,7 @@ fn receive_v4_loopback_dump<TControl, TData>(
 ) -> anyhow::Result<V4ReceiverLoopbackReport>
 where
     TControl: CloneableStream,
-    TData: Read + Send + 'static,
+    TData: CloneableStream,
 {
     let (report, profile) =
         receive_dump_v4_profile(control_stream, data_stream, receiver_path, "bench-dump")?;
@@ -828,8 +834,8 @@ where
             bundle_target_bytes: options.frame_target_bytes as usize,
             compression_level: options.level,
             compression_threads: options.threads,
-            readers: std::thread::available_parallelism()
-                .map_or(1, |n| n.get())
+            readers: V4BundlePlanOptions::default()
+                .readers
                 .clamp(options.min_readers, options.max_readers),
         },
     )
@@ -862,8 +868,8 @@ fn sample_loopback_send_profile(source_dir: &Path, options: &SendOptions) -> Pip
             bundle_target_bytes: options.frame_target_bytes as usize,
             compression_level: options.level,
             compression_threads: options.threads,
-            readers: std::thread::available_parallelism()
-                .map_or(1, |n| n.get())
+            readers: V4BundlePlanOptions::default()
+                .readers
                 .clamp(options.min_readers, options.max_readers),
         },
     )
@@ -889,6 +895,110 @@ pub(crate) fn run_loopback_scenario(
     network_profile: &str,
 ) -> LoopbackRunMetrics {
     run_v4_loopback_scenario(source_dir, options, network_profile)
+}
+
+// Счётчики охватывают sender и receiver одного процесса, без подготовки fixture
+// и проверки архива. CPU cycles не переводим во время и не называем instructions.
+#[cfg(windows)]
+fn work_counters() -> Option<(u64, u64, u64)> {
+    use windows_sys::Win32::System::WindowsProgramming::QueryProcessCycleTime;
+    unsafe {
+        let process = GetCurrentProcess();
+        let mut creation = zeroed();
+        let mut exit = zeroed();
+        let mut kernel: FILETIME = zeroed();
+        let mut user: FILETIME = zeroed();
+        let mut cycles = 0;
+        if GetProcessTimes(process, &mut creation, &mut exit, &mut kernel, &mut user) == 0
+            || QueryProcessCycleTime(process, &mut cycles) == 0
+        {
+            return None;
+        }
+        let ns = |time: FILETIME| {
+            ((u64::from(time.dwHighDateTime) << 32) | u64::from(time.dwLowDateTime)) * 100
+        };
+        Some((cycles, ns(user), ns(kernel)))
+    }
+}
+
+#[cfg(not(windows))]
+fn work_counters() -> Option<(u64, u64, u64)> {
+    None
+}
+
+#[derive(Clone, Copy)]
+struct ProcessIoCounters {
+    read_ops: u64,
+    write_ops: u64,
+    other_ops: u64,
+    read_bytes: u64,
+    write_bytes: u64,
+    other_bytes: u64,
+}
+
+#[derive(Default)]
+struct ProcessIoSnapshot {
+    io: Option<ProcessIoCounters>,
+    page_faults: Option<u32>,
+}
+
+#[cfg(windows)]
+fn process_io_snapshot() -> ProcessIoSnapshot {
+    // Process I/O включает файлы, сеть и устройства; это не физический disk I/O.
+    // PageFaultCount включает мягкие faults, поэтому не означает чтение с диска.
+    unsafe {
+        let process = GetCurrentProcess();
+        let mut io = zeroed::<IO_COUNTERS>();
+        let io_available = GetProcessIoCounters(process, &mut io) != 0;
+        let mut memory = zeroed::<PROCESS_MEMORY_COUNTERS>();
+        memory.cb = size_of::<PROCESS_MEMORY_COUNTERS>() as u32;
+        let memory_available = GetProcessMemoryInfo(process, &mut memory, memory.cb) != 0;
+        ProcessIoSnapshot {
+            io: io_available.then_some(ProcessIoCounters {
+                read_ops: io.ReadOperationCount,
+                write_ops: io.WriteOperationCount,
+                other_ops: io.OtherOperationCount,
+                read_bytes: io.ReadTransferCount,
+                write_bytes: io.WriteTransferCount,
+                other_bytes: io.OtherTransferCount,
+            }),
+            page_faults: memory_available.then_some(memory.PageFaultCount),
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn process_io_snapshot() -> ProcessIoSnapshot {
+    ProcessIoSnapshot::default()
+}
+
+fn report_process_io(before: ProcessIoSnapshot, after: ProcessIoSnapshot) {
+    let io = before.io.zip(after.io);
+    let delta = |field: fn(ProcessIoCounters) -> u64| {
+        io.and_then(|(before, after)| field(after).checked_sub(field(before)))
+            .map_or_else(|| "unmeasured".to_owned(), |value| value.to_string())
+    };
+    // Win32 DWORD может обернуться между двумя снимками длинного прогона.
+    let page_faults = before
+        .page_faults
+        .zip(after.page_faults)
+        .map(|(before, after)| after.wrapping_sub(before))
+        .map_or_else(|| "unmeasured".to_owned(), |value| value.to_string());
+    eprintln!(
+        "[bench-io] read_ops={} write_ops={} other_ops={} read_bytes={} write_bytes={} other_bytes={} page_faults={} scope=sender_receiver_process io_kind=file_network_device page_fault_kind=soft_and_hard source={}",
+        delta(|io| io.read_ops),
+        delta(|io| io.write_ops),
+        delta(|io| io.other_ops),
+        delta(|io| io.read_bytes),
+        delta(|io| io.write_bytes),
+        delta(|io| io.other_bytes),
+        page_faults,
+        if cfg!(windows) {
+            "windows_process_counters"
+        } else {
+            "unsupported_target"
+        },
+    );
 }
 
 fn run_v4_loopback_scenario(
@@ -932,6 +1042,8 @@ fn run_v4_loopback_scenario(
         receive_pacer,
     ));
     let monitor = ProcessMonitor::start(monitor_interval());
+    let io_before = process_io_snapshot();
+    let work_before = work_counters();
     let (report, profile) = send_v4_loopback_profile(
         &mut sender_control_stream,
         &mut sender_data_stream,
@@ -939,9 +1051,52 @@ fn run_v4_loopback_scenario(
         options,
     )
     .unwrap();
+    let work_after = work_counters();
+    let io_after = process_io_snapshot();
+    if let Some((before, after)) = work_before.zip(work_after) {
+        eprintln!(
+            "[bench-work] cpu_cycles={} user_ns={} kernel_ns={} scope=sender_receiver_process",
+            after.0.saturating_sub(before.0),
+            after.1.saturating_sub(before.1),
+            after.2.saturating_sub(before.2)
+        );
+    }
+    report_process_io(io_before, io_after);
     let resources = monitor.finish();
 
     let receive_report = receiver.join().unwrap();
+    eprintln!(
+        "[bench-receiver-work] write_io_ns={} periodic_sync_ns={} periodic_sync_calls={} clean_sync_skips={}",
+        receive_report
+            .receiver_profile
+            .bundle_write_io
+            .duration
+            .as_nanos(),
+        receive_report
+            .receiver_profile
+            .bundle_periodic_sync
+            .duration
+            .as_nanos(),
+        receive_report.receiver_profile.bundle_periodic_sync.bytes,
+        receive_report.receiver_profile.bundle_sync_skipped
+    );
+    let receiver_profile = &receive_report.receiver_profile;
+    // Один bundle_sync check приходится на завершённую commit-группу и её WAL sync.
+    // Инициализация/finalize и незакоммиченные попытки в эти счётчики не входят.
+    let commit_groups = receiver_profile.bundle_sync.bytes;
+    let archive_commit_sync_calls =
+        commit_groups.saturating_sub(receiver_profile.bundle_sync_skipped);
+    let archive_periodic_sync_calls = receiver_profile.bundle_periodic_sync.bytes;
+    eprintln!(
+        "[bench-commit] committed_bundles={} commit_groups={} wal_commit_sync_calls={} archive_commit_sync_checks={} archive_commit_sync_calls={} archive_periodic_sync_calls={} archive_group_sync_calls={} archive_total_sync_calls=unmeasured scope=committed_bundle_groups excludes=initialization_finalize_aborted_attempts",
+        receiver_profile.committed_bundles,
+        commit_groups,
+        commit_groups,
+        commit_groups,
+        archive_commit_sync_calls,
+        archive_periodic_sync_calls,
+        archive_commit_sync_calls.saturating_add(archive_periodic_sync_calls),
+    );
     let logical_bytes = profile.total.bytes;
     let raw_read_bytes = profile.read.bytes;
     let tx_bytes = sender_control_stream

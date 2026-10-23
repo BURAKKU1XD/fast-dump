@@ -57,7 +57,10 @@ pub struct ReceiverProfile {
     pub recovery: StageProfile,
     pub skip_catalog: StageProfile,
     pub bundle_write: StageProfile,
+    pub bundle_write_io: StageProfile,
+    pub bundle_periodic_sync: StageProfile,
     pub bundle_sync: StageProfile,
+    pub bundle_sync_skipped: u64,
     pub wal_append: StageProfile,
     pub bundle_commit: StageProfile,
     pub bundle_ack_flush: StageProfile,
@@ -92,6 +95,24 @@ impl ReceiverProfile {
     pub(crate) fn record_bundle_sync(&mut self, duration: Duration) {
         self.bundle_sync.bytes = self.bundle_sync.bytes.saturating_add(1);
         self.bundle_sync.duration += duration;
+    }
+
+    pub(crate) fn record_bundle_write_details(
+        &mut self,
+        bytes: u64,
+        write_duration: Duration,
+        periodic_sync_duration: Duration,
+        periodic_sync_count: u64,
+    ) {
+        // bundle_write сохраняет прежний aggregate, новые поля разделяют write
+        // и промежуточный sync без изменения существующих метрик и stdout.
+        self.bundle_write_io.bytes = self.bundle_write_io.bytes.saturating_add(bytes);
+        self.bundle_write_io.duration += write_duration;
+        self.bundle_periodic_sync.bytes = self
+            .bundle_periodic_sync
+            .bytes
+            .saturating_add(periodic_sync_count);
+        self.bundle_periodic_sync.duration += periodic_sync_duration;
     }
 
     pub(crate) fn record_wal_append(&mut self, bytes: u64, duration: Duration) {

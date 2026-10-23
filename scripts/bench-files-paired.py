@@ -238,6 +238,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--before', type=Path, required=True)
     parser.add_argument('--after', type=Path, required=True)
+    parser.add_argument('--allow-identical-binaries', action='store_true',
+                        help='allow identical SHA256 only for intentional A/A calibration')
     parser.add_argument('--source', type=Path, required=True)
     parser.add_argument('--output', type=Path, required=True)
     parser.add_argument('--repeats', type=int, default=7)
@@ -256,9 +258,15 @@ def main():
     require(not output.is_relative_to(source), 'Output must be outside the source tree to keep the fixture unchanged')
     require(not output.exists(), f'Output already exists: {output}')
     hashes = {side: sha256(path) for side, path in binaries.items()}
+    identical_binaries = hashes['before'] == hashes['after']
+    require(not identical_binaries or args.allow_identical_binaries,
+            'Before and after binaries have identical SHA256; use --allow-identical-binaries only for intentional A/A calibration')
     scenarios = [(stage, count) for stage in stages for count in (readers if stage == 'read' else [1])]
     manifest = {'complete': False, 'created_utc': datetime.now(timezone.utc).isoformat(),
                 'source': str(source), 'binary_sha256': hashes, 'platform': platform.platform(),
+                'allow_identical_binaries': args.allow_identical_binaries,
+                'identical_binaries': identical_binaries,
+                'comparison_kind': 'A/A' if identical_binaries else 'A/B',
                 'logical_cpus': os.cpu_count(), 'allocations_diagnostic': args.allocations,
                 'repeats': args.repeats, 'scenarios': scenarios, 'invocations': [],
                 'policy': 'AB/BA alternating pairs; no trimming, implicit warmup, or dropped first samples',

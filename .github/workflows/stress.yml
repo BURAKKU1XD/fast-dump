@@ -2,17 +2,21 @@ name: Stress
 
 on:
   workflow_dispatch:
+  workflow_call:
   schedule:
     - cron: "0 3 * * 1"
 
-concurrency:
-  group: stress
-  cancel-in-progress: false
+permissions:
+  contents: read
 
 jobs:
   connectivity-stress:
-    runs-on: windows-latest
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
     env:
       RUST_BACKTRACE: "1"
     steps:
@@ -24,25 +28,55 @@ jobs:
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
 
-      - name: Run ignored connectivity stress test
+      - name: Run ignored file-count and payload stress test
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path artifacts | Out-Null
+          New-Item -ItemType Directory -Force -Path target/stress-artifacts | Out-Null
           $testName = 'connectivity::roundtrip_fast::sender_and_receiver_roundtrip_random_files_and_verify_hashes'
-          $tests = cargo test --release --test integration -- --list 2>&1
+          $tests = cargo test --locked --release --test integration -- --list --ignored 2>&1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if ($tests -notcontains "${testName}: test") {
             throw "Stress test is missing: $testName"
           }
-          cargo test --release --test integration $testName -- --exact --ignored --nocapture 2>&1 | Tee-Object -FilePath artifacts/stress.log
+          cargo test --locked --release --test integration $testName -- --exact --ignored --nocapture 2>&1 | Tee-Object -FilePath target/stress-artifacts/roundtrip.log
           $exitCode = $LASTEXITCODE
           if ($exitCode -ne 0) {
             exit $exitCode
           }
 
-      - name: Upload stress log
+      - name: Run ignored process-kill and resume stress test
+        shell: pwsh
+        run: |
+          $testName = 'connectivity::recovery_stress::receiver_process_kill_and_resume_preserves_archive_push_and_pull'
+          $tests = cargo test --locked --release --test integration -- --list --ignored 2>&1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($tests -notcontains "${testName}: test") {
+            throw "Stress test is missing: $testName"
+          }
+          cargo test --locked --release --test integration $testName -- --exact --ignored --nocapture 2>&1 | Tee-Object -FilePath target/stress-artifacts/recovery.log
+          $exitCode = $LASTEXITCODE
+          if ($exitCode -ne 0) {
+            exit $exitCode
+          }
+
+      - name: Run ignored repeated-session lifecycle stress test
+        shell: pwsh
+        run: |
+          $testName = 'receiver::network::lifecycle_tests::repeated_full_transfers_release_all_reader_handles'
+          $tests = cargo test --locked --release --lib -- --list --ignored 2>&1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if ($tests -notcontains "${testName}: test") {
+            throw "Stress test is missing: $testName"
+          }
+          cargo test --locked --release --lib $testName -- --exact --ignored --nocapture 2>&1 | Tee-Object -FilePath target/stress-artifacts/lifecycle.log
+          $exitCode = $LASTEXITCODE
+          if ($exitCode -ne 0) {
+            exit $exitCode
+          }
+
+      - name: Upload stress logs
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: stress-log
-          path: artifacts/stress.log
+          name: stress-log-${{ matrix.os }}
+          path: target/stress-artifacts/*.log

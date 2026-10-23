@@ -7,6 +7,7 @@ import importlib.util
 import io
 import json
 import tempfile
+import types
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -15,6 +16,9 @@ from unittest.mock import patch
 SPEC = importlib.util.spec_from_file_location('bench_files_paired', Path(__file__).with_name('bench-files-paired.py'))
 BENCH = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(BENCH)
+PIPELINE_SPEC = importlib.util.spec_from_file_location('bench_paired', Path(__file__).with_name('bench-paired.py'))
+PIPELINE = importlib.util.module_from_spec(PIPELINE_SPEC)
+PIPELINE_SPEC.loader.exec_module(PIPELINE)
 
 
 def measurement(**overrides):
@@ -140,17 +144,19 @@ class FileComparisonTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, 'Empty fixture/measurement'):
             self.parse(measurement(stage='noop', elapsed_ns=-1, work_ns=-1, drop_ns=0))
 
-    def run_driver(self, directory, mismatch=False, stage='read'):
+    def run_driver(self, directory, mismatch=False, stage='read', identical=False):
         directory = Path(directory)
         before, after = directory / 'before', directory / 'after'
         before.write_bytes(b'saved baseline')
-        after.write_bytes(b'saved candidate')
+        after.write_bytes(b'saved baseline' if identical else b'saved candidate')
         source = directory / 'source'
         source.mkdir()
         output = directory / 'report'
         command = ['bench-files-paired.py', '--before', str(before), '--after', str(after),
                    '--source', str(source), '--output', str(output), '--stages', stage,
                    '--readers', '4', '--repeats', '2']
+        if identical:
+            command.append('--allow-identical-binaries')
 
         def invoke(arguments, log):
             is_before = arguments[0] == str(before)
@@ -175,6 +181,9 @@ class FileComparisonTests(unittest.TestCase):
             self.assertEqual(report['comparisons'][0]['cpu_cycles_ratio_after_before'], .75)
             self.assertEqual(report['comparisons'][0]['cpu_cycles_after_wins'], 2)
             self.assertEqual(report['method']['measurement_contract']['counters_schema'], 2)
+            self.assertEqual(report['method']['comparison_kind'], 'A/B')
+            self.assertFalse(report['method']['allow_identical_binaries'])
+            self.assertFalse(report['method']['identical_binaries'])
             resource = next(row for row in report['resources'] if row['metric'] == 'cpu_cycles' and row['denominator'] == 'entry')
             self.assertEqual(resource['before_mean'], 25)
             self.assertEqual(resource['after_mean'], 18.75)
@@ -199,13 +208,82 @@ class FileComparisonTests(unittest.TestCase):
             binary.write_bytes(b'saved binary')
             output = source / 'report'
             command = ['bench-files-paired.py', '--before', str(binary), '--after', str(binary),
-                       '--source', str(source), '--output', str(output)]
+                       '--source', str(source), '--output', str(output), '--allow-identical-binaries']
             with patch.object(BENCH.sys, 'argv', command), patch.object(BENCH, 'invoke') as invoke:
                 with self.assertRaisesRegex(ValueError, 'Output must be outside the source tree'):
                     BENCH.main()
                 invoke.assert_not_called()
             self.assertFalse(output.exists())
             self.assertEqual(list(source.iterdir()), [])
+
+    def test_both_drivers_reject_identical_copies_before_output_mutation(self):
+        for driver, extra in ((BENCH, []), (PIPELINE, ['--threads', '1'])):
+            with self.subTest(driver=driver.__name__), tempfile.TemporaryDirectory() as directory:
+                directory = Path(directory)
+                before, after = directory / 'before', directory / 'after'
+                before.write_bytes(b'identical executable bytes')
+                after.write_bytes(before.read_bytes())
+                source = directory / 'source'
+                source.mkdir()
+                output = directory / 'must-not-create' / 'report'
+                command = ['paired.py', '--before', str(before), '--after', str(after),
+                           '--source', str(source), '--output', str(output), *extra]
+                with patch.object(driver.sys, 'argv', command), patch.object(Path, 'mkdir') as mkdir:
+                    with self.assertRaisesRegex(ValueError, 'identical SHA256.*--allow-identical-binaries'):
+                        driver.main()
+                    mkdir.assert_not_called()
+                self.assertFalse(output.parent.exists())
+                self.assertEqual(list(source.iterdir()), [])
+
+    def test_explicit_file_calibration_records_identical_binaries(self):
+        with tempfile.TemporaryDirectory() as directory:
+            output = self.run_driver(directory, identical=True)
+            report = json.loads((output / 'paired-run.json').read_text(encoding='utf-8'))
+            self.assertTrue(report['complete'])
+            self.assertTrue(report['allow_identical_binaries'])
+            self.assertTrue(report['identical_binaries'])
+            self.assertEqual(report['comparison_kind'], 'A/A')
+            self.assertEqual(report['binary_sha256']['before'], report['binary_sha256']['after'])
+
+    def test_explicit_pipeline_calibration_preserves_source_and_reader_overrides(self):
+        with tempfile.TemporaryDirectory() as directory:
+            directory = Path(directory)
+            binary = directory / 'binary'
+            binary.write_bytes(b'saved binary')
+            source = directory / 'source'
+            source.mkdir()
+            output = directory / 'report'
+            command = ['bench-paired.py', '--before', str(binary), '--after', str(binary),
+                       '--source', str(source), '--output', str(output), '--threads', '1',
+                       '--readers', '32', '--before-readers', '16', '--after-readers', '64',
+                       '--repeats', '1', '--allow-identical-binaries']
+
+            def run(arguments, *, stdout, stderr, env, check):
+                row = dict.fromkeys(PIPELINE.KEY_FIELDS, 'same')
+                row.update(repeat_index='1', skipped_files='0', frame_aborts='0', frame_rebuilds='0',
+                           files_count='1', raw_read_bytes='1024')
+                csv_path = Path(env['FAST_DUMP_BENCH_MATRIX_DIR']) / 'results_raw.csv'
+                with csv_path.open('w', newline='', encoding='utf-8') as stream:
+                    writer = csv.DictWriter(stream, fieldnames=list(row))
+                    writer.writeheader()
+                    writer.writerow(row)
+                stdout.write(b'[bench-verify] verified fixture\n[bench-link] fixture\n')
+                return types.SimpleNamespace(returncode=0)
+
+            with patch.object(PIPELINE.sys, 'argv', command), patch.object(PIPELINE.subprocess, 'run', run), contextlib.redirect_stdout(io.StringIO()):
+                PIPELINE.main()
+            report = json.loads((output / 'paired-run.json').read_text(encoding='utf-8'))
+            self.assertTrue(report['complete'])
+            self.assertTrue(report['allow_identical_binaries'])
+            self.assertTrue(report['identical_binaries'])
+            self.assertEqual(report['comparison_kind'], 'A/A')
+            self.assertEqual(report['binary_sha256']['before'], report['binary_sha256']['after'])
+            self.assertEqual(report['requested_readers'], {'before': 16, 'after': 64})
+            for invocation, count in zip(report['invocations'], ('16', '64')):
+                arguments = invocation['command']
+                self.assertEqual(arguments[arguments.index('--readers') + 1], count)
+                self.assertEqual(arguments[arguments.index('--source') + 1], str(source))
+                self.assertNotIn('--dataset', arguments)
 
     def test_driver_noop_reports_only_total_resources(self):
         with tempfile.TemporaryDirectory() as directory:

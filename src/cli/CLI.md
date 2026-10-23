@@ -35,8 +35,8 @@ Options:
 - `--token <TOKEN>`
 - `-l, --level <N>`: default `3`
 - `--threads <N|auto>`: default `auto`
-- `--min-readers <N>`: default `2`
-- `--max-readers <N>`: default `32`
+- `--min-readers <N>`: default `1`
+- `--max-readers <N>`: defaults to the detected physical-core count
 - `--read-buffer-kb <N>`: default `1024`
 - `--frame-target-mb <N>`: default `64`
 
@@ -56,14 +56,26 @@ The current `v4` data path uses `--level`, `--frame-target-mb`, `--threads`,
 
 - `--threads 1` uses synchronous zstd compression; a larger value enables that
   many compression workers within each frame.
-- Reader concurrency is `available_parallelism()` clamped to the configured
-  minimum and maximum, then capped at `ceil(pending entries / 32)` to amortize
-  worker startup. A resulting count of `1`, including sets of at most `32`
-  pending entries, uses serial reading. Parallel reading preserves traversal
-  order with at most four entries per reader: up to `128` entries and `32 MiB`
-  of prefetched file payload at the default maximum of `32` readers. Each
-  prefetched regular-file payload is at most `256 KiB`; larger files occupy
-  bounded open-handle slots.
+- Reader concurrency uses the detected physical-core count, clamped to the
+  configured minimum and maximum (defaults `1` and the detected core count),
+  then capped at `ceil(pending entries / 32)` to amortize worker startup. There
+  is no fixed `32`-reader ceiling. A resulting count of `1`, including sets of
+  at most `32` pending entries, uses serial reading. Parallel reading preserves
+  traversal order with at most four entries per actual reader: `64` entries for
+  `16` readers, `704` for `176`. A shared `8 MiB` budget separately bounds pending
+  prefetched payload. Whole files up to the materialization threshold can be
+  prefetched when they fit that budget; otherwise bounded open-handle slots
+  retain them for the planner. A shared batch reservation is released after
+  its last prefetched entry is delivered, or on cancellation. The planner's
+  materialized bundle is separate; a batch crossing a bundle boundary can
+  additionally retain up to `8 MiB` of already-consumed payload.
+  Equal explicit `--min-readers` and `--max-readers` select a fixed count before
+  the entry-count cap. Library `BundlePlanOptions` defaults use the same detected
+  physical-core count, with a minimum of `1`.
+- Core detection is cached. Windows includes all processor groups; Linux
+  counts cores allowed by CPU affinity and caps the result by available logical
+  parallelism for CPU quotas. If physical topology is unavailable, use available
+  logical parallelism, with a minimum of `1`.
 - `--frame-target-mb` controls the bundle-size target and the threshold above
   which a regular file is streamed directly. Bundle `1` uses aggregation target
   `min(configured target, 4 MiB)`; later bundles use the configured target
@@ -76,6 +88,9 @@ The current `v4` data path uses `--level`, `--frame-target-mb`, `--threads`,
 data path. Directory scanning independently uses up to `8` subtree workers while
 preserving deterministic depth-first traversal. Compression contexts are reused
 between bundles and retries, with a separate zstd frame for each attempt.
+Streamed attempts reuse four `4 MiB` compressed buffers and one `1 MiB`
+source-read buffer across files in the session; these buffers are allocated on
+first use. The producer is still scoped to each attempt.
 
 ## Receiver
 

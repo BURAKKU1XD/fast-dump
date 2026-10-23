@@ -5,24 +5,27 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 
 use anyhow::{Context, Result, bail};
+#[cfg(test)]
 use xxhash_rust::xxh3::xxh3_64;
 
 use crate::network::protocol::wire::MAX_CONTROL_BODY_BYTES;
+#[cfg(test)]
+use crate::network::protocol::{BundleDescriptor, PreparedBundle};
 use crate::network::protocol::{
-    BundleDescriptor, BundleEntryDescriptor, BundleEntryKind, PreparedBundle, ResumeState,
-    SkippedEntry,
+    BundleEntryDescriptor, BundleEntryKind, BundlePlanDescriptor, ResumeState, SkippedEntry,
 };
 use crate::profile::StageProfile;
 
+#[cfg(test)]
 use super::compress::BundleCompressor;
-use super::read::{MaterializedEntry, ReadDecision, StreamedRegularFile};
+use super::read::{EntryContents, MaterializedEntry, ReadDecision, StreamedRegularFile};
 use super::read_ahead::OrderedReader;
-use super::scan::scan_source_tree;
-use super::tar::build_compressed_bundle_with;
+use super::scan::StreamingScan;
 
 #[cfg(test)]
 use super::tar::{
-    StreamedBundleBuild, StreamedBundleOutcome, build_streamed_regular_bundle_payload,
+    StreamedBundleBuild, StreamedBundleOutcome, build_compressed_bundle_into,
+    build_streamed_regular_bundle_payload,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -39,7 +42,7 @@ impl Default for BundlePlanOptions {
             bundle_target_bytes: 8 * 1024 * 1024,
             compression_level: 3,
             compression_threads: 1,
-            readers: std::thread::available_parallelism().map_or(1, |n| n.get().min(32)),
+            readers: crate::cpu::available_physical_cores(),
         }
     }
 }
@@ -58,8 +61,20 @@ pub(crate) struct StreamedBundleTask {
 }
 
 #[derive(Debug)]
+pub(crate) struct MaterializedPayload {
+    pub(crate) mode: u32,
+    pub(crate) contents: EntryContents,
+}
+
+#[derive(Debug)]
+pub(crate) struct MaterializedBundleTask {
+    pub(crate) descriptor: BundlePlanDescriptor,
+    pub(crate) payloads: Vec<MaterializedPayload>,
+}
+
+#[derive(Debug)]
 pub(crate) enum SendBundle {
-    Prepared(PreparedBundle),
+    Materialized(MaterializedBundleTask),
     Streamed(StreamedBundleTask),
 }
 
@@ -96,6 +111,7 @@ pub(crate) struct PrepareProfile {
 }
 
 impl PrepareProfile {
+    #[cfg(test)]
     fn record_built_bundle(
         &mut self,
         bundle: &PreparedBundle,
@@ -120,6 +136,7 @@ impl PrepareProfile {
 
 pub(crate) struct DumpPlanner {
     entries: OrderedReader,
+    #[cfg(test)]
     compressor: BundleCompressor,
     cancellation: Arc<AtomicBool>,
     pending_entry: Option<PendingEntry>,
@@ -216,61 +233,44 @@ impl DumpPlanner {
             options.compression_threads > 0,
             "compression threads must be greater than zero"
         );
-        let scan_started = Instant::now();
-        let scan = scan_source_tree(source_dir)?;
-        let mut profile = PrepareProfile::default();
-        profile.scan.duration = scan_started.elapsed();
-        profile.discovered_entries = scan.entries.len() as u64;
-        validate_resume_boundary(resume_state, &scan.entries)?;
+        let mut scan = StreamingScan::new(source_dir)?;
+        let cancellation = scan.cancellation_flag();
+        // До подтверждения границы никакой reader ещё не открывает новый payload.
+        validate_resume_boundary(resume_state, &mut scan)?;
 
-        let mut known_terminal_paths = resume_state
+        let known_terminal_paths = resume_state
             .terminal_skips
             .iter()
             .map(|entry| entry.relative_path.clone())
             .collect::<BTreeSet<_>>();
-        let mut new_terminal_skips = Vec::new();
-        let mut terminal_skips = resume_state.terminal_skips.clone();
-
-        for skipped in scan.skipped {
-            if known_terminal_paths.insert(skipped.relative_path.clone()) {
-                new_terminal_skips.push(skipped.clone());
-                terminal_skips.push(skipped);
-            }
-        }
-
-        let final_work_ordinal = scan
-            .entries
-            .last()
-            .map(|entry| entry.work_ordinal)
-            .unwrap_or(0);
-        let entries = scan
-            .entries
-            .into_iter()
-            .filter(|entry| {
-                entry.work_ordinal > resume_state.last_committed_work_ordinal
-                    && !known_terminal_paths.contains(&entry.relative_path)
-            })
-            .collect::<Vec<_>>();
+        #[cfg(test)]
         let compressor =
             BundleCompressor::new(options.compression_level, options.compression_threads)?;
-        let entries =
-            OrderedReader::new(entries, options.readers, options.bundle_target_bytes as u64)?;
+        let entries = OrderedReader::from_stream(
+            scan,
+            known_terminal_paths.clone(),
+            options.readers,
+            options.bundle_target_bytes as u64,
+        )?;
 
-        Ok(Self {
+        let mut planner = Self {
             entries,
+            #[cfg(test)]
             compressor,
-            cancellation: Arc::new(AtomicBool::new(false)),
+            cancellation,
             pending_entry: None,
             next_bundle_no: resume_state.last_committed_bundle_no.saturating_add(1),
             options,
             known_terminal_paths,
-            new_terminal_skips,
-            terminal_skips,
-            final_work_ordinal,
-            profile,
+            new_terminal_skips: Vec::new(),
+            terminal_skips: resume_state.terminal_skips.clone(),
+            final_work_ordinal: 0,
+            profile: PrepareProfile::default(),
             #[cfg(test)]
             cancel_after_skips: None,
-        })
+        };
+        planner.refresh_scan_state();
+        Ok(planner)
     }
 
     pub(crate) fn cancellation_flag(&self) -> Arc<AtomicBool> {
@@ -310,7 +310,7 @@ impl DumpPlanner {
         loop {
             self.check_cancelled()?;
             let read_started = Instant::now();
-            let Some(decision) = self.entries.next()? else {
+            let Some(decision) = self.next_read_decision()? else {
                 break;
             };
             self.check_cancelled()?;
@@ -352,8 +352,12 @@ impl DumpPlanner {
             return Ok(None);
         }
 
-        let (bundle, tar_duration, compress_duration) =
-            build_bundle(self.next_bundle_no, current_entries, &mut self.compressor)?;
+        let (bundle, tar_duration, compress_duration) = build_bundle(
+            self.next_bundle_no,
+            current_entries,
+            &mut self.compressor,
+            Vec::new(),
+        )?;
         self.next_bundle_no = self.next_bundle_no.saturating_add(1);
         self.profile
             .record_built_bundle(&bundle, tar_duration, compress_duration);
@@ -386,7 +390,7 @@ impl DumpPlanner {
             // Даже длинная серия skips должна прерываться при обрыве сети.
             self.check_cancelled()?;
             let read_started = Instant::now();
-            let Some(decision) = self.entries.next()? else {
+            let Some(decision) = self.next_read_decision()? else {
                 break;
             };
             self.check_cancelled()?;
@@ -430,11 +434,10 @@ impl DumpPlanner {
         }
 
         let bundle_no = self.reserve_bundle_no();
-        let (bundle, tar_duration, compress_duration) =
-            build_bundle(bundle_no, current_entries, &mut self.compressor)?;
-        self.profile
-            .record_built_bundle(&bundle, tar_duration, compress_duration);
-        Ok(Some(SendBundle::Prepared(bundle)))
+        Ok(Some(SendBundle::Materialized(materialized_bundle(
+            bundle_no,
+            current_entries,
+        )?)))
     }
 
     pub(crate) fn take_new_terminal_skips(&mut self) -> Vec<SkippedEntry> {
@@ -446,12 +449,29 @@ impl DumpPlanner {
     }
 
     pub(crate) fn finish_profile(mut self) -> PrepareProfile {
+        self.refresh_scan_state();
         self.profile.terminal_skips = self.terminal_skips.len() as u64;
         self.profile
     }
 
     pub(crate) fn profile(&self) -> &PrepareProfile {
         &self.profile
+    }
+
+    fn next_read_decision(&mut self) -> Result<Option<ReadDecision>> {
+        let decision = self.entries.next();
+        self.refresh_scan_state();
+        decision
+    }
+
+    fn refresh_scan_state(&mut self) {
+        let progress = self.entries.scan_progress();
+        self.profile.scan.duration = progress.duration;
+        self.profile.discovered_entries = progress.discovered_entries;
+        self.final_work_ordinal = progress.discovered_entries;
+        for skipped in self.entries.take_scan_skips() {
+            self.record_terminal_skip(skipped);
+        }
     }
 
     fn record_terminal_skip(&mut self, skipped: SkippedEntry) {
@@ -533,22 +553,22 @@ fn sort_skipped_entries(entries: &mut [SkippedEntry]) {
     });
 }
 
-fn validate_resume_boundary(
-    resume_state: &ResumeState,
-    entries: &[super::scan::ScannedEntry],
-) -> Result<()> {
+fn validate_resume_boundary(resume_state: &ResumeState, scan: &mut StreamingScan) -> Result<()> {
     if resume_state.last_committed_work_ordinal == 0 {
         return Ok(());
     }
 
-    let Some(entry) = entries
-        .iter()
-        .find(|entry| entry.work_ordinal == resume_state.last_committed_work_ordinal)
-    else {
-        bail!(
-            "v4 resume mismatch: committed work ordinal {} is missing from current scan",
-            resume_state.last_committed_work_ordinal
-        );
+    let entry = loop {
+        match scan.next_entry()? {
+            Some(entry) if entry.work_ordinal == resume_state.last_committed_work_ordinal => {
+                break entry;
+            }
+            Some(_) => (),
+            None => bail!(
+                "v4 resume mismatch: committed work ordinal {} is missing from current scan",
+                resume_state.last_committed_work_ordinal
+            ),
+        }
     };
 
     if entry.relative_path != resume_state.last_committed_relative_path {
@@ -628,10 +648,55 @@ fn build_streamed_bundle(
     }
 }
 
-fn build_bundle(
+fn materialized_bundle(
     bundle_no: u64,
     entries: Vec<MaterializedEntry>,
+) -> Result<MaterializedBundleTask> {
+    let first_work_ordinal = entries
+        .first()
+        .context("v4 bundle cannot be empty")?
+        .descriptor
+        .work_ordinal;
+    let last = &entries
+        .last()
+        .context("v4 bundle cannot be empty")?
+        .descriptor;
+    let last_work_ordinal = last.work_ordinal;
+    let last_relative_path = last.relative_path.clone();
+    let mut descriptors = Vec::with_capacity(entries.len());
+    let mut raw_payload_bytes = 0_u64;
+    // План нужен сети раньше compression. Переносим строки descriptors отдельно
+    // от payload, чтобы tar использовал тот же план без копий путей каждого файла.
+    let payloads = entries
+        .into_iter()
+        .map(|entry| {
+            raw_payload_bytes += entry.descriptor.size_at_open;
+            descriptors.push(entry.descriptor);
+            MaterializedPayload {
+                mode: entry.mode,
+                contents: entry.contents,
+            }
+        })
+        .collect();
+    Ok(MaterializedBundleTask {
+        descriptor: BundlePlanDescriptor {
+            bundle_no,
+            first_work_ordinal,
+            last_work_ordinal,
+            last_relative_path,
+            entries: descriptors,
+            raw_payload_bytes,
+        },
+        payloads,
+    })
+}
+
+#[cfg(test)]
+fn build_bundle(
+    bundle_no: u64,
+    mut entries: Vec<MaterializedEntry>,
     compressor: &mut BundleCompressor,
+    output: Vec<u8>,
 ) -> Result<(PreparedBundle, std::time::Duration, std::time::Duration)> {
     let first_work_ordinal = entries
         .first()
@@ -642,10 +707,10 @@ fn build_bundle(
     let last_relative_path = last_entry.descriptor.relative_path.clone();
     let build_started = Instant::now();
     let (compressed_payload, tar_payload_bytes) =
-        build_compressed_bundle_with(&entries, compressor)?;
+        build_compressed_bundle_into(&mut entries, compressor, output)?;
     let build_duration = build_started.elapsed();
     let mut raw_payload_bytes = 0_u64;
-    // После compression переносим descriptors и сразу освобождаем payload каждого файла.
+    // Payload освобождён по мере сжатия; переносим оставшиеся descriptors без копий.
     let entries_descriptor = entries
         .into_iter()
         .map(|entry| {
@@ -684,6 +749,78 @@ mod tests {
     use std::io::Cursor;
 
     #[test]
+    fn default_readers_use_detected_physical_cores() {
+        let options = BundlePlanOptions::default();
+        assert_eq!(options.readers, crate::cpu::available_physical_cores());
+        assert_eq!(options.compression_threads, 1);
+    }
+
+    #[test]
+    fn materialized_tasks_keep_completed_reads_when_sources_change() {
+        let dir = TestDir::new();
+        fs::write(dir.path().join("a"), [0xa5; 333]).unwrap();
+        fs::write(dir.path().join("b"), [0x5a; 333]).unwrap();
+        let mut planner = DumpPlanner::new(
+            dir.path(),
+            &ResumeState::default(),
+            BundlePlanOptions {
+                bundle_target_bytes: 512,
+                readers: 1,
+                ..BundlePlanOptions::default()
+            },
+        )
+        .unwrap();
+        let Some(SendBundle::Materialized(first)) = planner.next_send_bundle().unwrap() else {
+            panic!("missing materialized bundle");
+        };
+        // Первый план уже готов, второй целый файл перенесён planner в следующий.
+        // Их содержимое не зависит от последующих изменений исходной директории.
+        fs::remove_file(dir.path().join("a")).unwrap();
+        fs::write(dir.path().join("b"), b"replaced source").unwrap();
+        let Some(SendBundle::Materialized(second)) = planner.next_send_bundle().unwrap() else {
+            panic!("missing carried materialized bundle");
+        };
+        for (index, (bundle, name, byte)) in [(first, "a", 0xa5), (second, "b", 0x5a)]
+            .into_iter()
+            .enumerate()
+        {
+            assert_eq!(bundle.descriptor.bundle_no, index as u64 + 1);
+            assert_eq!(bundle.descriptor.first_work_ordinal, index as u64 + 1);
+            assert_eq!(bundle.descriptor.last_work_ordinal, index as u64 + 1);
+            assert_eq!(bundle.descriptor.last_relative_path, name);
+            assert_eq!(bundle.descriptor.raw_payload_bytes, 333);
+            assert_eq!(bundle.descriptor.entries.len(), 1);
+            assert_eq!(bundle.payloads.len(), 1);
+            assert_eq!(bundle.payloads[0].contents, [byte; 333]);
+        }
+        assert!(planner.next_send_bundle().unwrap().is_none());
+        assert_eq!(planner.profile.read.bytes, 666);
+        assert_eq!(planner.profile.compress.bytes, 0);
+    }
+
+    #[test]
+    fn splitting_plan_from_payload_moves_each_path_and_buffer_without_cloning() {
+        let mut entry = empty_entry(17, "directory/owned-path.bin".into());
+        entry.contents = vec![0xa5; 333].into();
+        entry.descriptor.size_at_open = 333;
+        let path_pointer = entry.descriptor.relative_path.as_ptr();
+        let contents_pointer = entry.contents.as_ptr();
+        let task = materialized_bundle(8, vec![entry]).unwrap();
+        assert_eq!(
+            task.descriptor.entries[0].relative_path.as_ptr(),
+            path_pointer
+        );
+        assert_eq!(task.payloads[0].contents.as_ptr(), contents_pointer);
+        assert_eq!(task.descriptor.raw_payload_bytes, 333);
+        assert_eq!(task.descriptor.first_work_ordinal, 17);
+        assert_eq!(task.descriptor.last_work_ordinal, 17);
+        assert_eq!(
+            task.descriptor.last_relative_path,
+            "directory/owned-path.bin"
+        );
+    }
+
+    #[test]
     fn cancellation_stops_a_skip_run_between_entries() {
         let dir = TestDir::new();
         for ordinal in 1..=16 {
@@ -716,6 +853,155 @@ mod tests {
     }
 
     #[test]
+    fn planner_cancellation_interrupts_active_scan_and_joins_its_workers() {
+        let dir = TestDir::new();
+        for directory in ["a", "b"] {
+            fs::create_dir(dir.path().join(directory)).unwrap();
+            for index in 0..256 {
+                fs::write(dir.path().join(directory).join(format!("{index:03}")), []).unwrap();
+            }
+        }
+        let mut planner = DumpPlanner::new(
+            dir.path(),
+            &ResumeState::default(),
+            BundlePlanOptions {
+                readers: 1,
+                ..BundlePlanOptions::default()
+            },
+        )
+        .unwrap();
+        assert_eq!(planner.entries.scan_progress().discovered_entries, 32);
+        // Убираем initial lookahead, оставляя активный scanner с неизрасходованным
+        // batch. Отменяем именно флаг planner, а не напрямую scanner или его Drop.
+        for _ in 0..32 {
+            assert!(planner.entries.next().unwrap().is_some());
+        }
+        planner.cancellation_flag().store(true, Ordering::Relaxed);
+        let (done, completed) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let error = planner.entries.next().unwrap_err();
+            assert!(error.to_string().contains("source scan cancelled"));
+            assert_eq!(planner.entries.scan_progress().discovered_entries, 32);
+            drop(planner);
+            done.send(()).unwrap();
+        });
+        completed
+            .recv_timeout(std::time::Duration::from_secs(10))
+            .expect("planner cancellation did not stop active scanner");
+        worker.join().unwrap();
+        fs::remove_dir_all(dir.path()).unwrap();
+    }
+
+    #[test]
+    fn streaming_resume_mismatch_is_rejected_before_opening_pending_payload() {
+        use super::super::read::test_hooks;
+
+        let _guard = test_hooks::lock();
+        test_hooks::clear();
+        let dir = TestDir::new();
+        for index in 0..64 {
+            fs::write(dir.path().join(format!("{index:03}")), b"data").unwrap();
+        }
+        let pending = dir.path().join("002");
+        for (ordinal, path) in [(2, "wrong"), (65, "064")] {
+            test_hooks::fail_next_open(&pending);
+            let state = ResumeState {
+                last_committed_bundle_no: 1,
+                last_committed_work_ordinal: ordinal,
+                last_committed_relative_path: path.into(),
+                ..ResumeState::default()
+            };
+            let error = DumpPlanner::new(
+                dir.path(),
+                &state,
+                BundlePlanOptions {
+                    readers: 2,
+                    ..BundlePlanOptions::default()
+                },
+            )
+            .err()
+            .expect("resume mismatch was accepted");
+            assert!(error.to_string().contains("resume mismatch"));
+            assert!(
+                test_hooks::before_open(&pending).is_err(),
+                "a reader opened payload before resume validation"
+            );
+        }
+        test_hooks::clear();
+    }
+
+    #[test]
+    fn streaming_resume_preserves_full_count_and_only_builds_new_unskipped_entries() {
+        let dir = TestDir::new();
+        for index in 0..97 {
+            fs::write(dir.path().join(format!("{index:03}")), b"data").unwrap();
+        }
+        let state = ResumeState {
+            last_committed_bundle_no: 1,
+            last_committed_work_ordinal: 40,
+            last_committed_relative_path: "039".into(),
+            terminal_skips: vec![SkippedEntry {
+                work_ordinal: 51,
+                relative_path: "050".into(),
+                reason: crate::network::protocol::SkipReason::UnsupportedEntry,
+            }],
+            ..ResumeState::default()
+        };
+        let mut planner = DumpPlanner::new(
+            dir.path(),
+            &state,
+            BundlePlanOptions {
+                readers: 2,
+                ..BundlePlanOptions::default()
+            },
+        )
+        .unwrap();
+        let mut actual = Vec::new();
+        while let Some(bundle) = planner.next_bundle().unwrap() {
+            actual.extend(
+                bundle
+                    .descriptor
+                    .entries
+                    .into_iter()
+                    .map(|entry| entry.work_ordinal),
+            );
+        }
+        assert_eq!(
+            actual,
+            (41..=97)
+                .filter(|ordinal| *ordinal != 51)
+                .collect::<Vec<_>>()
+        );
+        assert!(planner.take_new_terminal_skips().is_empty());
+        assert_eq!(planner.final_work_ordinal(), 97);
+        let profile = planner.finish_profile();
+        assert_eq!(profile.discovered_entries, 97);
+        assert_eq!(profile.bundled_entries, 56);
+        assert_eq!(profile.terminal_skips, 1);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn streaming_planner_reports_unsupported_tail_after_last_payload() {
+        let dir = TestDir::new();
+        fs::write(dir.path().join("a-file"), b"data").unwrap();
+        let _socket = std::os::unix::net::UnixListener::bind(dir.path().join("z-socket")).unwrap();
+        let mut planner = DumpPlanner::new(
+            dir.path(),
+            &ResumeState::default(),
+            BundlePlanOptions::default(),
+        )
+        .unwrap();
+        while planner.next_bundle().unwrap().is_some() {}
+        let skips = planner.take_new_terminal_skips();
+        assert_eq!(skips.len(), 1);
+        assert_eq!(skips[0].relative_path, "z-socket");
+        assert_eq!(skips[0].work_ordinal, 0);
+        assert_eq!(planner.final_work_ordinal(), 1);
+        assert_eq!(planner.finish_profile().terminal_skips, 1);
+    }
+
+    #[test]
     fn cancellation_keeps_pending_entry_unconsumed() {
         let dir = TestDir::new();
         fs::write(dir.path().join("a"), b"aa").unwrap();
@@ -732,7 +1018,7 @@ mod tests {
         .unwrap();
         assert!(matches!(
             planner.next_send_bundle().unwrap(),
-            Some(SendBundle::Prepared(_))
+            Some(SendBundle::Materialized(_))
         ));
         let cancellation = planner.cancellation_flag();
         cancellation.store(true, Ordering::Relaxed);

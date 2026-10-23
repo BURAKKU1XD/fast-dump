@@ -5,9 +5,10 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result, ensure};
 use tar::{Builder, EntryType, Header};
 
-use crate::network::protocol::BundleEntryKind;
+use crate::network::protocol::{BundleEntryDescriptor, BundleEntryKind};
 
-use super::compress::BundleCompressor;
+use super::compress::{BundleCompressor, CompressionOutput, DirectEncoder};
+#[cfg(test)]
 use super::read::MaterializedEntry;
 
 #[cfg(test)]
@@ -159,31 +160,79 @@ pub(crate) fn build_compressed_bundle(
     build_compressed_bundle_with(entries, &mut compressor)
 }
 
+#[cfg(test)]
 pub(crate) fn build_compressed_bundle_with(
     entries: &[MaterializedEntry],
     compressor: &mut BundleCompressor,
 ) -> Result<(Vec<u8>, u64)> {
-    let encoder = compressor.encoder(Vec::new())?;
-    // Объединяем мелкие tar-записи до входа в zstd; большие срезы BufWriter
-    // передаёт напрямую, не копируя их во входной буфер.
-    let mut writer = CountingWriter::new(io::BufWriter::with_capacity(128 * 1024, encoder));
-
+    let mut bundle = BufferedBundleWriter::new(compressor, Vec::new())?;
     for entry in entries {
-        append_buffered_entry(&mut writer, entry)?;
+        bundle.append(entry)?;
+    }
+    bundle.finish()
+}
+
+#[cfg(test)]
+pub(crate) fn build_compressed_bundle_into(
+    entries: &mut [MaterializedEntry],
+    compressor: &mut BundleCompressor,
+    mut output: Vec<u8>,
+) -> Result<(Vec<u8>, u64)> {
+    output.clear();
+    let mut bundle = BufferedBundleWriter::new(compressor, output)?;
+    for entry in entries {
+        bundle.append(entry)?;
+        // Write уже потребил bytes или скопировал их во внутренние буферы.
+        // Освобождаем исходный payload до роста compressed output и finish;
+        // descriptors остаются для BundlePlan. Shared slab живёт до последнего slice.
+        entry.contents = Vec::new().into();
+    }
+    bundle.finish()
+}
+
+pub(crate) struct BufferedBundleWriter<'a, O: CompressionOutput> {
+    writer: CountingWriter<io::BufWriter<DirectEncoder<'a, O>>>,
+}
+
+impl<'a, O: CompressionOutput> BufferedBundleWriter<'a, O> {
+    pub(crate) fn new(compressor: &'a mut BundleCompressor, output: O) -> Result<Self> {
+        let encoder = compressor.direct_encoder(output)?;
+        // Объединяем мелкие tar-записи до входа в zstd; большие срезы BufWriter
+        // передаёт напрямую, не копируя их во входной буфер.
+        Ok(Self {
+            writer: CountingWriter::new(io::BufWriter::with_capacity(128 * 1024, encoder)),
+        })
     }
 
-    let tar_payload_bytes = writer.bytes_written();
-    // into_inner дописывает входной буфер без flush самого zstd: frame
-    // завершаем один раз, после всех tar-заголовков, тел и выравнивания.
-    let encoder = writer
-        .into_inner()
-        .into_inner()
-        .map_err(|error| error.into_error())
-        .context("failed to flush buffered v4 tar payload")?;
-    let compressed_payload = encoder
-        .finish()
-        .context("failed to finalize v4 bundle compression")?;
-    Ok((compressed_payload, tar_payload_bytes))
+    #[cfg(test)]
+    fn append(&mut self, entry: &MaterializedEntry) -> Result<()> {
+        append_buffered_entry(&mut self.writer, entry)
+    }
+
+    pub(crate) fn append_payload(
+        &mut self,
+        descriptor: &BundleEntryDescriptor,
+        mode: u32,
+        contents: &[u8],
+    ) -> Result<()> {
+        append_materialized_entry(&mut self.writer, descriptor, mode, contents)
+    }
+
+    pub(crate) fn finish(self) -> Result<(O, u64)> {
+        let tar_payload_bytes = self.writer.bytes_written();
+        // into_inner дописывает входной буфер без flush самого zstd: frame
+        // завершаем один раз, после всех tar-заголовков, тел и выравнивания.
+        let encoder = self
+            .writer
+            .into_inner()
+            .into_inner()
+            .map_err(|error| error.into_error())
+            .context("failed to flush buffered v4 tar payload")?;
+        let compressed_payload = encoder
+            .finish()
+            .context("failed to finalize v4 bundle compression")?;
+        Ok((compressed_payload, tar_payload_bytes))
+    }
 }
 
 #[cfg(test)]
@@ -283,47 +332,46 @@ pub(crate) fn build_streamed_regular_bundle_payload(
     })
 }
 
+#[cfg(test)]
 fn append_buffered_entry<W>(writer: &mut W, entry: &MaterializedEntry) -> Result<()>
 where
     W: Write,
 {
-    match &entry.descriptor.kind {
+    append_materialized_entry(writer, &entry.descriptor, entry.mode, &entry.contents)
+}
+
+fn append_materialized_entry<W: Write>(
+    writer: &mut W,
+    descriptor: &BundleEntryDescriptor,
+    mode: u32,
+    contents: &[u8],
+) -> Result<()> {
+    match &descriptor.kind {
         BundleEntryKind::Regular => {
             ensure!(
-                entry.contents.len() as u64 == entry.descriptor.size_at_open,
+                contents.len() as u64 == descriptor.size_at_open,
                 "v4 buffered tar entry size mismatch for {}",
-                entry.descriptor.relative_path
+                descriptor.relative_path
             );
-            let mut header = new_entry_header(
-                entry.mode,
-                EntryType::Regular,
-                entry.descriptor.size_at_open,
-            );
-            append_entry_header(writer, &mut header, &entry.descriptor.relative_path, None)?;
+            let mut header = new_entry_header(mode, EntryType::Regular, descriptor.size_at_open);
+            append_entry_header(writer, &mut header, &descriptor.relative_path, None)?;
             // Данные уже в памяти: передаём срез кодировщику без промежуточного
             // буфера io::copy и динамических вызовов Read на каждом блоке.
-            writer.write_all(&entry.contents).with_context(|| {
-                format!(
-                    "failed to encode v4 tar entry {}",
-                    entry.descriptor.relative_path
-                )
+            writer.write_all(contents).with_context(|| {
+                format!("failed to encode v4 tar entry {}", descriptor.relative_path)
             })?;
-            pad_zeroes(writer, entry.descriptor.size_at_open)?;
+            pad_zeroes(writer, descriptor.size_at_open)?;
         }
         BundleEntryKind::Symlink { target } => {
-            let mut header = new_entry_header(entry.mode, EntryType::Symlink, 0);
-            append_entry_header(
-                writer,
-                &mut header,
-                &entry.descriptor.relative_path,
-                Some(target),
-            )?;
+            let mut header = new_entry_header(mode, EntryType::Symlink, 0);
+            append_entry_header(writer, &mut header, &descriptor.relative_path, Some(target))?;
         }
     }
 
     Ok(())
 }
 
+#[cfg(test)]
 pub(crate) fn append_streamed_regular_entry<W, R>(
     writer: &mut W,
     relative_path: &str,
@@ -335,9 +383,34 @@ where
     W: Write,
     R: Read,
 {
+    let mut scratch = vec![0_u8; STREAM_READ_BYTES];
+    append_streamed_regular_entry_with_buffer(
+        writer,
+        relative_path,
+        mode,
+        size_at_open,
+        reader,
+        &mut scratch,
+    )
+}
+
+pub(crate) const STREAM_READ_BYTES: usize = 1024 * 1024;
+
+pub(crate) fn append_streamed_regular_entry_with_buffer<W: Write, R: Read>(
+    writer: &mut W,
+    relative_path: &str,
+    mode: u32,
+    size_at_open: u64,
+    reader: &mut R,
+    scratch: &mut [u8],
+) -> Result<()> {
+    anyhow::ensure!(
+        !scratch.is_empty(),
+        "streamed read buffer must not be empty"
+    );
     let mut header = new_entry_header(mode, EntryType::Regular, size_at_open);
     append_entry_header(writer, &mut header, relative_path, None)?;
-    copy_stream(reader, writer, relative_path)?;
+    copy_stream(reader, writer, relative_path, scratch)?;
     pad_zeroes(writer, size_at_open)?;
     Ok(())
 }
@@ -438,14 +511,18 @@ impl<W: Write> Write for DetachableWriter<'_, W> {
     }
 }
 
-fn copy_stream<R, W>(reader: &mut R, writer: &mut W, relative_path: &str) -> Result<()>
+fn copy_stream<R, W>(
+    reader: &mut R,
+    writer: &mut W,
+    relative_path: &str,
+    buffer: &mut [u8],
+) -> Result<()>
 where
     R: Read,
     W: Write,
 {
-    let mut buffer = vec![0_u8; 1024 * 1024];
     loop {
-        let result = match reader.read(&mut buffer) {
+        let result = match reader.read(buffer) {
             // Сигнал не обрывает файл и не расходует попытку live-file чтения.
             Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
             result => result,
@@ -510,7 +587,7 @@ mod tests {
             calls: 0,
         };
         let mut output = Vec::new();
-        copy_stream(&mut reader, &mut output, "file").unwrap();
+        copy_stream(&mut reader, &mut output, "file", &mut [0; 16]).unwrap();
         assert_eq!(output, expected);
         assert!(reader.calls > 2);
     }
@@ -637,6 +714,80 @@ mod tests {
         let mut entry = regular("truncated.bin", vec![1, 2]);
         entry.descriptor.size_at_open = 3;
         assert!(build_compressed_bundle(&[entry], 1, 1).is_err());
+    }
+
+    #[test]
+    fn consumed_payload_release_preserves_tar_bytes_and_descriptors() {
+        for threads in [1, 4] {
+            let long_path = format!("{}/large.bin", "directory/".repeat(16));
+            let mut entries = vec![
+                regular("small", vec![0xa5; 513]),
+                regular(&long_path, vec![0x5a; 256 * 1024 + 7]),
+                symlink("link", &long_path),
+                regular("tail", b"retained after releasing source bytes".to_vec()),
+            ];
+            let descriptors = entries
+                .iter()
+                .map(|entry| entry.descriptor.clone())
+                .collect::<Vec<_>>();
+            let mut compressor = BundleCompressor::new(3, threads).unwrap();
+            let (reference, reference_tar_bytes) =
+                build_compressed_bundle_with(&entries, &mut compressor).unwrap();
+            let (compressed, tar_bytes) =
+                build_compressed_bundle_into(&mut entries, &mut compressor, Vec::new()).unwrap();
+            assert_eq!(tar_bytes, reference_tar_bytes);
+            assert_eq!(
+                zstd::stream::decode_all(compressed.as_slice()).unwrap(),
+                zstd::stream::decode_all(reference.as_slice()).unwrap()
+            );
+            for (entry, descriptor) in entries.iter().zip(descriptors) {
+                assert_eq!(entry.descriptor, descriptor);
+                assert!(entry.contents.is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn shared_payload_is_released_before_later_entry_fails() {
+        use std::sync::Arc;
+
+        use crate::sender::read::{EntryContents, ReadDecision, materialize_batch};
+        use crate::sender::scan::{ScannedEntry, ScannedEntryKind};
+        use crate::tests::TestDir;
+
+        let dir = TestDir::new();
+        let batch = std::array::from_fn(|index| {
+            let relative_path = index.to_string();
+            let abs_path = dir.path().join(&relative_path);
+            std::fs::write(&abs_path, [index as u8; 333]).unwrap();
+            Some(ScannedEntry {
+                work_ordinal: index as u64 + 1,
+                abs_path,
+                relative_path,
+                kind: ScannedEntryKind::Regular,
+            })
+        });
+        let mut entries = materialize_batch(batch, 1024)
+            .into_iter()
+            .map(|result| match result.unwrap().unwrap() {
+                ReadDecision::Accepted(entry) => entry,
+                _ => panic!("fixture entry was not prefetched"),
+            })
+            .collect::<Vec<_>>();
+        let EntryContents::Shared { bytes, .. } = &entries[0].contents else {
+            panic!("fixture must use a shared slab");
+        };
+        let weak = Arc::downgrade(bytes);
+        assert_eq!(weak.strong_count(), entries.len());
+        let mut invalid = regular("invalid", vec![1, 2]);
+        invalid.descriptor.size_at_open = 3;
+        entries.push(invalid);
+        let mut compressor = BundleCompressor::new(1, 4).unwrap();
+        assert!(build_compressed_bundle_into(&mut entries, &mut compressor, Vec::new()).is_err());
+        // Frame не завершён из-за следующего entry, но уже потреблённый slab
+        // освобождён, даже пока его descriptors остаются в entries.
+        assert!(weak.upgrade().is_none());
+        assert_eq!(entries.last().unwrap().contents, [1, 2]);
     }
 
     #[test]
@@ -859,7 +1010,9 @@ mod tests {
             entries: &[MaterializedEntry],
             compressor: &mut BundleCompressor,
         ) -> Result<(Vec<u8>, u64)> {
-            let encoder = compressor.encoder(Vec::new())?;
+            // Обе стороны используют один encoder и повторное использование CCtx:
+            // здесь измеряем только эффект буферизации tar writes.
+            let encoder = compressor.direct_encoder(Vec::new())?;
             let mut writer = CountingWriter::new(encoder);
             for entry in entries {
                 append_buffered_entry(&mut writer, entry)?;

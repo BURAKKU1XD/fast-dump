@@ -20,12 +20,12 @@ xxhash-rust = { version = "0.8", features = ["xxh3"] }
 zstd = { version = "0.13", features = ["zstdmt"] }
 
 [target.'cfg(windows)'.dependencies]
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_SystemInformation", "Win32_System_IO"] }
 
 [dev-dependencies]
 criterion = "0.5"
 socket2 = "0.5"
-windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_ProcessStatus", "Win32_System_Threading"] }
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_System_ProcessStatus", "Win32_System_Threading", "Win32_System_WindowsProgramming"] }
 
 [[bench]]
 name = "loopback_send_dump"

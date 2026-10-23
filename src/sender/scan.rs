@@ -1,10 +1,14 @@
 use std::borrow::Cow;
+use std::collections::{BTreeSet, VecDeque};
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
-use crossbeam_channel::bounded;
+use crossbeam_channel::{Receiver, Sender, bounded};
 
 use crate::network::protocol::{SkipReason, SkippedEntry};
 
@@ -45,6 +49,17 @@ pub struct SourceWalkReport {
 #[derive(Debug, Clone)]
 struct DirectoryFrame {
     entries: Vec<DiscoveredEntry>,
+    ambiguous_names: bool,
+}
+
+impl DirectoryFrame {
+    fn new(entries: Vec<DiscoveredEntry>) -> Self {
+        let ambiguous_names = entries.iter().any(|entry| entry.ambiguous_name);
+        Self {
+            entries,
+            ambiguous_names,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -52,16 +67,463 @@ struct DiscoveredEntry {
     abs_path: PathBuf,
     relative_path: String,
     file_type: fs::FileType,
+    ambiguous_name: bool,
+}
+
+// На Windows крупные порции уменьшают остановки subtree workers. Лимит
+// потоков отдельно сдерживает конкуренцию read_dir с чтением содержимого.
+#[cfg(windows)]
+const SCAN_BATCH_ENTRIES: usize = 1024;
+#[cfg(not(windows))]
+const SCAN_BATCH_ENTRIES: usize = 64;
+#[cfg(windows)]
+const SCAN_MAX_WORKERS: usize = 2;
+#[cfg(not(windows))]
+const SCAN_MAX_WORKERS: usize = 8;
+const SCAN_QUEUE_BATCHES: usize = 2;
+
+#[derive(Clone, Copy, Debug, Default)]
+pub(crate) struct ScanProgress {
+    pub(crate) duration: Duration,
+    pub(crate) discovered_entries: u64,
+}
+
+enum ScanItem {
+    // Флаг исключает коллизию с terminal skip только из runtime pending;
+    // публичный scan и проверка resume всё равно видят entry и его ordinal.
+    Entry(ScannedEntry, bool),
+    Skipped(SkippedEntry),
+}
+
+enum ScanMessage {
+    Batch(Vec<ScanItem>, Duration),
+    Finished(Duration),
+}
+
+// Держим только ограниченные очереди и отсортированные каталоги текущего DFS.
+// Отдельный большой каталог всё ещё надо прочитать целиком: иначе нет stable sort.
+pub(crate) struct StreamingScan {
+    messages: Option<Receiver<Result<ScanMessage>>>,
+    worker: Option<thread::JoinHandle<()>>,
+    cancelled: Arc<AtomicBool>,
+    batch: std::vec::IntoIter<ScanItem>,
+    skipped: Vec<SkippedEntry>,
+    progress: ScanProgress,
+    finished: bool,
+    failed: bool,
+}
+
+impl StreamingScan {
+    pub(crate) fn new(root: &Path) -> Result<Self> {
+        Self::with_workers(root, scan_worker_count())
+    }
+
+    fn with_workers(root: &Path, workers: usize) -> Result<Self> {
+        let root = root.to_owned();
+        let cancelled = Arc::new(AtomicBool::new(false));
+        let worker_cancelled = Arc::clone(&cancelled);
+        let (sender, messages) = bounded(SCAN_QUEUE_BATCHES);
+        let worker = thread::Builder::new()
+            .name("dump-scan".into())
+            .spawn(move || {
+                let mut output = ScanOutput::new(sender);
+                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    validate_source_root(&root)?;
+                    stream_scan_entries(
+                        read_sorted_entries_cancellable(&root, "", Some(&worker_cancelled))?,
+                        workers.clamp(1, 8),
+                        &mut output,
+                        &worker_cancelled,
+                    )
+                }))
+                .unwrap_or_else(|_| Err(anyhow::anyhow!("source scanner panicked")));
+                output.complete(result);
+            })
+            .context("failed to start source scanner")?;
+        Ok(Self {
+            messages: Some(messages),
+            worker: Some(worker),
+            cancelled,
+            batch: Vec::new().into_iter(),
+            skipped: Vec::new(),
+            progress: ScanProgress::default(),
+            finished: false,
+            failed: false,
+        })
+    }
+
+    pub(crate) fn next_entry(&mut self) -> Result<Option<ScannedEntry>> {
+        self.next_entry_filtered(false)
+    }
+
+    pub(crate) fn next_pending_entry(&mut self) -> Result<Option<ScannedEntry>> {
+        self.next_entry_filtered(true)
+    }
+
+    pub(crate) fn cancellation_flag(&self) -> Arc<AtomicBool> {
+        Arc::clone(&self.cancelled)
+    }
+
+    fn next_entry_filtered(&mut self, pending_only: bool) -> Result<Option<ScannedEntry>> {
+        anyhow::ensure!(!self.failed, "source scan has already failed");
+        let result = self.next_entry_inner(pending_only);
+        if result.is_err() {
+            self.failed = true;
+        }
+        result
+    }
+
+    fn next_entry_inner(&mut self, pending_only: bool) -> Result<Option<ScannedEntry>> {
+        loop {
+            // Planner может ждать следующий pending entry среди длинного хвоста
+            // skips. Общий флаг прерывает и consumer, и сборку поддеревьев.
+            anyhow::ensure!(
+                !self.cancelled.load(Ordering::Relaxed),
+                "source scan cancelled"
+            );
+            if let Some(item) = self.batch.next() {
+                match item {
+                    ScanItem::Entry(mut entry, suppressed) => {
+                        self.progress.discovered_entries = self
+                            .progress
+                            .discovered_entries
+                            .checked_add(1)
+                            .context("source work ordinal overflow")?;
+                        entry.work_ordinal = self.progress.discovered_entries;
+                        if pending_only && suppressed {
+                            continue;
+                        }
+                        return Ok(Some(entry));
+                    }
+                    ScanItem::Skipped(skipped) => self.skipped.push(skipped),
+                }
+                continue;
+            }
+            if self.finished {
+                return Ok(None);
+            }
+            match self
+                .messages
+                .as_ref()
+                .unwrap()
+                .recv()
+                .context("source scanner stopped before completing the tree")??
+            {
+                ScanMessage::Batch(batch, duration) => {
+                    self.batch = batch.into_iter();
+                    self.progress.duration = duration;
+                }
+                ScanMessage::Finished(duration) => {
+                    self.progress.duration = duration;
+                    self.finished = true;
+                }
+            }
+        }
+    }
+
+    pub(crate) fn take_skips(&mut self) -> Vec<SkippedEntry> {
+        std::mem::take(&mut self.skipped)
+    }
+
+    pub(crate) const fn progress(&self) -> ScanProgress {
+        self.progress
+    }
+}
+
+impl Drop for StreamingScan {
+    fn drop(&mut self) {
+        self.cancelled.store(true, Ordering::Relaxed);
+        // Сначала разблокируем send координатора; тот отключит очереди поддеревьев.
+        self.messages.take();
+        if let Some(worker) = self.worker.take() {
+            let _ = worker.join();
+        }
+    }
+}
+
+struct ScanOutput {
+    sender: Sender<Result<ScanMessage>>,
+    batch: Vec<ScanItem>,
+    started: Instant,
+    blocked: Duration,
+}
+
+impl ScanOutput {
+    fn new(sender: Sender<Result<ScanMessage>>) -> Self {
+        Self {
+            sender,
+            batch: Vec::with_capacity(SCAN_BATCH_ENTRIES),
+            started: Instant::now(),
+            blocked: Duration::ZERO,
+        }
+    }
+
+    fn emit(&mut self, item: ScanItem) -> Result<()> {
+        self.batch.push(item);
+        if self.batch.len() == SCAN_BATCH_ENTRIES {
+            self.flush()?;
+        }
+        Ok(())
+    }
+
+    fn duration(&self) -> Duration {
+        self.started.elapsed().saturating_sub(self.blocked)
+    }
+
+    fn flush(&mut self) -> Result<()> {
+        if self.batch.is_empty() {
+            return Ok(());
+        }
+        let batch = std::mem::replace(&mut self.batch, Vec::with_capacity(SCAN_BATCH_ENTRIES));
+        let message = ScanMessage::Batch(batch, self.duration());
+        let started = Instant::now();
+        let result = self.sender.send(Ok(message));
+        self.blocked += started.elapsed();
+        result.context("source scan consumer stopped")
+    }
+
+    fn complete(mut self, result: Result<()>) {
+        // Даже при поздней ошибке сохраняем порядок: сначала найденный префикс.
+        if self.flush().is_ok() {
+            let message = result.map(|()| ScanMessage::Finished(self.duration()));
+            let _ = self.sender.send(message);
+        }
+    }
+}
+
+fn scan_worker_count() -> usize {
+    thread::available_parallelism()
+        .map(usize::from)
+        .unwrap_or(1)
+        .min(SCAN_MAX_WORKERS)
+}
+
+fn validate_source_root(root: &Path) -> Result<()> {
+    if !root.exists() {
+        bail!("v4 sender source does not exist: {}", root.display());
+    }
+    if !root.is_dir() {
+        bail!("v4 sender source is not a directory: {}", root.display());
+    }
+    Ok(())
+}
+
+fn stream_scan_entries(
+    entries: Vec<DiscoveredEntry>,
+    workers: usize,
+    output: &mut ScanOutput,
+    cancelled: &AtomicBool,
+) -> Result<()> {
+    let mut stack = vec![DirectoryFrame::new(entries)];
+    while let Some(mut frame) = stack.pop() {
+        anyhow::ensure!(!cancelled.load(Ordering::Relaxed), "source scan cancelled");
+        if frame.ambiguous_names {
+            // Backslash и lossy Unicode могут свести разные native paths к одному
+            // tar path. До первой выдачи собираем весь общий каталог, чтобы даже
+            // поздний UnsupportedEntry подавил совпадающий regular, как прежде.
+            for item in collect_ambiguous_subtree(frame.entries, cancelled)? {
+                anyhow::ensure!(!cancelled.load(Ordering::Relaxed), "source scan cancelled");
+                output.emit(item)?;
+            }
+            continue;
+        }
+        if workers > 1
+            && frame
+                .entries
+                .iter()
+                .filter(|entry| entry.file_type.is_dir())
+                .take(2)
+                .count()
+                == 2
+        {
+            stream_parallel_subtrees(frame.entries, workers, output, cancelled)?;
+            continue;
+        }
+        while let Some(entry) = frame.entries.pop() {
+            anyhow::ensure!(!cancelled.load(Ordering::Relaxed), "source scan cancelled");
+            if entry.file_type.is_dir() {
+                let entries = read_sorted_entries_cancellable(
+                    &entry.abs_path,
+                    &entry.relative_path,
+                    Some(cancelled),
+                )?;
+                stack.push(frame);
+                stack.push(DirectoryFrame::new(entries));
+                break;
+            }
+            stream_record_entry(output, entry)?;
+        }
+    }
+    Ok(())
+}
+
+struct StreamingSubtreeTask {
+    entry: DiscoveredEntry,
+    output: Sender<Result<ScanMessage>>,
+}
+
+fn stream_parallel_subtrees(
+    mut entries: Vec<DiscoveredEntry>,
+    workers: usize,
+    output: &mut ScanOutput,
+    cancelled: &AtomicBool,
+) -> Result<()> {
+    let workers = workers.min(
+        entries
+            .iter()
+            .filter(|entry| entry.file_type.is_dir())
+            .count(),
+    );
+    thread::scope(|scope| -> Result<()> {
+        let (jobs, tasks) = bounded::<StreamingSubtreeTask>(workers);
+        for _ in 0..workers {
+            let tasks = tasks.clone();
+            thread::Builder::new()
+                .name("dump-subtree".into())
+                .spawn_scoped(scope, move || {
+                    while let Ok(task) = tasks.recv() {
+                        let mut output = ScanOutput::new(task.output);
+                        let result = read_sorted_entries_cancellable(
+                            &task.entry.abs_path,
+                            &task.entry.relative_path,
+                            Some(cancelled),
+                        )
+                        .and_then(|entries| {
+                            stream_scan_entries(entries, 1, &mut output, cancelled)
+                        });
+                        output.complete(result);
+                    }
+                })
+                .context("failed to start source subtree scanner")?;
+        }
+        drop(tasks);
+        let mut pending = VecDeque::with_capacity(workers);
+        let mut next_directory = entries.len();
+        let result = (|| -> Result<()> {
+            loop {
+                while pending.len() < workers && next_directory != 0 {
+                    next_directory -= 1;
+                    let entry = &entries[next_directory];
+                    if !entry.file_type.is_dir() {
+                        continue;
+                    }
+                    let (sender, receiver) = bounded(SCAN_QUEUE_BATCHES);
+                    jobs.send(StreamingSubtreeTask {
+                        entry: entry.clone(),
+                        output: sender,
+                    })
+                    .context("source subtree scanners stopped before receiving work")?;
+                    pending.push_back(receiver);
+                }
+                let Some(entry) = entries.pop() else {
+                    break;
+                };
+                anyhow::ensure!(!cancelled.load(Ordering::Relaxed), "source scan cancelled");
+                if !entry.file_type.is_dir() {
+                    stream_record_entry(output, entry)?;
+                    continue;
+                }
+                let receiver = pending
+                    .pop_front()
+                    .expect("directory scan result is missing");
+                while let ScanMessage::Batch(items, _) = receiver
+                    .recv()
+                    .context("source subtree scanner stopped early")??
+                {
+                    for item in items {
+                        output.emit(item)?;
+                    }
+                }
+            }
+            Ok(())
+        })();
+        // Обе стороны backpressure должны исчезнуть до join, в том числе при ошибке.
+        drop(jobs);
+        drop(pending);
+        result
+    })
+}
+
+fn stream_record_entry(output: &mut ScanOutput, entry: DiscoveredEntry) -> Result<()> {
+    output.emit(discovered_item(entry))
+}
+
+fn discovered_item(entry: DiscoveredEntry) -> ScanItem {
+    let kind = if entry.file_type.is_file() {
+        ScannedEntryKind::Regular
+    } else if entry.file_type.is_symlink() {
+        ScannedEntryKind::Symlink
+    } else {
+        return ScanItem::Skipped(SkippedEntry {
+            work_ordinal: 0,
+            relative_path: entry.relative_path,
+            reason: SkipReason::UnsupportedEntry,
+        });
+    };
+    ScanItem::Entry(
+        ScannedEntry {
+            work_ordinal: 0,
+            abs_path: entry.abs_path,
+            relative_path: entry.relative_path,
+            kind,
+        },
+        false,
+    )
+}
+
+fn collect_ambiguous_subtree(
+    entries: Vec<DiscoveredEntry>,
+    cancelled: &AtomicBool,
+) -> Result<Vec<ScanItem>> {
+    let mut items = Vec::new();
+    let mut stack = vec![DirectoryFrame::new(entries)];
+    while let Some(mut frame) = stack.pop() {
+        anyhow::ensure!(!cancelled.load(Ordering::Relaxed), "source scan cancelled");
+        while let Some(entry) = frame.entries.pop() {
+            anyhow::ensure!(!cancelled.load(Ordering::Relaxed), "source scan cancelled");
+            if entry.file_type.is_dir() {
+                let entries = read_sorted_entries_cancellable(
+                    &entry.abs_path,
+                    &entry.relative_path,
+                    Some(cancelled),
+                )?;
+                stack.push(frame);
+                stack.push(DirectoryFrame::new(entries));
+                break;
+            }
+            items.push(discovered_item(entry));
+        }
+    }
+    let mut skipped_paths = BTreeSet::new();
+    for item in &items {
+        anyhow::ensure!(!cancelled.load(Ordering::Relaxed), "source scan cancelled");
+        if let ScanItem::Skipped(skipped) = item {
+            skipped_paths.insert(skipped.relative_path.clone());
+        }
+    }
+    for item in &mut items {
+        anyhow::ensure!(!cancelled.load(Ordering::Relaxed), "source scan cancelled");
+        if let ScanItem::Entry(entry, suppressed) = item {
+            *suppressed = skipped_paths.contains(&entry.relative_path);
+        }
+    }
+    Ok(items)
 }
 
 pub(crate) fn scan_source_tree(root: &Path) -> Result<ScanReport> {
-    let workers = thread::available_parallelism()
-        .map(usize::from)
-        .unwrap_or(1)
-        .min(8);
-    scan_source_tree_with_workers(root, workers)
+    let mut scan = StreamingScan::new(root)?;
+    let mut entries = Vec::new();
+    while let Some(entry) = scan.next_entry()? {
+        entries.push(entry);
+    }
+    Ok(ScanReport {
+        entries,
+        skipped: scan.take_skips(),
+    })
 }
 
+// Прежний собирающий алгоритм остаётся независимым oracle только для тестов DFS.
+#[cfg(test)]
 fn scan_source_tree_with_workers(root: &Path, workers: usize) -> Result<ScanReport> {
     if !root.exists() {
         bail!("v4 sender source does not exist: {}", root.display());
@@ -77,9 +539,10 @@ fn scan_source_tree_with_workers(root: &Path, workers: usize) -> Result<ScanRepo
     Ok(report)
 }
 
+#[cfg(test)]
 fn scan_entries(entries: Vec<DiscoveredEntry>, workers: usize) -> Result<ScanReport> {
     let mut report = ScanReport::default();
-    let mut stack = vec![DirectoryFrame { entries }];
+    let mut stack = vec![DirectoryFrame::new(entries)];
 
     while let Some(mut frame) = stack.pop() {
         if workers > 1
@@ -113,7 +576,7 @@ fn scan_entries(entries: Vec<DiscoveredEntry>, workers: usize) -> Result<ScanRep
             if entry.file_type.is_dir() {
                 let entries = read_sorted_entries(&entry.abs_path, &entry.relative_path)?;
                 stack.push(frame);
-                stack.push(DirectoryFrame { entries });
+                stack.push(DirectoryFrame::new(entries));
                 break;
             }
             record_entry(&mut report, entry);
@@ -123,12 +586,13 @@ fn scan_entries(entries: Vec<DiscoveredEntry>, workers: usize) -> Result<ScanRep
     Ok(report)
 }
 
-struct SubtreeTask {
+#[cfg(test)]
+struct SubtreeTask<'a> {
     index: usize,
-    abs_path: PathBuf,
-    relative_path: String,
+    entry: &'a DiscoveredEntry,
 }
 
+#[cfg(test)]
 fn scan_parallel_subtrees(entries: &[DiscoveredEntry], workers: usize) -> Result<Vec<ScanReport>> {
     let directory_count = entries
         .iter()
@@ -143,7 +607,7 @@ fn scan_parallel_subtrees(entries: &[DiscoveredEntry], workers: usize) -> Result
         .enumerate();
 
     thread::scope(|scope| -> Result<()> {
-        let (task_sender, task_receiver) = bounded::<SubtreeTask>(workers);
+        let (task_sender, task_receiver) = bounded::<SubtreeTask<'_>>(workers);
         let (result_sender, result_receiver) = bounded(workers);
         for _ in 0..workers {
             let tasks = task_receiver.clone();
@@ -151,8 +615,9 @@ fn scan_parallel_subtrees(entries: &[DiscoveredEntry], workers: usize) -> Result
             scope.spawn(move || {
                 while let Ok(task) = tasks.recv() {
                     // Внутри поддерева сохраняется последовательный DFS: нет вложенных пулов.
-                    let report = read_sorted_entries(&task.abs_path, &task.relative_path)
-                        .and_then(|entries| scan_entries(entries, 1));
+                    let report =
+                        read_sorted_entries(&task.entry.abs_path, &task.entry.relative_path)
+                            .and_then(|entries| scan_entries(entries, 1));
                     if results.send((task.index, report)).is_err() {
                         break;
                     }
@@ -170,12 +635,12 @@ fn scan_parallel_subtrees(entries: &[DiscoveredEntry], workers: usize) -> Result
                         break;
                     };
                     task_sender
-                        .send(SubtreeTask {
-                            index,
-                            abs_path: entry.abs_path.clone(),
-                            relative_path: entry.relative_path.clone(),
-                        })
-                        .context("source scan workers stopped before receiving a subtree")?;
+                        .send(SubtreeTask { index, entry })
+                        .map_err(|_| {
+                            anyhow::anyhow!(
+                                "source scan workers stopped before receiving a subtree"
+                            )
+                        })?;
                     inflight += 1;
                 }
                 if inflight == 0 {
@@ -200,6 +665,7 @@ fn scan_parallel_subtrees(entries: &[DiscoveredEntry], workers: usize) -> Result
         .collect())
 }
 
+#[cfg(test)]
 fn record_entry(report: &mut ScanReport, entry: DiscoveredEntry) {
     let kind = if entry.file_type.is_file() {
         ScannedEntryKind::Regular
@@ -265,40 +731,65 @@ pub fn scan_source(root: impl AsRef<Path>) -> Result<SourceScanReport> {
     })
 }
 
+#[cfg(test)]
 fn read_sorted_entries(dir: &Path, rel_dir: &str) -> Result<Vec<DiscoveredEntry>> {
+    read_sorted_entries_cancellable(dir, rel_dir, None)
+}
+
+fn read_sorted_entries_cancellable(
+    dir: &Path,
+    rel_dir: &str,
+    cancelled: Option<&AtomicBool>,
+) -> Result<Vec<DiscoveredEntry>> {
     let mut entries = fs::read_dir(dir)
         .with_context(|| format!("failed to read v4 source directory {}", dir.display()))?
         .map(|entry| -> Result<_> {
+            anyhow::ensure!(
+                !cancelled.is_some_and(|flag| flag.load(Ordering::Relaxed)),
+                "source scan cancelled"
+            );
             let entry = entry
                 .with_context(|| format!("failed to read v4 source entry in {}", dir.display()))?;
+            #[cfg(windows)]
+            let native_name = entry.file_name();
+            #[cfg(windows)]
+            let abs_path = joined_scan_entry_path(dir, &native_name);
+            #[cfg(windows)]
+            let name = native_name.to_string_lossy();
+            #[cfg(not(windows))]
             let abs_path = entry.path();
-            // path уже содержит имя: заимствуем его, не создавая второй OsString.
+            // Unix DirEntry::path заимствует native basename внутри std; отдельный
+            // file_name здесь создал бы дополнительный OsString.
+            #[cfg(not(windows))]
             let name = abs_path
                 .file_name()
                 .context("v4 source entry path has no file name")?
                 .to_string_lossy();
-            let name = normalize_component(&name);
-            let relative_path = if rel_dir.is_empty() {
-                name.into_owned()
-            } else {
-                let mut path = String::with_capacity(rel_dir.len() + 1 + name.len());
-                path.push_str(rel_dir);
-                path.push('/');
-                path.push_str(&name);
-                path
-            };
+            let ambiguous_name = matches!(&name, Cow::Owned(_)) || name.contains('\\');
+            let relative_path = relative_entry_path(rel_dir, name);
             Ok(DiscoveredEntry {
                 abs_path,
                 relative_path,
                 file_type: entry
                     .file_type()
                     .with_context(|| "failed to resolve v4 source file type")?,
+                ambiguous_name,
             })
         })
         .collect::<Result<Vec<_>>>()?;
     let prefix_len = rel_dir.len() + usize::from(!rel_dir.is_empty());
     sort_directory_entries(&mut entries, prefix_len);
     Ok(entries)
+}
+
+#[cfg(windows)]
+fn joined_scan_entry_path(dir: &Path, name: &std::ffi::OsStr) -> PathBuf {
+    // Длины OsStr измерены в единицах capacity, без повторного UTF-16 преобразования.
+    // Обычному пути хватает одной allocation; push сохраняет семантику verbatim roots.
+    let mut path = PathBuf::with_capacity(dir.as_os_str().len() + 1 + name.len());
+    path.push(dir);
+    path.push(name);
+    path
 }
 
 fn sort_directory_entries(entries: &mut [DiscoveredEntry], prefix_len: usize) {
@@ -310,19 +801,330 @@ fn sort_directory_entries(entries: &mut [DiscoveredEntry], prefix_len: usize) {
     });
 }
 
-fn normalize_component(component: &str) -> Cow<'_, str> {
-    if component.contains('\\') {
-        Cow::Owned(component.replace('\\', "/"))
-    } else {
-        // Обычное имя сразу войдёт в полный относительный путь без промежуточной аллокации.
-        Cow::Borrowed(component)
+fn relative_entry_path(rel_dir: &str, name: Cow<'_, str>) -> String {
+    let needs_normalization = name.contains('\\');
+    if rel_dir.is_empty() && !needs_normalization {
+        return name.into_owned();
     }
+    let mut path =
+        String::with_capacity(rel_dir.len() + usize::from(!rel_dir.is_empty()) + name.len());
+    if !rel_dir.is_empty() {
+        path.push_str(rel_dir);
+        path.push('/');
+    }
+    if needs_normalization {
+        // Нормализация сразу пишет в итоговую строку, без временного replace-буфера.
+        let mut components = name.split('\\');
+        path.push_str(components.next().unwrap_or_default());
+        for component in components {
+            path.push('/');
+            path.push_str(component);
+        }
+    } else {
+        path.push_str(&name);
+    }
+    path
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::tests::TestDir;
+
+    #[test]
+    fn streaming_scan_matches_collected_dfs_across_batches_and_subtrees() {
+        let source = TestDir::new();
+        for directory in ["a", "b/nested", "b/nested-more", "d", "é/🙂"] {
+            fs::create_dir_all(source.path().join(directory)).unwrap();
+            for index in 0..97 {
+                fs::write(
+                    source
+                        .path()
+                        .join(directory)
+                        .join(format!("{index:03}.bin")),
+                    [],
+                )
+                .unwrap();
+            }
+        }
+        for file in ["a.txt", "c.txt", "é.txt"] {
+            fs::write(source.path().join(file), []).unwrap();
+        }
+        let expected = scan_source_tree_with_workers(source.path(), 1).unwrap();
+        for workers in [1, 2, 8] {
+            let mut scan = StreamingScan::with_workers(source.path(), workers).unwrap();
+            for entry in &expected.entries {
+                let actual = scan.next_entry().unwrap().unwrap();
+                assert_eq!(actual.work_ordinal, entry.work_ordinal);
+                assert_eq!(actual.abs_path, entry.abs_path);
+                assert_eq!(actual.relative_path, entry.relative_path);
+                assert_eq!(actual.kind, entry.kind);
+            }
+            assert!(scan.next_entry().unwrap().is_none());
+            assert!(scan.next_entry().unwrap().is_none());
+            assert_eq!(
+                scan.progress().discovered_entries,
+                expected.entries.len() as u64
+            );
+            assert_eq!(scan.take_skips(), expected.skipped);
+        }
+    }
+
+    #[test]
+    fn dropping_streaming_scan_disconnects_full_queues_and_joins_subtrees() {
+        let source = TestDir::new();
+        for directory in 0..2 {
+            let directory = source.path().join(format!("{directory}"));
+            fs::create_dir(&directory).unwrap();
+            for index in 0..SCAN_BATCH_ENTRIES * (SCAN_QUEUE_BATCHES + 1) + 1 {
+                fs::write(directory.join(format!("{index:03}")), []).unwrap();
+            }
+        }
+        let scan = StreamingScan::with_workers(source.path(), 2).unwrap();
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while scan.messages.as_ref().unwrap().len() != SCAN_QUEUE_BATCHES {
+            assert!(
+                Instant::now() < deadline,
+                "scanner did not fill its output queue"
+            );
+            thread::yield_now();
+        }
+        let (done, completed) = std::sync::mpsc::channel();
+        let dropper = thread::spawn(move || {
+            drop(scan);
+            done.send(()).unwrap();
+        });
+        completed
+            .recv_timeout(Duration::from_secs(10))
+            .expect("scanner drop deadlocked");
+        dropper.join().unwrap();
+        fs::remove_dir_all(source.path()).unwrap();
+    }
+
+    #[test]
+    fn late_directory_failure_follows_valid_prefix_and_is_sticky() {
+        let source = TestDir::new();
+        fs::create_dir(source.path().join("a-valid")).unwrap();
+        for index in 0..97 {
+            fs::write(
+                source.path().join("a-valid").join(format!("{index:03}")),
+                [],
+            )
+            .unwrap();
+        }
+        fs::create_dir(source.path().join("z-missing")).unwrap();
+        let entries = read_sorted_entries(source.path(), "").unwrap();
+        fs::remove_dir(source.path().join("z-missing")).unwrap();
+        // Тип каталога уже известен; исчезновение перед read_dir не зависит от гонки.
+        for workers in [1, 2] {
+            let (sender, messages) = bounded(8);
+            let mut output = ScanOutput::new(sender);
+            let cancelled = AtomicBool::new(false);
+            let result = stream_scan_entries(entries.clone(), workers, &mut output, &cancelled);
+            assert!(result.is_err());
+            output.complete(result);
+            let mut scan = StreamingScan {
+                messages: Some(messages),
+                worker: None,
+                cancelled: Arc::new(AtomicBool::new(false)),
+                batch: Vec::new().into_iter(),
+                skipped: Vec::new(),
+                progress: ScanProgress::default(),
+                finished: false,
+                failed: false,
+            };
+            for ordinal in 1..=97 {
+                assert_eq!(scan.next_entry().unwrap().unwrap().work_ordinal, ordinal);
+            }
+            assert!(
+                scan.next_entry()
+                    .unwrap_err()
+                    .to_string()
+                    .contains("z-missing")
+            );
+            assert!(
+                scan.next_entry()
+                    .unwrap_err()
+                    .to_string()
+                    .contains("already failed")
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn streaming_scan_retains_unsupported_tail_without_assigning_an_ordinal() {
+        let source = TestDir::new();
+        fs::write(source.path().join("a-file"), []).unwrap();
+        let _socket =
+            std::os::unix::net::UnixListener::bind(source.path().join("z-socket")).unwrap();
+        let mut scan = StreamingScan::new(source.path()).unwrap();
+        assert_eq!(scan.next_entry().unwrap().unwrap().work_ordinal, 1);
+        assert!(scan.next_entry().unwrap().is_none());
+        assert_eq!(scan.progress().discovered_entries, 1);
+        assert_eq!(
+            scan.take_skips(),
+            vec![SkippedEntry {
+                work_ordinal: 0,
+                relative_path: "z-socket".into(),
+                reason: SkipReason::UnsupportedEntry,
+            }]
+        );
+    }
+
+    #[cfg(unix)]
+    fn assert_colliding_skip_keeps_scan_and_resume_ordinals(source: &Path) {
+        let expected = scan_source_tree_with_workers(source, 1).unwrap();
+        let skipped_paths = expected
+            .skipped
+            .iter()
+            .map(|skip| skip.relative_path.as_str())
+            .collect::<BTreeSet<_>>();
+        assert!(!skipped_paths.is_empty());
+        assert!(
+            expected
+                .entries
+                .iter()
+                .any(|entry| skipped_paths.contains(entry.relative_path.as_str()))
+        );
+        for workers in [1, 4] {
+            for prefix in 0..=expected.entries.len() {
+                let mut scan = StreamingScan::with_workers(source, workers).unwrap();
+                // Возобновление считает также regular entries с terminal path.
+                for expected in &expected.entries[..prefix] {
+                    let actual = scan.next_entry().unwrap().unwrap();
+                    assert_eq!(actual.work_ordinal, expected.work_ordinal);
+                    assert_eq!(actual.abs_path, expected.abs_path);
+                    assert_eq!(actual.relative_path, expected.relative_path);
+                    assert_eq!(actual.kind, expected.kind);
+                }
+                for expected in expected.entries[prefix..]
+                    .iter()
+                    .filter(|entry| !skipped_paths.contains(entry.relative_path.as_str()))
+                {
+                    let actual = scan.next_pending_entry().unwrap().unwrap();
+                    assert_eq!(actual.work_ordinal, expected.work_ordinal);
+                    assert_eq!(actual.abs_path, expected.abs_path);
+                    assert_eq!(actual.relative_path, expected.relative_path);
+                }
+                assert!(scan.next_pending_entry().unwrap().is_none());
+                assert_eq!(scan.take_skips(), expected.skipped);
+                assert_eq!(
+                    scan.progress().discovered_entries,
+                    expected.entries.len() as u64
+                );
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn backslash_skip_suppresses_earlier_nested_file_without_changing_ordinals() {
+        let source = TestDir::new();
+        fs::create_dir(source.path().join("a")).unwrap();
+        fs::create_dir(source.path().join("c")).unwrap();
+        fs::write(source.path().join("a/b"), b"must be suppressed").unwrap();
+        fs::write(source.path().join("c/file"), b"keep").unwrap();
+        let _socket = std::os::unix::net::UnixListener::bind(source.path().join("a\\b")).unwrap();
+        assert_colliding_skip_keeps_scan_and_resume_ordinals(source.path());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn lossy_sibling_directories_share_skip_suppression_before_parallel_scan() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        let source = TestDir::new();
+        let regular_dir = source.path().join(OsString::from_vec(b"dir-\xfe".to_vec()));
+        let skipped_dir = source.path().join(OsString::from_vec(b"dir-\xff".to_vec()));
+        fs::create_dir(&regular_dir).unwrap();
+        fs::create_dir(&skipped_dir).unwrap();
+        fs::write(regular_dir.join("same"), b"must be suppressed").unwrap();
+        fs::write(regular_dir.join("keep"), b"keep").unwrap();
+        fs::write(skipped_dir.join("tail"), b"keep too").unwrap();
+        let _socket = std::os::unix::net::UnixListener::bind(skipped_dir.join("same")).unwrap();
+        assert_colliding_skip_keeps_scan_and_resume_ordinals(source.path());
+    }
+
+    #[test]
+    fn ambiguous_collection_cancellation_precedes_subtree_enumeration() {
+        let source = TestDir::new();
+        let missing = source.path().join("directory");
+        fs::create_dir(&missing).unwrap();
+        let entries = read_sorted_entries(source.path(), "").unwrap();
+        fs::remove_dir(missing).unwrap();
+        let error = collect_ambiguous_subtree(entries, &AtomicBool::new(true))
+            .err()
+            .expect("cancelled fallback unexpectedly completed");
+        assert!(error.to_string().contains("source scan cancelled"));
+    }
+
+    #[test]
+    fn relative_paths_normalize_boundary_backslashes_and_preserve_unicode() {
+        for directory in ["", "общий/🙂"] {
+            for (name, normalized) in [
+                ("plain", "plain"),
+                ("\\leading", "/leading"),
+                ("trailing\\", "trailing/"),
+                ("two\\\\slashes", "two//slashes"),
+                ("é\\🙂", "é/🙂"),
+                ("lossy�", "lossy�"),
+            ] {
+                let expected = if directory.is_empty() {
+                    normalized.to_owned()
+                } else {
+                    format!("{directory}/{normalized}")
+                };
+                assert_eq!(
+                    relative_entry_path(directory, Cow::Borrowed(name)),
+                    expected
+                );
+                assert_eq!(
+                    relative_entry_path(directory, Cow::Owned(name.to_owned())),
+                    expected
+                );
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn scanning_preserves_raw_names_when_lossy_unicode_collides() {
+        use std::ffi::OsString;
+        use std::os::unix::ffi::OsStringExt;
+
+        let source = TestDir::new();
+        let directory = source.path().join(OsString::from_vec(b"dir-\xfe".to_vec()));
+        fs::create_dir(&directory).unwrap();
+        for name in [b"same-\xfe".as_slice(), b"same-\xff", b"slash-\\-\xff"] {
+            fs::write(directory.join(OsString::from_vec(name.to_vec())), name).unwrap();
+        }
+        // Сравниваем с прежним Path::join и stable sort, включая обратное чтение ties.
+        let mut expected = fs::read_dir(&directory)
+            .unwrap()
+            .map(|entry| {
+                let path = entry.unwrap().path();
+                let relative = format!(
+                    "dir-�/{}",
+                    path.file_name()
+                        .unwrap()
+                        .to_string_lossy()
+                        .replace('\\', "/")
+                );
+                (path, relative)
+            })
+            .collect::<Vec<_>>();
+        expected.sort_by(|left, right| right.1.cmp(&left.1));
+        expected.reverse();
+        let report = scan_source_tree_with_workers(source.path(), 1).unwrap();
+        assert_eq!(report.entries.len(), expected.len());
+        for (entry, (path, relative)) in report.entries.iter().zip(expected) {
+            assert_eq!(entry.abs_path.as_os_str(), path.as_os_str());
+            assert_eq!(entry.relative_path, relative);
+            assert_eq!(fs::read(&entry.abs_path).unwrap(), fs::read(path).unwrap());
+        }
+    }
 
     #[test]
     fn walk_counts_empty_directories_without_changing_size_scan() {
@@ -403,6 +1205,7 @@ mod tests {
                     abs_path: source.path().join(format!("{index:03}")),
                     relative_path: format!("{prefix}{}", names[index % names.len()]),
                     file_type,
+                    ambiguous_name: false,
                 })
                 .collect::<Vec<_>>();
             let mut expected = actual.clone();
@@ -497,5 +1300,67 @@ mod tests {
         assert_eq!(report.entries[0].relative_path, "a/link");
         assert_eq!(report.entries[0].kind, ScannedEntryKind::Symlink);
         assert_eq!(report.entries[1].relative_path, "b/file.txt");
+    }
+}
+
+#[cfg(all(test, windows))]
+mod windows_path_tests {
+    use super::*;
+    use std::ffi::OsString;
+    use std::os::windows::ffi::OsStringExt;
+
+    #[test]
+    fn presized_native_paths_preserve_windows_join_and_raw_unicode() {
+        let names = [
+            OsString::from("plain.bin"),
+            OsString::from("é-🙂.bin"),
+            // Проверяем native code units, не представимые как UTF-8.
+            OsString::from_wide(&[0x0066, 0xd800, 0x0078]),
+        ];
+        for root in [
+            "",
+            ".",
+            "relative",
+            r"C:",
+            r"C:\",
+            r"C:\каталог",
+            r"C:\каталог\",
+            r"\\server\share\каталог",
+            r"\\?\C:\каталог",
+            r"\\?\C:\first\..\каталог",
+        ] {
+            let root = Path::new(root);
+            for name in &names {
+                let expected = root.join(name);
+                let actual = joined_scan_entry_path(root, name);
+                assert_eq!(actual.as_os_str(), expected.as_os_str());
+                assert_eq!(
+                    actual.file_name().unwrap().to_string_lossy(),
+                    name.to_string_lossy()
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn presized_windows_scan_retains_native_and_normalized_unicode_paths() {
+        let source = crate::tests::TestDir::new();
+        let directory = source.path().join("каталог-🙂");
+        fs::create_dir(&directory).unwrap();
+        for name in ["plain.bin", "é-🙂.bin", "中.bin"] {
+            fs::write(directory.join(name), []).unwrap();
+        }
+        let expected = fs::read_dir(&directory)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect::<Vec<_>>();
+        let actual = read_sorted_entries(&directory, "каталог-🙂").unwrap();
+        assert_eq!(actual.len(), expected.len());
+        for entry in actual {
+            assert!(expected.contains(&entry.abs_path));
+            let basename = entry.abs_path.file_name().unwrap().to_string_lossy();
+            assert_eq!(entry.relative_path, format!("каталог-🙂/{basename}"));
+            assert!(!entry.ambiguous_name);
+        }
     }
 }

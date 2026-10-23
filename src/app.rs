@@ -105,8 +105,10 @@ impl Runtime for RealRuntime {
                 bundle_target_bytes: runtime.bundle_target_bytes,
                 compression_level: runtime.level,
                 compression_threads: runtime.threads,
-                readers: std::thread::available_parallelism()
-                    .map_or(1, |n| n.get())
+                // По умолчанию один reader на физическое ядро; явные min/max
+                // сохраняют приоритет, а planner ограничит пул числом файлов.
+                readers: sender::BundlePlanOptions::default()
+                    .readers
                     .clamp(runtime.min_readers, runtime.max_readers),
             },
         )?;
@@ -324,8 +326,8 @@ mod tests {
                     level: 7,
                     threads: 1,
                     bundle_target_bytes: 3 * 1024 * 1024,
-                    min_readers: 2,
-                    max_readers: 32,
+                    min_readers: 1,
+                    max_readers: crate::sender::BundlePlanOptions::default().readers,
                     read_buffer_bytes: 1024 * 1024,
                 },
                 source: PathBuf::from("input"),

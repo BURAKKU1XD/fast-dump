@@ -157,11 +157,11 @@ impl ReceiverSession {
         self.archive.current_len()
     }
 
-    pub(crate) fn append_bundle_chunk(&mut self, bytes: &[u8]) -> Result<()> {
+    pub(crate) fn append_bundle_chunk(&mut self, bytes: &[u8]) -> Result<Option<Duration>> {
         self.archive.append_chunk(bytes)
     }
 
-    pub(crate) fn sync_archive(&mut self) -> Result<()> {
+    pub(crate) fn sync_archive(&mut self) -> Result<bool> {
         self.archive.sync()
     }
 
@@ -240,6 +240,8 @@ impl ReceiverSession {
             &paths.issues_part_path,
         ] {
             if path.exists() {
+                #[cfg(test)]
+                super::storage_faults::check(super::storage_faults::Point::CleanupRemove)?;
                 fs::remove_file(path).with_context(|| {
                     format!(
                         "failed to remove stale v4 receiver state {}",
@@ -248,6 +250,8 @@ impl ReceiverSession {
                 })?;
             }
         }
+        #[cfg(test)]
+        super::storage_faults::check(super::storage_faults::Point::CleanupParentSync)?;
         catalog::sync_parent_directory(&paths.wal_path)
     }
 }

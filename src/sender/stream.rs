@@ -1,19 +1,89 @@
 use std::io::{self, Read, Write};
+use std::ops::{Deref, DerefMut};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use crossbeam_channel::{Receiver, Sender, bounded};
 use xxhash_rust::xxh3::Xxh3Default;
+use zstd::zstd_safe::zstd_sys::ZSTD_EndDirective;
+use zstd::zstd_safe::{CCtx, InBuffer};
 
-use crate::network::protocol::wire;
+use crate::network::protocol::{BundleEntryDescriptor, BundlePlanDescriptor, wire};
 
-use super::compress::BundleCompressor;
+use super::compress::{BundleCompressor, CompressionOutput, compress_into_vec};
+use super::plan::MaterializedPayload;
 use super::read::StreamedRegularFile;
-use super::tar::{CountingWriter, ExactFileReader, append_streamed_regular_entry};
+use super::tar::{
+    BufferedBundleWriter, CountingWriter, ExactFileReader, STREAM_READ_BYTES,
+    append_streamed_regular_entry_with_buffer,
+};
 
 const QUEUED_CHUNKS: usize = 2;
+const STREAM_BUFFERS: usize = QUEUED_CHUNKS + 2;
+
+pub(crate) struct StreamWorkspace {
+    buffers: Arc<Mutex<Vec<Vec<u8>>>>,
+    read_scratch: Vec<u8>,
+}
+
+impl StreamWorkspace {
+    pub(crate) fn new() -> Self {
+        Self {
+            buffers: Arc::new(Mutex::new(Vec::with_capacity(STREAM_BUFFERS))),
+            read_scratch: Vec::new(),
+        }
+    }
+
+    fn take_buffer(&self) -> RecycledBuffer {
+        let bytes = self
+            .buffers
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .pop()
+            .unwrap_or_else(|| Vec::with_capacity(wire::MAX_DATA_CHUNK_BYTES));
+        RecycledBuffer {
+            bytes,
+            pool: self.buffers.clone(),
+        }
+    }
+}
+
+struct RecycledBuffer {
+    bytes: Vec<u8>,
+    pool: Arc<Mutex<Vec<Vec<u8>>>>,
+}
+
+impl Deref for RecycledBuffer {
+    type Target = Vec<u8>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.bytes
+    }
+}
+
+impl DerefMut for RecycledBuffer {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.bytes
+    }
+}
+
+impl Drop for RecycledBuffer {
+    fn drop(&mut self) {
+        if self.bytes.capacity() == 0 {
+            return;
+        }
+        self.bytes.clear();
+        // Mutex нужен только при завершении попытки. Между чанками четыре
+        // owned буфера возвращаются через прежнюю bounded очередь без этого lock.
+        self.pool
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .push(std::mem::take(&mut self.bytes));
+    }
+}
 
 pub(crate) struct StreamedPayload {
     pub(crate) tar_bytes: u64,
@@ -30,24 +100,82 @@ pub(crate) struct StreamAttempt {
 }
 
 struct Chunk {
-    bytes: Vec<u8>,
+    bytes: RecycledBuffer,
     is_last: bool,
 }
 
 // Два готовых чанка перекрывают чтение/сжатие с блокирующей записью в сеть.
 // Вместе с producer и consumer используются ровно четыре переиспользуемых буфера.
-pub(crate) fn send_streamed_attempt(
+pub(crate) fn send_streamed_attempt_with_workspace(
     stream: &mut impl Write,
     file: &mut StreamedRegularFile,
     bundle_no: u64,
     attempt_no: u32,
     compressor: &mut BundleCompressor,
+    workspace: &mut StreamWorkspace,
+) -> Result<StreamAttempt> {
+    send_attempt_with_workspace(
+        stream,
+        BundleInput::Streamed(file),
+        bundle_no,
+        attempt_no,
+        compressor,
+        workspace,
+    )
+}
+
+pub(crate) fn send_materialized_attempt_with_workspace(
+    stream: &mut impl Write,
+    descriptor: &BundlePlanDescriptor,
+    payloads: Vec<MaterializedPayload>,
+    compressor: &mut BundleCompressor,
+    workspace: &mut StreamWorkspace,
+) -> Result<StreamAttempt> {
+    anyhow::ensure!(
+        descriptor.entries.len() == payloads.len(),
+        "materialized bundle descriptor/payload count mismatch"
+    );
+    send_attempt_with_workspace(
+        stream,
+        BundleInput::Materialized {
+            descriptors: &descriptor.entries,
+            payloads,
+        },
+        descriptor.bundle_no,
+        1,
+        compressor,
+        workspace,
+    )
+}
+
+enum BundleInput<'a> {
+    Streamed(&'a mut StreamedRegularFile),
+    Materialized {
+        descriptors: &'a [BundleEntryDescriptor],
+        payloads: Vec<MaterializedPayload>,
+    },
+}
+
+fn send_attempt_with_workspace(
+    stream: &mut impl Write,
+    input: BundleInput<'_>,
+    bundle_no: u64,
+    attempt_no: u32,
+    compressor: &mut BundleCompressor,
+    workspace: &mut StreamWorkspace,
 ) -> Result<StreamAttempt> {
     let (chunks_tx, chunks_rx) = bounded(QUEUED_CHUNKS);
     let (buffers_tx, buffers_rx) = bounded(QUEUED_CHUNKS + 1);
     for _ in 0..QUEUED_CHUNKS + 1 {
-        buffers_tx.send(Vec::with_capacity(wire::MAX_DATA_CHUNK_BYTES))?;
+        buffers_tx
+            .send(workspace.take_buffer())
+            .map_err(|_| consumer_disconnected())?;
     }
+    let pending = workspace.take_buffer();
+    if matches!(&input, BundleInput::Streamed(_)) {
+        workspace.read_scratch.resize(STREAM_READ_BYTES, 0);
+    }
+    let scratch = &mut workspace.read_scratch;
     let cancelled = AtomicBool::new(false);
 
     thread::scope(|scope| {
@@ -56,7 +184,9 @@ pub(crate) fn send_streamed_attempt(
         let producer = thread::Builder::new()
             .name("dump-stream".into())
             .spawn_scoped(scope, move || {
-                produce_attempt(file, compressor, chunks_tx, buffers_rx, cancelled)
+                produce_attempt(
+                    input, compressor, chunks_tx, buffers_rx, cancelled, pending, scratch,
+                )
             })
             .context("failed to start v4 streamed bundle producer")?;
 
@@ -97,23 +227,53 @@ pub(crate) fn send_streamed_attempt(
 }
 
 fn produce_attempt(
-    file: &mut StreamedRegularFile,
+    input: BundleInput<'_>,
     compressor: &mut BundleCompressor,
     chunks: Sender<Chunk>,
-    buffers: Receiver<Vec<u8>>,
+    buffers: Receiver<RecycledBuffer>,
     cancelled: &AtomicBool,
+    pending: RecycledBuffer,
+    scratch: &mut [u8],
 ) -> Result<StreamAttempt> {
     let started = Instant::now();
     let mut sink = ChunkProducer {
         chunks,
         buffers,
-        pending: Vec::with_capacity(wire::MAX_DATA_CHUNK_BYTES),
+        pending,
         compressed_bytes: 0,
         checksum: Xxh3Default::new(),
         queue_wait: Duration::ZERO,
     };
-    let encoder = compressor.encoder(&mut sink)?;
-    let mut writer = CountingWriter::new(encoder);
+    let file = match input {
+        BundleInput::Streamed(file) => file,
+        BundleInput::Materialized {
+            descriptors,
+            payloads,
+        } => {
+            let mut writer = BufferedBundleWriter::new(compressor, &mut sink)?;
+            for (descriptor, payload) in descriptors.iter().zip(payloads) {
+                if cancelled.load(Ordering::Relaxed) {
+                    return Err(consumer_disconnected().into());
+                }
+                writer.append_payload(descriptor, payload.mode, &payload.contents)?;
+                // После append payload больше не нужен; shared slab освобождается
+                // после последнего slice, а descriptors остаются у уже отправленного плана.
+            }
+            let (_, tar_bytes) = writer.finish()?;
+            sink.emit(true)?;
+            return Ok(StreamAttempt {
+                result: Ok(StreamedPayload {
+                    tar_bytes,
+                    compressed_bytes: sink.compressed_bytes,
+                    checksum: sink.checksum.digest(),
+                }),
+                read_bytes: 0,
+                read_duration: Duration::ZERO,
+                compress_duration: started.elapsed().saturating_sub(sink.queue_wait),
+                send_duration: Duration::ZERO,
+            });
+        }
+    };
     let forced_short_limit = file.take_forced_short_read_limit();
     let mut reader = ExactFileReader::new(
         &mut file.file,
@@ -121,23 +281,31 @@ fn produce_attempt(
         file.descriptor.size_at_open,
         forced_short_limit,
     );
-    let appended = append_streamed_regular_entry(
-        &mut writer,
-        &file.descriptor.relative_path,
-        file.mode,
-        file.descriptor.size_at_open,
-        &mut CancellableReader {
-            inner: &mut reader,
-            cancelled,
-        },
-    );
-    let tar_bytes = writer.bytes_written();
-    let result = match appended {
-        Ok(()) => {
+    let (tar_bytes, appended) = {
+        let encoder = compressor.direct_encoder(&mut sink)?;
+        let mut writer = CountingWriter::new(encoder);
+        let appended = append_streamed_regular_entry_with_buffer(
+            &mut writer,
+            &file.descriptor.relative_path,
+            file.mode,
+            file.descriptor.size_at_open,
+            &mut CancellableReader {
+                inner: &mut reader,
+                cancelled,
+            },
+            scratch,
+        );
+        let tar_bytes = writer.bytes_written();
+        if appended.is_ok() {
             writer
                 .into_inner()
                 .finish()
                 .context("failed to finalize v4 streamed compression")?;
+        }
+        (tar_bytes, appended)
+    };
+    let result = match appended {
+        Ok(()) => {
             sink.emit(true)?;
             Ok(StreamedPayload {
                 tar_bytes,
@@ -145,10 +313,7 @@ fn produce_attempt(
                 checksum: sink.checksum.digest(),
             })
         }
-        Err(error) => {
-            drop(writer);
-            Err(error)
-        }
+        Err(error) => Err(error),
     };
     Ok(StreamAttempt {
         result,
@@ -164,8 +329,8 @@ fn produce_attempt(
 
 struct ChunkProducer {
     chunks: Sender<Chunk>,
-    buffers: Receiver<Vec<u8>>,
-    pending: Vec<u8>,
+    buffers: Receiver<RecycledBuffer>,
+    pending: RecycledBuffer,
     compressed_bytes: u64,
     checksum: Xxh3Default,
     queue_wait: Duration,
@@ -180,7 +345,10 @@ impl ChunkProducer {
         self.checksum.update(&self.pending);
         let waiting = Instant::now();
         let next = if is_last {
-            Vec::new()
+            RecycledBuffer {
+                bytes: Vec::new(),
+                pool: self.pending.pool.clone(),
+            }
         } else {
             self.buffers.recv().map_err(|_| consumer_disconnected())?
         };
@@ -194,20 +362,23 @@ impl ChunkProducer {
     }
 }
 
-impl Write for ChunkProducer {
-    fn write(&mut self, mut bytes: &[u8]) -> io::Result<usize> {
-        let len = bytes.len();
-        while !bytes.is_empty() {
-            let count = bytes
-                .len()
-                .min(wire::MAX_DATA_CHUNK_BYTES - self.pending.len());
-            self.pending.extend_from_slice(&bytes[..count]);
-            bytes = &bytes[count..];
-            if self.pending.len() == wire::MAX_DATA_CHUNK_BYTES {
-                self.emit(false)?;
-            }
+impl CompressionOutput for &mut ChunkProducer {
+    fn compress(
+        &mut self,
+        context: &mut CCtx<'static>,
+        input: &mut InBuffer<'_>,
+        directive: ZSTD_EndDirective,
+    ) -> io::Result<usize> {
+        if self.pending.len() == wire::MAX_DATA_CHUNK_BYTES {
+            self.emit(false)?;
         }
-        Ok(len)
+        compress_into_vec(
+            context,
+            input,
+            directive,
+            &mut self.pending.bytes,
+            wire::MAX_DATA_CHUNK_BYTES,
+        )
     }
 
     fn flush(&mut self) -> io::Result<()> {
@@ -252,6 +423,9 @@ mod tests {
 
     use super::*;
     use crate::network::protocol::{BundleEntryDescriptor, BundleEntryKind};
+    use crate::sender::plan::MaterializedBundleTask;
+    use crate::sender::read::MaterializedEntry;
+    use crate::sender::tar::build_compressed_bundle;
     use crate::tests::TestDir;
 
     const FIXTURE_BYTES: usize = 16 * 1024 * 1024 + 73;
@@ -309,11 +483,30 @@ mod tests {
         worker.join().unwrap();
     }
 
-    fn producer(chunks: Sender<Chunk>, buffers: Receiver<Vec<u8>>) -> ChunkProducer {
+    fn send_streamed_attempt(
+        stream: &mut impl Write,
+        file: &mut StreamedRegularFile,
+        bundle_no: u64,
+        attempt_no: u32,
+        compressor: &mut BundleCompressor,
+    ) -> Result<StreamAttempt> {
+        send_streamed_attempt_with_workspace(
+            stream,
+            file,
+            bundle_no,
+            attempt_no,
+            compressor,
+            &mut StreamWorkspace::new(),
+        )
+    }
+
+    fn producer(chunks: Sender<Chunk>, buffers: Receiver<RecycledBuffer>) -> ChunkProducer {
+        let mut pending = StreamWorkspace::new().take_buffer();
+        pending.resize(wire::MAX_DATA_CHUNK_BYTES, 0xa5);
         ChunkProducer {
             chunks,
             buffers,
-            pending: vec![0xa5; wire::MAX_DATA_CHUNK_BYTES],
+            pending,
             compressed_bytes: 0,
             checksum: Xxh3Default::new(),
             queue_wait: Duration::ZERO,
@@ -326,7 +519,7 @@ mod tests {
         let (buffers_tx, buffers_rx) = bounded(QUEUED_CHUNKS + 1);
         for _ in 0..QUEUED_CHUNKS + 1 {
             buffers_tx
-                .send(Vec::with_capacity(wire::MAX_DATA_CHUNK_BYTES))
+                .send(StreamWorkspace::new().take_buffer())
                 .unwrap();
         }
         let mut sink = producer(chunks_tx, buffers_rx);
@@ -440,15 +633,24 @@ mod tests {
         completes_without_deadlock(|| {
             let (_directory, _contents, mut file) = fixture(FIXTURE_BYTES);
             let mut compressor = BundleCompressor::new(1, 1).unwrap();
+            let mut workspace = StreamWorkspace::new();
             let mut writer = FailingWriter {
                 failure: WriterFailure::BrokenPipe,
                 fail_after: 2 * wire::MAX_DATA_CHUNK_BYTES,
                 written: 0,
                 flushes: 0,
             };
-            let error = send_streamed_attempt(&mut writer, &mut file, 7, 1, &mut compressor)
-                .err()
-                .unwrap();
+            let error = send_streamed_attempt_with_workspace(
+                &mut writer,
+                &mut file,
+                7,
+                1,
+                &mut compressor,
+                &mut workspace,
+            )
+            .err()
+            .unwrap();
+            assert_eq!(workspace.buffers.lock().unwrap().len(), STREAM_BUFFERS);
             assert_eq!(writer.written, 2 * wire::MAX_DATA_CHUNK_BYTES);
             assert_eq!(writer.flushes, 0);
             assert!(error.chain().any(|cause| {
@@ -464,6 +666,7 @@ mod tests {
         completes_without_deadlock(|| {
             let (_directory, _contents, mut file) = fixture(FIXTURE_BYTES);
             let mut compressor = BundleCompressor::new(1, 1).unwrap();
+            let mut workspace = StreamWorkspace::new();
             let mut writer = FailingWriter {
                 failure: WriterFailure::Panic,
                 fail_after: wire::MAX_DATA_CHUNK_BYTES,
@@ -471,12 +674,20 @@ mod tests {
                 flushes: 0,
             };
             let panic = catch_unwind(AssertUnwindSafe(|| {
-                let _ = send_streamed_attempt(&mut writer, &mut file, 7, 1, &mut compressor);
+                let _ = send_streamed_attempt_with_workspace(
+                    &mut writer,
+                    &mut file,
+                    7,
+                    1,
+                    &mut compressor,
+                    &mut workspace,
+                );
             }))
             .unwrap_err();
             assert_eq!(panic.downcast_ref::<&str>(), Some(&"test writer panicked"));
             assert_eq!(writer.written, wire::MAX_DATA_CHUNK_BYTES);
             assert_eq!(writer.flushes, 0);
+            assert_eq!(workspace.buffers.lock().unwrap().len(), STREAM_BUFFERS);
         });
     }
 
@@ -546,13 +757,283 @@ mod tests {
         assert!(entries.next().is_none());
     }
 
+    fn materialized_entry(path: &str, contents: Vec<u8>) -> MaterializedEntry {
+        MaterializedEntry {
+            descriptor: BundleEntryDescriptor {
+                work_ordinal: 1,
+                relative_path: path.into(),
+                kind: BundleEntryKind::Regular,
+                size_at_open: contents.len() as u64,
+                best_effort: false,
+            },
+            mode: 0o644,
+            contents: contents.into(),
+        }
+    }
+
+    fn materialized_task(entries: Vec<MaterializedEntry>) -> MaterializedBundleTask {
+        let last = &entries.last().unwrap().descriptor;
+        let mut descriptor = BundlePlanDescriptor {
+            bundle_no: 8,
+            first_work_ordinal: entries[0].descriptor.work_ordinal,
+            last_work_ordinal: last.work_ordinal,
+            last_relative_path: last.relative_path.clone(),
+            entries: Vec::with_capacity(entries.len()),
+            raw_payload_bytes: 0,
+        };
+        let payloads = entries
+            .into_iter()
+            .map(|entry| {
+                descriptor.raw_payload_bytes += entry.descriptor.size_at_open;
+                descriptor.entries.push(entry.descriptor);
+                MaterializedPayload {
+                    mode: entry.mode,
+                    contents: entry.contents,
+                }
+            })
+            .collect();
+        MaterializedBundleTask {
+            descriptor,
+            payloads,
+        }
+    }
+
+    fn pool_pointers(workspace: &StreamWorkspace) -> Vec<usize> {
+        let mut pointers = workspace
+            .buffers
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|buffer| buffer.as_ptr() as usize)
+            .collect::<Vec<_>>();
+        pointers.sort_unstable();
+        assert_eq!(pointers.len(), STREAM_BUFFERS);
+        pointers
+    }
+
+    fn verify_materialized_payload(
+        wire_bytes: &[u8],
+        payload: &StreamedPayload,
+        expected: &[u8],
+        expected_tar_bytes: u64,
+    ) {
+        let chunks = decode_chunks(wire_bytes, 8, 1);
+        assert!(!chunks.is_empty());
+        assert!(chunks.last().unwrap().is_last);
+        assert!(
+            chunks[..chunks.len() - 1]
+                .iter()
+                .all(|chunk| !chunk.is_last)
+        );
+        let compressed = chunks
+            .into_iter()
+            .flat_map(|chunk| chunk.bytes)
+            .collect::<Vec<_>>();
+        assert!(compressed == expected, "materialized frame bytes changed");
+        assert_eq!(payload.tar_bytes, expected_tar_bytes);
+        assert_eq!(payload.compressed_bytes, expected.len() as u64);
+        assert_eq!(payload.checksum, xxhash_rust::xxh3::xxh3_64(expected));
+        assert_eq!(
+            zstd::stream::decode_all(compressed.as_slice())
+                .unwrap()
+                .len() as u64,
+            expected_tar_bytes
+        );
+    }
+
+    #[test]
+    fn materialized_and_streamed_frames_share_context_and_bounded_buffers() {
+        for threads in [1, 4] {
+            let (_directory, contents, mut file) = fixture(FIXTURE_BYTES);
+            let long_path = format!("{}/empty", "nested/ёж/".repeat(20));
+            let mut link = materialized_entry("link", Vec::new());
+            link.descriptor.kind = BundleEntryKind::Symlink {
+                target: long_path.clone(),
+            };
+            let mut entries = vec![
+                materialized_entry("payload.bin", contents.clone()),
+                materialized_entry(&long_path, Vec::new()),
+                link,
+                materialized_entry("tail", vec![0xa5; 513]),
+            ];
+            for (index, entry) in entries.iter_mut().enumerate() {
+                entry.descriptor.work_ordinal = index as u64 + 1;
+            }
+            let (reference, reference_tar_bytes) =
+                build_compressed_bundle(&entries, 1, threads).unwrap();
+            let task = materialized_task(entries);
+            let mut compressor = BundleCompressor::new(1, threads).unwrap();
+            let mut workspace = StreamWorkspace::new();
+            let mut first_wire = Vec::new();
+            let first = send_materialized_attempt_with_workspace(
+                &mut first_wire,
+                &task.descriptor,
+                task.payloads,
+                &mut compressor,
+                &mut workspace,
+            )
+            .unwrap();
+            assert_eq!(first.read_bytes, 0);
+            assert_eq!(first.read_duration, Duration::ZERO);
+            assert!(workspace.read_scratch.is_empty());
+            let payload = first.result.unwrap();
+            assert!(payload.compressed_bytes > 4 * wire::MAX_DATA_CHUNK_BYTES as u64);
+            verify_materialized_payload(&first_wire, &payload, &reference, reference_tar_bytes);
+            let original_pointers = pool_pointers(&workspace);
+
+            let mut streamed_wire = Vec::new();
+            let streamed = send_streamed_attempt_with_workspace(
+                &mut streamed_wire,
+                &mut file,
+                9,
+                1,
+                &mut compressor,
+                &mut workspace,
+            )
+            .unwrap();
+            assert_eq!(streamed.read_bytes, contents.len() as u64);
+            verify_payload(
+                &decode_chunks(&streamed_wire, 9, 1),
+                &streamed.result.unwrap(),
+                &contents,
+            );
+            assert_eq!(pool_pointers(&workspace), original_pointers);
+            let scratch_pointer = workspace.read_scratch.as_ptr();
+
+            let tail = vec![materialized_entry(
+                "tail",
+                b"independent final frame".to_vec(),
+            )];
+            let (reference, reference_tar_bytes) =
+                build_compressed_bundle(&tail, 1, threads).unwrap();
+            let tail = materialized_task(tail);
+            let mut tail_wire = Vec::new();
+            let tail = send_materialized_attempt_with_workspace(
+                &mut tail_wire,
+                &tail.descriptor,
+                tail.payloads,
+                &mut compressor,
+                &mut workspace,
+            )
+            .unwrap();
+            verify_materialized_payload(
+                &tail_wire,
+                &tail.result.unwrap(),
+                &reference,
+                reference_tar_bytes,
+            );
+            assert_eq!(pool_pointers(&workspace), original_pointers);
+            assert_eq!(workspace.read_scratch.as_ptr(), scratch_pointer);
+        }
+    }
+
+    #[test]
+    fn materialized_writer_failure_and_panic_join_producer_and_reclaim_buffers() {
+        for failure in [WriterFailure::BrokenPipe, WriterFailure::Panic] {
+            completes_without_deadlock(move || {
+                use crate::sender::read::{EntryContents, ReadDecision, materialize_batch};
+                use crate::sender::scan::{ScannedEntry, ScannedEntryKind};
+
+                let (directory, contents, _file) = fixture(FIXTURE_BYTES);
+                let batch = std::array::from_fn(|index| {
+                    let relative_path = format!("small-{index}");
+                    let abs_path = directory.path().join(&relative_path);
+                    fs::write(&abs_path, [index as u8; 333]).unwrap();
+                    Some(ScannedEntry {
+                        work_ordinal: index as u64 + 2,
+                        abs_path,
+                        relative_path,
+                        kind: ScannedEntryKind::Regular,
+                    })
+                });
+                let shared = materialize_batch(batch, 1024)
+                    .into_iter()
+                    .map(|result| match result.unwrap().unwrap() {
+                        ReadDecision::Accepted(entry) => entry,
+                        _ => panic!("fixture entry was not prefetched"),
+                    })
+                    .collect::<Vec<_>>();
+                let EntryContents::Shared { bytes, .. } = &shared[0].contents else {
+                    panic!("fixture must use a shared slab");
+                };
+                let slab = Arc::downgrade(bytes);
+                let mut entries = vec![materialized_entry("payload.bin", contents)];
+                entries.extend(shared);
+                let task = materialized_task(entries);
+                let mut compressor = BundleCompressor::new(1, 4).unwrap();
+                let mut workspace = StreamWorkspace::new();
+                let mut writer = FailingWriter {
+                    failure,
+                    fail_after: wire::MAX_DATA_CHUNK_BYTES,
+                    written: 0,
+                    flushes: 0,
+                };
+                let result = catch_unwind(AssertUnwindSafe(|| {
+                    send_materialized_attempt_with_workspace(
+                        &mut writer,
+                        &task.descriptor,
+                        task.payloads,
+                        &mut compressor,
+                        &mut workspace,
+                    )
+                }));
+                match failure {
+                    WriterFailure::BrokenPipe => assert!(result.unwrap().is_err()),
+                    WriterFailure::Panic => assert!(result.is_err()),
+                    WriterFailure::Flush => unreachable!(),
+                }
+                assert_eq!(writer.written, wire::MAX_DATA_CHUNK_BYTES);
+                assert_eq!(writer.flushes, 0);
+                assert!(
+                    slab.upgrade().is_none(),
+                    "cancelled payload slab was retained"
+                );
+                let original_pointers = pool_pointers(&workspace);
+
+                // Неоконченный frame не отравляет следующий: reset того же CCtx
+                // и тот же набор буферов дают полноценный независимый архив.
+                let retry = vec![materialized_entry(
+                    "retry",
+                    b"clean independent frame".to_vec(),
+                )];
+                let (reference, reference_tar_bytes) =
+                    build_compressed_bundle(&retry, 1, 4).unwrap();
+                let retry = materialized_task(retry);
+                let mut wire = Vec::new();
+                let sent = send_materialized_attempt_with_workspace(
+                    &mut wire,
+                    &retry.descriptor,
+                    retry.payloads,
+                    &mut compressor,
+                    &mut workspace,
+                )
+                .unwrap();
+                verify_materialized_payload(
+                    &wire,
+                    &sent.result.unwrap(),
+                    &reference,
+                    reference_tar_bytes,
+                );
+                assert_eq!(pool_pointers(&workspace), original_pointers);
+            });
+        }
+    }
+
     #[test]
     fn streamed_chunks_preserve_payload_checksum_last_marker_and_deterministic_bytes() {
         let (_directory, contents, mut file) = fixture(FIXTURE_BYTES);
         let mut compressor = BundleCompressor::new(1, 1).unwrap();
+        let mut workspace = StreamWorkspace::new();
         let mut first_wire = Vec::new();
-        let first =
-            send_streamed_attempt(&mut first_wire, &mut file, 7, 1, &mut compressor).unwrap();
+        let first = send_streamed_attempt_with_workspace(
+            &mut first_wire,
+            &mut file,
+            7,
+            1,
+            &mut compressor,
+            &mut workspace,
+        )
+        .unwrap();
         assert_eq!(first.read_bytes, contents.len() as u64);
         let payload = first.result.unwrap();
         let chunks = decode_chunks(&first_wire, 7, 1);
@@ -562,13 +1043,36 @@ mod tests {
         );
         assert!(payload.compressed_bytes > 4 * wire::MAX_DATA_CHUNK_BYTES as u64);
         verify_payload(&chunks, &payload, &contents);
+        let pointers = |workspace: &StreamWorkspace| {
+            let mut pointers = workspace
+                .buffers
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|buffer| buffer.as_ptr() as usize)
+                .collect::<Vec<_>>();
+            pointers.sort_unstable();
+            assert_eq!(pointers.len(), STREAM_BUFFERS);
+            pointers
+        };
+        let original_pointers = pointers(&workspace);
+        let scratch_pointer = workspace.read_scratch.as_ptr();
 
         file.reopen_for_retry().unwrap();
         let mut second_wire = Vec::new();
-        let second =
-            send_streamed_attempt(&mut second_wire, &mut file, 7, 1, &mut compressor).unwrap();
+        let second = send_streamed_attempt_with_workspace(
+            &mut second_wire,
+            &mut file,
+            7,
+            1,
+            &mut compressor,
+            &mut workspace,
+        )
+        .unwrap();
         assert_eq!(second.read_bytes, first.read_bytes);
         assert_eq!(second.result.unwrap().checksum, payload.checksum);
+        assert_eq!(pointers(&workspace), original_pointers);
+        assert_eq!(workspace.read_scratch.as_ptr(), scratch_pointer);
         assert!(
             second_wire == first_wire,
             "reused compressor changed deterministic wire bytes"
@@ -581,9 +1085,18 @@ mod tests {
         let forced_limit = 12 * 1024 * 1024;
         file.forced_short_read_limit = Some(forced_limit);
         let mut compressor = BundleCompressor::new(1, 1).unwrap();
+        let mut workspace = StreamWorkspace::new();
         let mut aborted_wire = Vec::new();
-        let aborted =
-            send_streamed_attempt(&mut aborted_wire, &mut file, 7, 1, &mut compressor).unwrap();
+        let aborted = send_streamed_attempt_with_workspace(
+            &mut aborted_wire,
+            &mut file,
+            7,
+            1,
+            &mut compressor,
+            &mut workspace,
+        )
+        .unwrap();
+        assert_eq!(workspace.buffers.lock().unwrap().len(), STREAM_BUFFERS);
         assert_eq!(aborted.read_bytes, forced_limit);
         let error = aborted.result.err().unwrap();
         assert!(format!("{error:#}").contains("short read"));
@@ -599,8 +1112,16 @@ mod tests {
 
         file.reopen_for_retry().unwrap();
         let mut retry_wire = Vec::new();
-        let retry =
-            send_streamed_attempt(&mut retry_wire, &mut file, 7, 2, &mut compressor).unwrap();
+        let retry = send_streamed_attempt_with_workspace(
+            &mut retry_wire,
+            &mut file,
+            7,
+            2,
+            &mut compressor,
+            &mut workspace,
+        )
+        .unwrap();
+        assert_eq!(workspace.buffers.lock().unwrap().len(), STREAM_BUFFERS);
         assert_eq!(retry.read_bytes, contents.len() as u64);
         assert_eq!(file.open_attempts, 2);
         verify_payload(
