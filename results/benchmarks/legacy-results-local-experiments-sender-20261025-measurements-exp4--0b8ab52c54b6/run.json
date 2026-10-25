@@ -1,0 +1,145 @@
+{
+  "schema_version": 1,
+  "id": "legacy-results-local-experiments-sender-20261025-measurements-exp4--0b8ab52c54b6",
+  "kind": "benchmark",
+  "label": "exp4-big",
+  "status": "imported",
+  "started_utc": "2026-10-25T12:41:56.395798+00:00",
+  "time_source": "original_file_mtime",
+  "imported_utc": "2026-10-25T12:47:09.813954+00:00",
+  "experiment_path": "results/local/experiments/sender-20261025/measurements/exp4-big",
+  "import_sha256": "0b8ab52c54b6befe004e8931edc411553f1f9939622eaad792798d4fdedb3503",
+  "origin": "results/local/experiments/sender-20261025/measurements",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "binary_sha256": {
+      "before": "6a7f3a02b327c98f814c1b8406411dde2b030931cd2b52d86d1f82403fe2d011",
+      "after": "b4497b1095a9a21ad500ba0d9c6d7c3d8929e7c06c2531583d0c32d6d805d623"
+    },
+    "comparison_kind": "A/B",
+    "requested_readers": {
+      "before": 8,
+      "after": 8
+    },
+    "common_arguments": [
+      "--repeats",
+      "1",
+      "--shuffle-scenarios",
+      "--shuffle-seed",
+      "91",
+      "--source",
+      "E:\\projects\\cool_project\\fast-dump\\results\\local\\experiments\\sender-20261025\\fixtures\\bigFiles",
+      "--network-profile",
+      "loopback-localhost",
+      "--threads",
+      "4",
+      "--frames",
+      "64",
+      "--buffers",
+      "1024",
+      "--executor",
+      "default"
+    ],
+    "repeats_per_side": 5,
+    "policy": "AB then BA alternating; all samples retained; no automatic warmup or trimming",
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "after",
+        "exit_code": 0
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "exp4-big/before/run.log",
+      "sha256": "a1dc723fe7c04ed19d178985c910d0c2bdd678ace3400899e0db5ebe1fc9b78c",
+      "bytes": 17008,
+      "extracted_sha256": "4c17d94e103a5b277540cbd1fcd4dab4c40ec59dee70fb4192bef88e8ff70c1b",
+      "saved": "raw/before/resource_samples.csv"
+    },
+    {
+      "source": "exp4-big/before/results_raw.csv",
+      "sha256": "cf5c415ac75aa53bad648cc2c57e819e45cb21b67a1b7f5c2a91f5b13d9eb436",
+      "bytes": 4307,
+      "saved": "raw/before/results_raw.csv"
+    },
+    {
+      "source": "exp4-big/after/run.log",
+      "sha256": "4184e6864b2de571422a5bf4c6cbc0d6712a08e08a616bc691d33ee574fd14d0",
+      "bytes": 16992,
+      "extracted_sha256": "2971a1999117bb33c7ce0e4c1e79dd3bb07f485f3adde85148e0b8fef46be3bc",
+      "saved": "raw/after/resource_samples.csv"
+    },
+    {
+      "source": "exp4-big/after/results_raw.csv",
+      "sha256": "3e4504f27b12336db79bff6c7296531eb0a7301ce5b35b2aa2dd908f875cff3f",
+      "bytes": 4307,
+      "saved": "raw/after/results_raw.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "exp4-big/paired-run.json",
+      "sha256": "1196fe26b59825fab1e13002866555e29d2d84087653b4c15ba2d937cbfe6bea",
+      "bytes": 10508
+    },
+    {
+      "source": "exp4-big/before/run.log",
+      "sha256": "a1dc723fe7c04ed19d178985c910d0c2bdd678ace3400899e0db5ebe1fc9b78c",
+      "bytes": 17008
+    },
+    {
+      "source": "exp4-big/after/run.log",
+      "sha256": "4184e6864b2de571422a5bf4c6cbc0d6712a08e08a616bc691d33ee574fd14d0",
+      "bytes": 16992
+    }
+  ]
+}

@@ -1,0 +1,101 @@
+{
+  "schema_version": 1,
+  "id": "legacy-results-local-experiments-sender-adoption-20261025-measureme-3336f3a88cd6",
+  "kind": "benchmark",
+  "label": "m3-confirm-aa-control-plan-short-4096",
+  "status": "imported",
+  "started_utc": "2026-10-25T16:29:34.698983+00:00",
+  "time_source": "original_file_mtime",
+  "imported_utc": "2026-10-25T16:34:21.610440+00:00",
+  "experiment_path": "results/local/experiments/sender-adoption-20261025/measurements/m3-confirm-aa-control-plan-short-4096",
+  "import_sha256": "3336f3a88cd66850989b16aaced506ca705df298a83447ec60cb69a6d009ead7",
+  "origin": "results/local/experiments/sender-adoption-20261025/measurements",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "binary_sha256": {
+      "before": "44684f86f27212fd2af6149c302cee3ea988417c686441694873d1673c399c21",
+      "after": "44684f86f27212fd2af6149c302cee3ea988417c686441694873d1673c399c21"
+    },
+    "comparison_kind": "A/A",
+    "common_arguments": [
+      "--case",
+      "plan-short-4096",
+      "--iterations",
+      "16384",
+      "--repeats",
+      "1"
+    ],
+    "allocations_diagnostic": false,
+    "repeats": 5,
+    "policy": "Fixed focused confirmation selected after noisy 1024-iteration screen. Alternating AB/BA; all samples retained; no warmup dropping.",
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "after",
+        "exit_code": 0
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "m3-confirm-aa-control-plan-short-4096/samples.csv",
+      "sha256": "bb2e4014d03d096521a699f2fb0a848a62a32bba8f3c755fe298ccfc84e89a01",
+      "bytes": 5983,
+      "saved": "raw/samples.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "m3-confirm-aa-control-plan-short-4096/paired-run.json",
+      "sha256": "a7df3e00b107ec45b588ed0a458fb00d041641f1ac078efd8b9a27d58e0841df",
+      "bytes": 21191
+    }
+  ]
+}

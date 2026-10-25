@@ -1,0 +1,145 @@
+{
+  "schema_version": 1,
+  "id": "legacy-results-local-experiments-sender-adoption-20261025-measureme-430fee1c3fa2",
+  "kind": "benchmark",
+  "label": "m2-ab-e2e-bigFiles",
+  "status": "imported",
+  "started_utc": "2026-10-25T16:23:47.299177+00:00",
+  "time_source": "original_file_mtime",
+  "imported_utc": "2026-10-25T16:34:21.543840+00:00",
+  "experiment_path": "results/local/experiments/sender-adoption-20261025/measurements/m2-ab-e2e-bigFiles",
+  "import_sha256": "430fee1c3fa26a71ad72f5aecd3035f09828642a8d5a52b2309b1f76093895da",
+  "origin": "results/local/experiments/sender-adoption-20261025/measurements",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "binary_sha256": {
+      "before": "13ef6769cc479141308fca41ffedd78bcca8cb6ea8f450a85018b965a1f1f963",
+      "after": "fa2b6ed72135d7e9260c670103c90dea91028d255ed8cad9c663bb15eb00822f"
+    },
+    "comparison_kind": "A/B",
+    "requested_readers": {
+      "before": 8,
+      "after": 8
+    },
+    "common_arguments": [
+      "--repeats",
+      "1",
+      "--shuffle-scenarios",
+      "--shuffle-seed",
+      "91",
+      "--source",
+      "E:\\projects\\cool_project\\fast-dump\\results\\local\\experiments\\sender-20261025\\fixtures\\bigFiles",
+      "--network-profile",
+      "loopback-localhost",
+      "--threads",
+      "4",
+      "--frames",
+      "64",
+      "--buffers",
+      "1024",
+      "--executor",
+      "default"
+    ],
+    "repeats_per_side": 5,
+    "policy": "AB then BA alternating; all samples retained; no automatic warmup or trimming",
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "after",
+        "exit_code": 0
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "m2-ab-e2e-bigFiles/before/run.log",
+      "sha256": "47f30dbbf27cbbc74cbc4bb0493371d4b4dda0db05a9db3af83d8804901f1a95",
+      "bytes": 17295,
+      "extracted_sha256": "08d21fce718ac1c6300bc54c3bd1ef583d1e054d5e80e157e2c41cc91adc9912",
+      "saved": "raw/before/resource_samples.csv"
+    },
+    {
+      "source": "m2-ab-e2e-bigFiles/before/results_raw.csv",
+      "sha256": "a6e376c4bad511396b15de710f4870f2c168d740aa806fc1749befa49a2ee37f",
+      "bytes": 4307,
+      "saved": "raw/before/results_raw.csv"
+    },
+    {
+      "source": "m2-ab-e2e-bigFiles/after/run.log",
+      "sha256": "dd4e2c37ca14c942ce72c2d87e772c2eca716bd463bb2a362c3a3f21ce311124",
+      "bytes": 17280,
+      "extracted_sha256": "31f64e7a7c254a743e85bd544d29cc753c4491295041685f2d2ab26952e904f9",
+      "saved": "raw/after/resource_samples.csv"
+    },
+    {
+      "source": "m2-ab-e2e-bigFiles/after/results_raw.csv",
+      "sha256": "301e34d64ae577960aee255756d51f83abcfa20bdfe68af9dc961ce819b1a25d",
+      "bytes": 4307,
+      "saved": "raw/after/results_raw.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "m2-ab-e2e-bigFiles/paired-run.json",
+      "sha256": "4ef8d19ef6d92199dc145712900331423bb7155fd02d3359aad9e89dfd7f7cae",
+      "bytes": 10571
+    },
+    {
+      "source": "m2-ab-e2e-bigFiles/before/run.log",
+      "sha256": "47f30dbbf27cbbc74cbc4bb0493371d4b4dda0db05a9db3af83d8804901f1a95",
+      "bytes": 17295
+    },
+    {
+      "source": "m2-ab-e2e-bigFiles/after/run.log",
+      "sha256": "dd4e2c37ca14c942ce72c2d87e772c2eca716bd463bb2a362c3a3f21ce311124",
+      "bytes": 17280
+    }
+  ]
+}

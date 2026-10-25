@@ -1,0 +1,145 @@
+{
+  "schema_version": 1,
+  "id": "legacy-results-local-experiments-sender-20261025-measurements-aa-st-2895170854ed",
+  "kind": "benchmark",
+  "label": "aa-startup-tree",
+  "status": "imported",
+  "started_utc": "2026-10-25T12:39:41.941309+00:00",
+  "time_source": "original_file_mtime",
+  "imported_utc": "2026-10-25T12:47:09.686171+00:00",
+  "experiment_path": "results/local/experiments/sender-20261025/measurements/aa-startup-tree",
+  "import_sha256": "2895170854edee4bdf1c6445744555b75e255981b039fd935f42892516b487f6",
+  "origin": "results/local/experiments/sender-20261025/measurements",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "binary_sha256": {
+      "before": "6a7f3a02b327c98f814c1b8406411dde2b030931cd2b52d86d1f82403fe2d011",
+      "after": "6a7f3a02b327c98f814c1b8406411dde2b030931cd2b52d86d1f82403fe2d011"
+    },
+    "comparison_kind": "A/A",
+    "requested_readers": {
+      "before": 8,
+      "after": 8
+    },
+    "common_arguments": [
+      "--repeats",
+      "1",
+      "--shuffle-scenarios",
+      "--shuffle-seed",
+      "91",
+      "--source",
+      "E:\\projects\\cool_project\\fast-dump\\results\\local\\experiments\\sender-20261025\\fixtures\\startup-tree",
+      "--network-profile",
+      "loopback-localhost",
+      "--threads",
+      "4",
+      "--frames",
+      "64",
+      "--buffers",
+      "1024",
+      "--executor",
+      "default"
+    ],
+    "repeats_per_side": 5,
+    "policy": "AB then BA alternating; all samples retained; no automatic warmup or trimming",
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "after",
+        "exit_code": 0
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "aa-startup-tree/before/run.log",
+      "sha256": "cb296387d97236f3c63743b2d285f99538fbb4d5f64a765689e9f61b91477d0f",
+      "bytes": 17115,
+      "extracted_sha256": "c1e87bbcdbc4a3bdb727deb93589bf37570c5f7af8c85b7866e72c2e6d939b0a",
+      "saved": "raw/before/resource_samples.csv"
+    },
+    {
+      "source": "aa-startup-tree/before/results_raw.csv",
+      "sha256": "73f36250371c9b98371424539f8166a91f191b9003eaab102801ad93c57a04ab",
+      "bytes": 4303,
+      "saved": "raw/before/results_raw.csv"
+    },
+    {
+      "source": "aa-startup-tree/after/run.log",
+      "sha256": "322094df9d51433fa0c394424b1fabbe52eaa9dfa146e5cafac58005f9bd96df",
+      "bytes": 17098,
+      "extracted_sha256": "ac6587b905091ca675af16af019526f29d3f78874da9e65174ac98cba5afce01",
+      "saved": "raw/after/resource_samples.csv"
+    },
+    {
+      "source": "aa-startup-tree/after/results_raw.csv",
+      "sha256": "372913a6da2bb8ebbe656f856e5789b121f5eea599b8659c1ccbe4ad757bdd3b",
+      "bytes": 4301,
+      "saved": "raw/after/results_raw.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "aa-startup-tree/paired-run.json",
+      "sha256": "2a4b74096323c6caa683985f5cf389636884023fc5bf724409f0964b95e2be24",
+      "bytes": 10570
+    },
+    {
+      "source": "aa-startup-tree/before/run.log",
+      "sha256": "cb296387d97236f3c63743b2d285f99538fbb4d5f64a765689e9f61b91477d0f",
+      "bytes": 17115
+    },
+    {
+      "source": "aa-startup-tree/after/run.log",
+      "sha256": "322094df9d51433fa0c394424b1fabbe52eaa9dfa146e5cafac58005f9bd96df",
+      "bytes": 17098
+    }
+  ]
+}

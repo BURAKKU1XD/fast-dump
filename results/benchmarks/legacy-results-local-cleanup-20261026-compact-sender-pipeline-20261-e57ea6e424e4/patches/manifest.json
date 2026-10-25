@@ -1,0 +1,72 @@
+{
+  "baseline_commit": "4c58969a1ac1d4fbf18675077cac105485f2f2ab",
+  "baseline_source_sha256": "177309d73b87f4517ba390f6f20825823698543c9a701a508c7abf340f1e603e",
+  "independent_candidates": {
+    "exp2-metadata": {
+      "source_sha256": "8c2d868cde9fe1d1bc70435c0302e251361019235e5a4d1120fd6d0f8c107d7d",
+      "changed_paths": [
+        "docs/runtime.md",
+        "src/sender/read.rs"
+      ],
+      "patch": {
+        "path": "patches/exp2-metadata.patch",
+        "sha256": "6a9e56a465fd28512a07c8373d64cd7b5d499737f8d13cd68aa17de339988583",
+        "bytes": 9221
+      },
+      "patch_base_source_sha256": "177309d73b87f4517ba390f6f20825823698543c9a701a508c7abf340f1e603e",
+      "patch_validation": "exact regenerated unified diff from baseline to candidate; text newline normalization follows package_sources.py"
+    },
+    "exp3-refill": {
+      "source_sha256": "509f3b7e883ee5875ca65ccc1ed413e6534bbc7a1e5e1eb32abe9546c3535b04",
+      "changed_paths": [
+        "docs/runtime.md",
+        "src/sender/read_ahead.rs",
+        "src/sender/scan.rs"
+      ],
+      "patch": {
+        "path": "patches/exp3-refill.patch",
+        "sha256": "0cd20fb837a72b83388729ac724f111fb4dd71179cd0c47582cf51f44e19a74d",
+        "bytes": 22186
+      },
+      "patch_base_source_sha256": "177309d73b87f4517ba390f6f20825823698543c9a701a508c7abf340f1e603e",
+      "patch_validation": "exact regenerated unified diff from baseline to candidate; text newline normalization follows package_sources.py"
+    },
+    "exp4-double-buffer": {
+      "source_sha256": "2241c507662920ed69262f90ec006729d47353d9af578e76ad04a2f4d99f66b4",
+      "changed_paths": [
+        "docs/benchmarks.md",
+        "docs/runtime.md",
+        "src/network/protocol.md",
+        "src/sender/stream.rs",
+        "src/sender/stream/source.rs",
+        "src/sender/tar.rs"
+      ],
+      "patch": {
+        "path": "patches/exp4-double-buffer.patch",
+        "sha256": "56ee42a0238e826790f46355b3dcb722276bf29c32371324d969ec540db5f222",
+        "bytes": 28180
+      },
+      "patch_base_source_sha256": "177309d73b87f4517ba390f6f20825823698543c9a701a508c7abf340f1e603e",
+      "patch_validation": "exact regenerated unified diff from baseline to candidate; text newline normalization follows package_sources.py"
+    },
+    "exp5-prefix": {
+      "source_sha256": "754b5afaa86d1d0e22bfa83675039fbf91224235fa01ba963663d007808bdce0",
+      "changed_paths": [
+        "docs/runtime.md",
+        "src/sender/file_bench.rs",
+        "src/sender/read.rs",
+        "src/sender/read/prefetch.rs",
+        "src/sender/read_ahead.rs",
+        "src/sender/stream.rs",
+        "src/sender/tar.rs"
+      ],
+      "patch": {
+        "path": "patches/exp5-prefix.patch",
+        "sha256": "d5cf51984d92bec84d722e4ba8d14f2e321769f76b69fb96bc1ff4e514717948",
+        "bytes": 34644
+      },
+      "patch_base_source_sha256": "177309d73b87f4517ba390f6f20825823698543c9a701a508c7abf340f1e603e",
+      "patch_validation": "exact regenerated unified diff from baseline to candidate; text newline normalization follows package_sources.py"
+    }
+  }
+}

@@ -1,0 +1,41 @@
+diff --git a/src/sender/read/prefetch.rs b/src/sender/read/prefetch.rs
+index 4111436..70e3844 100644
+--- a/src/sender/read/prefetch.rs
++++ b/src/sender/read/prefetch.rs
+@@ -328,17 +328,26 @@ fn finish_read_batch_with_budget(
+             bytes,
+             _reservation: reservation,
+         });
+-        for (outcome, entry) in outcomes.iter_mut().zip(shared_entries) {
+-            if let Some(entry) = entry {
+-                *outcome = Some(Ok(ReadDecision::Accepted(MaterializedEntry {
+-                    descriptor: entry.descriptor,
+-                    mode: entry.mode,
+-                    contents: EntryContents::Shared {
+-                        bytes: bytes.clone(),
+-                        range: entry.range,
+-                    },
+-                })));
++        let mut entries = outcomes
++            .iter_mut()
++            .zip(shared_entries)
++            .filter_map(|(outcome, entry)| entry.map(|entry| (outcome, entry)));
++        let accepted = |entry: SharedEntry, bytes| {
++            Some(Ok(ReadDecision::Accepted(MaterializedEntry {
++                descriptor: entry.descriptor,
++                mode: entry.mode,
++                contents: EntryContents::Shared {
++                    bytes,
++                    range: entry.range,
++                },
++            })))
++        };
++        if let Some((last_outcome, last_entry)) = entries.next_back() {
++            for (outcome, entry) in entries {
++                *outcome = accepted(entry, Arc::clone(&bytes));
+             }
++            // Последний успешный slice получает исходного владельца slab.
++            *last_outcome = accepted(last_entry, bytes);
+         }
+     }
+     outcomes

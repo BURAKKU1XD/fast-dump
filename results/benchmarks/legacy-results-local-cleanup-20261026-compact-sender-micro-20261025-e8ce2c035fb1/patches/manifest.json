@@ -1,0 +1,103 @@
+{
+  "snapshots": {
+    "baseline_original": {
+      "source_sha256": "177309d73b87f4517ba390f6f20825823698543c9a701a508c7abf340f1e603e",
+      "changed_paths": []
+    },
+    "baseline": {
+      "source_sha256": "8e612720caf664690f6c04f79574d253efc931f7bb9a6762aec11557dfdd700d",
+      "changed_paths": [
+        "Cargo.toml",
+        "benches/control_messages.rs",
+        "docs/benchmarks.md",
+        "src/network/control_bench.rs",
+        "src/network/mod.rs",
+        "src/sender/file_bench.rs"
+      ]
+    },
+    "m1-scan-tail": {
+      "source_sha256": "8c09cea9a8868de1e3fe2109035971e5b637d001b86155e33b1706ff593a048e",
+      "changed_paths": [
+        "src/sender/scan/producer.rs"
+      ]
+    },
+    "m2-subtree-move": {
+      "source_sha256": "1b5fb48dbb41fe20e273e2402da5e7e27d75f10976f6102ebc67ced12f50eb2c",
+      "changed_paths": [
+        "src/sender/scan/producer.rs"
+      ]
+    },
+    "m3-control-capacity": {
+      "source_sha256": "9e6a6c04c348e9a8ae17d5cf0823d08cc57cd632e91c52e79184572ce021f544",
+      "changed_paths": [
+        "docs/runtime.md",
+        "src/network/protocol/wire.rs",
+        "src/network/protocol/wire/codec.rs",
+        "src/sender/plan.rs"
+      ]
+    }
+  },
+  "patches": {
+    "common-harness": {
+      "path": "patches/common-harness.patch",
+      "sha256": "6585ce18248a7bdc992983e6b46d567bb4aa90fe27e48bc39eab4f941fb7eebd",
+      "bytes": 15856,
+      "base": "baseline_original",
+      "candidate": "baseline",
+      "base_source_sha256": "177309d73b87f4517ba390f6f20825823698543c9a701a508c7abf340f1e603e",
+      "candidate_source_sha256": "8e612720caf664690f6c04f79574d253efc931f7bb9a6762aec11557dfdd700d",
+      "changed_paths": [
+        "Cargo.toml",
+        "benches/control_messages.rs",
+        "docs/benchmarks.md",
+        "src/network/control_bench.rs",
+        "src/network/mod.rs",
+        "src/sender/file_bench.rs"
+      ]
+    },
+    "m1-scan-tail": {
+      "path": "patches/m1-scan-tail.patch",
+      "sha256": "c09a90ccca08f6656eb96571618faf0f393458f12098055c1ece9855f5d29407",
+      "bytes": 1680,
+      "base": "baseline",
+      "candidate": "m1-scan-tail",
+      "base_source_sha256": "8e612720caf664690f6c04f79574d253efc931f7bb9a6762aec11557dfdd700d",
+      "candidate_source_sha256": "8c09cea9a8868de1e3fe2109035971e5b637d001b86155e33b1706ff593a048e",
+      "changed_paths": [
+        "src/sender/scan/producer.rs"
+      ]
+    },
+    "m2-subtree-move": {
+      "path": "patches/m2-subtree-move.patch",
+      "sha256": "2c282e5294164b86edec9cf4281b3f191d2918e39b1abff3421de4ce8b97b4a4",
+      "bytes": 1414,
+      "base": "baseline",
+      "candidate": "m2-subtree-move",
+      "base_source_sha256": "8e612720caf664690f6c04f79574d253efc931f7bb9a6762aec11557dfdd700d",
+      "candidate_source_sha256": "1b5fb48dbb41fe20e273e2402da5e7e27d75f10976f6102ebc67ced12f50eb2c",
+      "changed_paths": [
+        "src/sender/scan/producer.rs"
+      ]
+    },
+    "m3-control-capacity": {
+      "path": "patches/m3-control-capacity.patch",
+      "sha256": "74237c3d865a7dfa3e16ae8f42b9ddf8f9a0ece8f03a0d89b19f81c005182aab",
+      "bytes": 15175,
+      "base": "baseline",
+      "candidate": "m3-control-capacity",
+      "base_source_sha256": "8e612720caf664690f6c04f79574d253efc931f7bb9a6762aec11557dfdd700d",
+      "candidate_source_sha256": "9e6a6c04c348e9a8ae17d5cf0823d08cc57cd632e91c52e79184572ce021f544",
+      "changed_paths": [
+        "docs/runtime.md",
+        "src/network/protocol/wire.rs",
+        "src/network/protocol/wire/codec.rs",
+        "src/sender/plan.rs"
+      ]
+    }
+  },
+  "manifest": {
+    "path": "source-manifests.json",
+    "sha256": "bac79b7d390378d06f8b5c463063728e842ad2eba51328444a8a1a830a23a990",
+    "bytes": 68099
+  }
+}

@@ -1,0 +1,565 @@
+diff --git a/Cargo.toml b/Cargo.toml
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -45,6 +45,16 @@
+ harness = false
+ required-features = ["bench-internals"]
+ 
++[[bench]]
++name = "progress_guard"
++harness = false
++required-features = ["bench-internals"]
++
++[[bench]]
++name = "observed_e2e"
++harness = false
++required-features = ["bench-internals"]
++
+ [profile.release]
+ lto = "thin"
+ codegen-units = 1
+diff --git a/src/sender/file_bench.rs b/src/sender/file_bench.rs
+--- a/src/sender/file_bench.rs
++++ b/src/sender/file_bench.rs
+@@ -151,6 +151,41 @@
+             allocations,
+         },
+     ))
++}
++
++pub(crate) fn measure_cpu_work<T>(
++    hooks: Option<AllocationHooks>,
++    work: impl FnOnce() -> Result<T>,
++) -> Result<(T, Measurement)> {
++    // Микробенч control использует те же OS snapshots, но не включает подготовку
++    // и освобождение fixture. Счётчики I/O этой обёрткой не публикуются.
++    let (result, interval) = timed(hooks, work)?;
++    let measurement = Measurement {
++        elapsed_ns: interval.wall_ns,
++        work_ns: interval.wall_ns,
++        user_ns: interval
++            .after
++            .user_ns
++            .saturating_sub(interval.before.user_ns),
++        kernel_ns: interval
++            .after
++            .kernel_ns
++            .saturating_sub(interval.before.kernel_ns),
++        cpu_cycles: interval
++            .after
++            .cpu_cycles
++            .zip(interval.before.cpu_cycles)
++            .and_then(|(after, before)| after.checked_sub(before)),
++        cycle_source: if cfg!(windows) {
++            "windows-process-cycle-time"
++        } else {
++            "unavailable"
++        },
++        process_peak_rss_bytes: interval.after.peak_rss_bytes,
++        allocations: interval.allocations,
++        ..Measurement::default()
++    };
++    Ok((result, measurement))
+ }
+ 
+ fn sum_delta(
+diff --git a/src/sender/mod.rs b/src/sender/mod.rs
+--- a/src/sender/mod.rs
++++ b/src/sender/mod.rs
+@@ -15,6 +15,9 @@
+ 
+ pub use crate::profile::{SenderProfile, StageProfile};
+ pub(crate) use compress::compress_tar_termination_frame;
++#[cfg(feature = "bench-internals")]
++#[doc(hidden)]
++pub use network::progress_bench;
+ pub(crate) use network::send_dump_controlled;
+ pub use network::{SendReport, send_dump, send_dump_profile};
+ pub use plan::BundlePlanOptions;
+diff --git a/src/sender/network.rs b/src/sender/network.rs
+--- a/src/sender/network.rs
++++ b/src/sender/network.rs
+@@ -1,5 +1,8 @@
+ mod ack;
+ mod planner;
++#[cfg(feature = "bench-internals")]
++#[doc(hidden)]
++pub mod progress_bench;
+ mod transfer;
+ 
+ use std::collections::VecDeque;
+diff --git a/src/sender/network/progress_bench.rs b/src/sender/network/progress_bench.rs
+new file mode 100644
+--- /dev/null
++++ b/src/sender/network/progress_bench.rs
+@@ -0,0 +1,61 @@
++//! Общий benchmark вызывает production sender scopes в обеих версиях исходников.
++
++mod observed;
++
++use std::hint::black_box;
++use std::sync::{Arc, mpsc};
++
++use anyhow::{Result, bail, ensure};
++
++use super::planner::{PlannedItem, receive_planned_item};
++use crate::progress::{PipelineStage, PipelineState, ProgressHub};
++use crate::role::Role;
++use crate::runtime::RunControl;
++use crate::sender::file_bench::{Measurement, measure_cpu_work};
++
++pub use observed::{ObservedMeasurement, measure_observed};
++
++pub fn measure_guard(case: &str, iterations: u64) -> Result<Measurement> {
++    ensure!(iterations > 0, "iterations must be positive");
++    let initial = match case {
++        "transition" | "none" => PipelineState::Idle,
++        "same-state" => PipelineState::WaitingPlan,
++        _ => bail!("unknown progress case: {case}"),
++    };
++    let run = RunControl::new(Some(Arc::new(ProgressHub::new())));
++    let session = run.session(Role::Sender, "progress-perf", "local");
++    let progress = session.progress().unwrap();
++    progress.set_stage(PipelineStage::Data, initial);
++    let references = Arc::strong_count(progress);
++    let control = (case != "none").then_some(&session);
++    let (sender, receiver) = mpsc::sync_channel(1);
++    let mut item = PlannedItem::Skips(Vec::new());
++
++    // Очередь и session созданы заранее. Один item возвращается в ту же bounded
++    // очередь; внутри интервала нет fixtures, потоков или benchmark-only guard.
++    // Измеряется реальный guard вместе с неизменным channel/cancellation путём.
++    let (item, mut measurement) = measure_cpu_work(None, || {
++        for _ in 0..iterations {
++            sender
++                .send(Ok(item))
++                .map_err(|_| anyhow::anyhow!("progress benchmark queue disconnected"))?;
++            item = black_box(receive_planned_item(
++                black_box(&receiver),
++                black_box(control),
++            )?);
++        }
++        black_box(&item);
++        Ok(item)
++    })?;
++
++    ensure!(matches!(item, PlannedItem::Skips(ref entries) if entries.is_empty()));
++    ensure!(
++        Arc::strong_count(progress) == references,
++        "guard retained progress"
++    );
++    let state = progress.snapshot().pipelines[PipelineStage::Data as usize].state;
++    ensure!(state == initial, "guard failed to restore stage");
++    measurement.fingerprint = xxhash_rust::xxh3::xxh3_64(case.as_bytes());
++    measurement.io_source = "unmeasured";
++    Ok(measurement)
++}
+diff --git a/src/sender/network/progress_bench/observed.rs b/src/sender/network/progress_bench/observed.rs
+new file mode 100644
+--- /dev/null
++++ b/src/sender/network/progress_bench/observed.rs
+@@ -0,0 +1,273 @@
++use std::fs::{self, File};
++use std::io::Read;
++use std::path::{Path, PathBuf};
++use std::sync::{Arc, mpsc};
++use std::thread;
++use std::time::{Duration, SystemTime, UNIX_EPOCH};
++
++use anyhow::{Context, Result, bail, ensure};
++use xxhash_rust::xxh3::Xxh3Default;
++
++use crate::network::transport::{BoundListener, connect_once};
++use crate::progress::ProgressHub;
++use crate::receiver::receive_dump_profile_controlled;
++use crate::role::Role;
++use crate::runtime::RunControl;
++use crate::sender::file_bench::{Measurement, measure_cpu_work};
++use crate::sender::{BundlePlanOptions, send_dump_controlled};
++
++const DUMP_ID: &str = "observation-perf";
++
++pub struct ObservedMeasurement {
++    pub resources: Measurement,
++    pub raw_read_bytes: u64,
++    pub compressed_payload_bytes: u64,
++    pub archive_bytes: u64,
++    pub snapshots: u64,
++}
++
++struct FixtureDirectory(PathBuf);
++
++impl FixtureDirectory {
++    fn new() -> Result<Self> {
++        let root = std::env::temp_dir();
++        let stamp = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
++        for sequence in 0..100 {
++            let path = root.join(format!(
++                "fast-dump-observed-perf-{}-{stamp}-{sequence}",
++                std::process::id()
++            ));
++            match fs::create_dir(&path) {
++                Ok(()) => return Ok(Self(path)),
++                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
++                Err(error) => return Err(error).context("create observed fixture"),
++            }
++        }
++        bail!("cannot reserve observed fixture directory")
++    }
++}
++
++impl Drop for FixtureDirectory {
++    fn drop(&mut self) {
++        // Удаляем только уникальную директорию, созданную этим экземпляром.
++        let _ = fs::remove_dir_all(&self.0);
++    }
++}
++
++struct ExpectedFile {
++    path: String,
++    bytes: Vec<u8>,
++}
++
++fn fixture(path: &Path, files: usize, bytes_per_file: usize) -> Result<Vec<ExpectedFile>> {
++    let mut state = 0x83b4_15e9_2d71_c6af_u64;
++    (0..files)
++        .map(|index| {
++            let mut bytes = vec![0; bytes_per_file];
++            for chunk in bytes.chunks_mut(8) {
++                state ^= state << 13;
++                state ^= state >> 7;
++                state ^= state << 17;
++                chunk.copy_from_slice(&state.to_le_bytes()[..chunk.len()]);
++            }
++            let file = ExpectedFile {
++                path: format!("{index:04}.bin"),
++                bytes,
++            };
++            fs::write(path.join(&file.path), &file.bytes)?;
++            Ok(file)
++        })
++        .collect()
++}
++
++fn verify_archive(path: &Path, expected: &[ExpectedFile]) -> Result<u64> {
++    let decoder = zstd::stream::read::Decoder::new(File::open(path)?)?;
++    let mut archive = tar::Archive::new(decoder);
++    let mut fingerprint = Xxh3Default::new();
++    let mut count = 0;
++    for entry in archive.entries()? {
++        let mut entry = entry?;
++        let expected = expected.get(count).context("unexpected archive entry")?;
++        ensure!(
++            entry.path()?.as_ref() == Path::new(&expected.path),
++            "archive path mismatch"
++        );
++        ensure!(
++            entry.header().entry_type().is_file(),
++            "archive type mismatch"
++        );
++        ensure!(entry.link_name()?.is_none(), "unexpected archive link");
++        ensure!(
++            entry.size() == expected.bytes.len() as u64,
++            "archive size mismatch"
++        );
++        let mut actual = Vec::new();
++        entry.read_to_end(&mut actual)?;
++        ensure!(
++            actual == expected.bytes,
++            "archive payload mismatch: {}",
++            expected.path
++        );
++        fingerprint.update(&(expected.path.len() as u64).to_le_bytes());
++        fingerprint.update(expected.path.as_bytes());
++        fingerprint.update(&(actual.len() as u64).to_le_bytes());
++        fingerprint.update(&actual);
++        count += 1;
++    }
++    ensure!(count == expected.len(), "archive entry count mismatch");
++    // Дочитывание всех frames проверяет footer zstd и второй нулевой блок tar.
++    let mut decoder = archive.into_inner();
++    let mut tail = [0_u8; 8192];
++    let mut tail_bytes = 0;
++    loop {
++        let count = decoder.read(&mut tail)?;
++        if count == 0 {
++            break;
++        }
++        ensure!(
++            tail[..count].iter().all(|byte| *byte == 0),
++            "nonzero archive tail"
++        );
++        tail_bytes += count;
++    }
++    ensure!(tail_bytes >= 512, "missing final tar zero block");
++    Ok(fingerprint.digest())
++}
++
++pub fn measure_observed(case: &str) -> Result<ObservedMeasurement> {
++    let (files, bytes_per_file) = match case {
++        "many-small" => (2_000, 4 * 1024),
++        "streamed-large" => (1, 64 * 1024 * 1024),
++        _ => bail!("unknown observed fixture: {case}"),
++    };
++    let source = FixtureDirectory::new()?;
++    let output = FixtureDirectory::new()?;
++    let expected = fixture(&source.0, files, bytes_per_file)?;
++    let hub = Arc::new(ProgressHub::new());
++    let run = RunControl::new(Some(Arc::clone(&hub)));
++    let sender = run.session(Role::Sender, DUMP_ID, "loopback");
++    let receiver = run.session(Role::Receiver, DUMP_ID, "loopback");
++    let listener = BoundListener::bind("127.0.0.1:0".parse()?)?;
++    let address = listener.local_addr();
++    let output_path = output.0.clone();
++    let source_path = source.0.clone();
++
++    // Fixture, транспорт, запуск потоков, verification и join observer находятся
++    // вне интервала. CPU включает sender, receiver и снимки observer без render.
++    let ((sent, received), mut resources, snapshots) = thread::scope(|scope| -> Result<_> {
++        let (receiver_ready, receive_ready) = mpsc::sync_channel(0);
++        let (begin, beginning) = mpsc::sync_channel(0);
++        let receive_worker = scope.spawn(move || -> Result<_> {
++            let session = listener.accept(Role::Receiver, None, None)?;
++            let _control = receiver.register(&session.control_stream)?;
++            let _data = receiver.register(&session.data_stream)?;
++            receiver_ready.send(())?;
++            beginning.recv()?;
++            receive_dump_profile_controlled(
++                session.control_stream,
++                session.data_stream,
++                output_path,
++                DUMP_ID,
++                &receiver,
++            )
++        });
++        let mut session = connect_once(Role::Sender, address, Some(DUMP_ID), None)?;
++        let _control = sender.register(&session.control_stream)?;
++        let _data = sender.register(&session.data_stream)?;
++        receive_ready.recv()?;
++        let (stop, stopping) = mpsc::channel::<()>();
++        let (ready, started) = mpsc::sync_channel(0);
++        let (start_observer, observe_started) = mpsc::sync_channel(0);
++        hub.log(log::Level::Info, "Performance sample started");
++        let observer_hub = &hub;
++        let observer = scope.spawn(move || {
++            let _ = ready.send(());
++            if observe_started.recv().is_err() {
++                return 0;
++            }
++            let mut snapshots = 0;
++            loop {
++                for session in observer_hub.sessions() {
++                    std::hint::black_box(session.snapshot());
++                }
++                std::hint::black_box(observer_hub.logs());
++                snapshots += 1;
++                if snapshots == 1 {
++                    let _ = ready.send(());
++                }
++                match stopping.recv_timeout(Duration::from_millis(200)) {
++                    Err(mpsc::RecvTimeoutError::Timeout) => {}
++                    Ok(()) | Err(mpsc::RecvTimeoutError::Disconnected) => return snapshots,
++                }
++            }
++        });
++        started.recv()?;
++        let measured = measure_cpu_work(None, || {
++            start_observer.send(())?;
++            // Первый снимок входит в измерение даже для transfer короче 200 ms.
++            started.recv()?;
++            begin.send(())?;
++            let sent = send_dump_controlled(
++                &mut session.control_stream,
++                &mut session.data_stream,
++                source_path,
++                DUMP_ID,
++                BundlePlanOptions {
++                    bundle_target_bytes: 8 * 1024 * 1024,
++                    compression_level: 3,
++                    compression_threads: 1,
++                    readers: 4,
++                },
++                &sender,
++            );
++            if sent.is_err() {
++                run.cancel();
++            }
++            let received = receive_worker
++                .join()
++                .map_err(|_| anyhow::anyhow!("observed receiver panicked"))?;
++            Ok((sent?, received?))
++        });
++        if measured.is_err() {
++            run.cancel();
++        }
++        drop(start_observer);
++        drop(begin);
++        drop(stop);
++        let snapshots = observer
++            .join()
++            .map_err(|_| anyhow::anyhow!("observer panicked"))?;
++        let (result, resources) = measured?;
++        ensure!(snapshots > 0, "observer did not run");
++        Ok((result, resources, snapshots))
++    })?;
++
++    let (sent, profile) = sent;
++    let (received, receiver_profile) = received;
++    ensure!(
++        sent.terminal_skip_count == 0 && profile.terminal_skips == 0,
++        "unexpected skips"
++    );
++    ensure!(
++        profile.bundle_aborts == 0 && profile.bundle_rebuilds == 0,
++        "unexpected retries"
++    );
++    ensure!(
++        profile.bundled_entries == files as u64,
++        "sender entry count mismatch"
++    );
++    let snapshot = sender.progress().unwrap().snapshot();
++    ensure!(snapshot.committed_entries == files as u64 && snapshot.scan_finished);
++    resources.entries = files as u64;
++    resources.files = files as u64;
++    resources.bytes = (files * bytes_per_file) as u64;
++    resources.fingerprint = verify_archive(&received.final_archive_path, &expected)?;
++    resources.io_source = "unmeasured";
++    Ok(ObservedMeasurement {
++        resources,
++        raw_read_bytes: profile.read.bytes,
++        compressed_payload_bytes: receiver_profile.bundle_write.bytes,
++        archive_bytes: fs::metadata(received.final_archive_path)?.len(),
++        snapshots,
++    })
++}
+diff --git a/benches/progress_guard.rs b/benches/progress_guard.rs
+new file mode 100644
+--- /dev/null
++++ b/benches/progress_guard.rs
+@@ -0,0 +1,46 @@
++use std::io::Write;
++
++use anyhow::{Result, ensure};
++use clap::Parser;
++use fast_dump::sender::progress_bench::measure_guard;
++
++#[path = "support/progress_metrics.rs"]
++mod progress_metrics;
++#[path = "support/run_output.rs"]
++mod run_output;
++
++#[derive(Parser)]
++#[command(about = "Measure actual sender progress scope with its queue/cancellation path")]
++struct Args {
++    #[arg(long, value_parser = ["transition", "same-state", "none"])]
++    case: String,
++    #[arg(long, default_value_t = 1_000_000)]
++    iterations: u64,
++    #[arg(long, default_value_t = 1)]
++    repeats: usize,
++    #[arg(long = "bench", hide = true)]
++    _bench: bool,
++}
++
++fn main() -> Result<()> {
++    let args = Args::parse();
++    ensure!(
++        args.iterations > 0 && args.repeats > 0,
++        "counts must be positive"
++    );
++    let output = run_output::create_run_dir("progress-guard")?;
++    let mut log = std::fs::File::create(output.join("run.log"))?;
++    for repeat in 1..=args.repeats {
++        let measurement = measure_guard(&args.case, args.iterations)?;
++        let line = format!(
++            "[progress-perf] stage=progress-guard case={} repeat={} iterations={} scope=progress_guard_channel_process interval=iterations_only {}",
++            args.case,
++            repeat,
++            args.iterations,
++            progress_metrics::format(&measurement),
++        );
++        println!("{line}");
++        writeln!(log, "{line}")?;
++    }
++    Ok(())
++}
+diff --git a/benches/observed_e2e.rs b/benches/observed_e2e.rs
+new file mode 100644
+--- /dev/null
++++ b/benches/observed_e2e.rs
+@@ -0,0 +1,46 @@
++use std::io::Write;
++
++use anyhow::{Result, ensure};
++use clap::Parser;
++use fast_dump::sender::progress_bench::measure_observed;
++
++#[path = "support/progress_metrics.rs"]
++mod progress_metrics;
++#[path = "support/run_output.rs"]
++mod run_output;
++
++#[derive(Parser)]
++#[command(
++    about = "Measure observed transfer with real progress snapshots and archive verification"
++)]
++struct Args {
++    #[arg(long, value_parser = ["many-small", "streamed-large"])]
++    fixture: String,
++    #[arg(long, default_value_t = 1)]
++    repeats: usize,
++    #[arg(long = "bench", hide = true)]
++    _bench: bool,
++}
++
++fn main() -> Result<()> {
++    let args = Args::parse();
++    ensure!(args.repeats > 0, "repeats must be positive");
++    let output = run_output::create_run_dir("observed-e2e")?;
++    let mut log = std::fs::File::create(output.join("run.log"))?;
++    for repeat in 1..=args.repeats {
++        let measurement = measure_observed(&args.fixture)?;
++        let line = format!(
++            "[observed-e2e-perf] stage=observed-e2e case={} repeat={} iterations=1 scope=sender_receiver_observer_process interval=transfer_and_first_snapshot readers=4 threads=1 level=3 frame_mib=8 observer_hz=5 raw_read_bytes={} compressed_payload_bytes={} archive_bytes={} skipped_files=0 frame_aborts=0 frame_rebuilds=0 total_terminal_skips=0 observer_snapshots={} {}",
++            args.fixture,
++            repeat,
++            measurement.raw_read_bytes,
++            measurement.compressed_payload_bytes,
++            measurement.archive_bytes,
++            measurement.snapshots,
++            progress_metrics::format(&measurement.resources),
++        );
++        println!("{line}");
++        writeln!(log, "{line}")?;
++    }
++    Ok(())
++}
+diff --git a/benches/support/progress_metrics.rs b/benches/support/progress_metrics.rs
+new file mode 100644
+--- /dev/null
++++ b/benches/support/progress_metrics.rs
+@@ -0,0 +1,24 @@
++use fast_dump::sender::file_bench::Measurement;
++
++pub(crate) fn format(measurement: &Measurement) -> String {
++    let cycles = measurement
++        .cpu_cycles
++        .map_or_else(|| "unmeasured".to_owned(), |value| value.to_string());
++    format!(
++        "entries={} files={} bytes={} elapsed_ns={} work_ns={} drop_ns={} cpu_ns={} user_ns={} kernel_ns={} cpu_cycles={} cycle_source={} io_source={} process_peak_rss_bytes={} fingerprint={:016x} verified=true counters_schema=2 allocator_instrumented=false allocations_enabled=false",
++        measurement.entries,
++        measurement.files,
++        measurement.bytes,
++        measurement.elapsed_ns,
++        measurement.work_ns,
++        measurement.drop_ns,
++        measurement.user_ns + measurement.kernel_ns,
++        measurement.user_ns,
++        measurement.kernel_ns,
++        cycles,
++        measurement.cycle_source,
++        measurement.io_source,
++        measurement.process_peak_rss_bytes,
++        measurement.fingerprint,
++    )
++}

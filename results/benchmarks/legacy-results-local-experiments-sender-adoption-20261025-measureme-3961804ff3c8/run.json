@@ -1,0 +1,151 @@
+{
+  "schema_version": 1,
+  "id": "legacy-results-local-experiments-sender-adoption-20261025-measureme-3961804ff3c8",
+  "kind": "benchmark",
+  "label": "m3-confirm-ab-control-plan-short-4096",
+  "status": "imported",
+  "started_utc": "2026-10-25T16:29:45.676014+00:00",
+  "time_source": "original_file_mtime",
+  "imported_utc": "2026-10-25T16:34:21.616142+00:00",
+  "experiment_path": "results/local/experiments/sender-adoption-20261025/measurements/m3-confirm-ab-control-plan-short-4096",
+  "import_sha256": "3961804ff3c83e5eb272f75e345432d48ea3ec56d0d64bee0d828616289c4b3a",
+  "origin": "results/local/experiments/sender-adoption-20261025/measurements",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "binary_sha256": {
+      "before": "44684f86f27212fd2af6149c302cee3ea988417c686441694873d1673c399c21",
+      "after": "4b754598449196c20761a5b87f00037baeee9ad4058862c60bc5fe269bbfc97d"
+    },
+    "comparison_kind": "A/B",
+    "common_arguments": [
+      "--case",
+      "plan-short-4096",
+      "--iterations",
+      "16384",
+      "--repeats",
+      "1"
+    ],
+    "allocations_diagnostic": false,
+    "repeats": 10,
+    "policy": "Fixed focused confirmation selected after noisy 1024-iteration screen. Alternating AB/BA; all samples retained; no warmup dropping.",
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 6,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 6,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 7,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 7,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 8,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 8,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 9,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 9,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 10,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 10,
+        "side": "before",
+        "exit_code": 0
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "m3-confirm-ab-control-plan-short-4096/samples.csv",
+      "sha256": "229fbf0871739422485a07301c58a80ffb5090988dc5d70ef5eb9163c318a3bb",
+      "bytes": 11456,
+      "saved": "raw/samples.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "m3-confirm-ab-control-plan-short-4096/paired-run.json",
+      "sha256": "42e1d41a218c298a8774d41d4926b622f01d4a9f4fdc0078dccec0f4d9d36864",
+      "bytes": 41725
+    }
+  ]
+}

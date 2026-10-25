@@ -1,0 +1,12 @@
+{
+  "decision": "reject_original_patch",
+  "parent_commit": "2a7c8eeeb70f9046a4629168d66d4fc0123f247e",
+  "analysis_sha256": "4039c01e144429dfdbda281c3908cac56bdbb3ca12dc8ab60f7927a502a84cd0",
+  "reason": "Valid speedup in 16384-iteration encoding workload does not resolve the prior confirmed regression in the 1024-iteration workload. Current short screen is inconclusive. Do not claim the current regression is confirmed or discard the positive longer-loop result. Original M3 not accepted; no redesign authorized.",
+  "original_production_patch": "E:\\projects\\cool_project\\fast-dump\\results\\local\\experiments\\sender-adoption-20261025\\patches\\m3-rejected.patch",
+  "targeted_checks": "checks/windows/m3/screen/checks.json",
+  "full_adoption_checks": "not run because original performance risk unresolved; M3 is not committed",
+  "rollback_complete": true,
+  "final_commit": "2a7c8eeeb70f9046a4629168d66d4fc0123f247e",
+  "final_source_matches_verified_m2": true
+}

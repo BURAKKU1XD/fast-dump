@@ -1,0 +1,101 @@
+{
+  "schema_version": 1,
+  "id": "legacy-results-local-experiments-sender-micro2-20261025-measurement-520ad6fcd9b2",
+  "kind": "benchmark",
+  "label": "progress-guard-same-state-1m-aa",
+  "status": "imported",
+  "started_utc": "2026-10-25T19:56:11.795199+00:00",
+  "time_source": "original_file_mtime",
+  "imported_utc": "2026-10-25T20:13:00.369283+00:00",
+  "experiment_path": "results/local/experiments/sender-micro2-20261025/measurements/progress-guard-same-state-1m-aa",
+  "import_sha256": "520ad6fcd9b2f7599ba6db860d7773418e00e7228dea3f959b6c921fba07ac24",
+  "origin": "results/local/experiments/sender-micro2-20261025/measurements",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "binary_sha256": {
+      "before": "5eb76cf74a7c41f5ad544c7487955fff0c78fcc748eaf2a67b55eb4947bc3254",
+      "after": "5eb76cf74a7c41f5ad544c7487955fff0c78fcc748eaf2a67b55eb4947bc3254"
+    },
+    "comparison_kind": "A/A",
+    "common_arguments": [
+      "--case",
+      "same-state",
+      "--iterations",
+      "1000000",
+      "--repeats",
+      "1"
+    ],
+    "allocations_diagnostic": false,
+    "repeats": 5,
+    "policy": "Alternating AB/BA; every observation retained; no dropped warmup or outliers.",
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "after",
+        "exit_code": 0
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "progress-guard-same-state-1m-aa/samples.csv",
+      "sha256": "ada6df494b73b6431ef604d50bcf1418266497f6c23528e3d74d422ff3f6f4b7",
+      "bytes": 4088,
+      "saved": "raw/samples.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "progress-guard-same-state-1m-aa/paired-run.json",
+      "sha256": "7bcadd6a6b4311d58a0107df39eee84d74fa996644780c104ef6daed0bbf39cf",
+      "bytes": 15130
+    }
+  ]
+}

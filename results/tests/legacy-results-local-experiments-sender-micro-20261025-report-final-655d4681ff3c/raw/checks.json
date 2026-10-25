@@ -1,0 +1,2263 @@
+{
+  "checks": {
+    "allocations/baseline/checks.json": {
+      "source": {
+        "path": "checks/allocations/baseline/checks.json",
+        "sha256": "d7fa681fdd9cbe1b3f21c84f8437450ee48237196936757298d65fbf9e29610a",
+        "bytes": 294
+      },
+      "observations": [
+        {
+          "candidate": "baseline",
+          "command": [
+            "cargo",
+            "build",
+            "--locked",
+            "--release",
+            "--features",
+            "bench-allocations",
+            "--bench",
+            "file_pipeline",
+            "--bench",
+            "control_messages"
+          ],
+          "exit_code": 0,
+          "seconds": 22.743353843688965,
+          "log_evidence": {
+            "path": "checks/allocations/baseline/build.log",
+            "sha256": "16e9eed916b639268029ac9543667f45bdbee9322a5dddcd88f394cd60d6c904",
+            "bytes": 195
+          },
+          "rust_suite_counts": []
+        }
+      ]
+    },
+    "allocations/m1-scan-tail/checks.json": {
+      "source": {
+        "path": "checks/allocations/m1-scan-tail/checks.json",
+        "sha256": "d4aa54870b833f315bfce1ed814d5de90295e8544487719b09923428f42652ee",
+        "bytes": 256
+      },
+      "observations": [
+        {
+          "candidate": "m1-scan-tail",
+          "command": [
+            "cargo",
+            "build",
+            "--locked",
+            "--release",
+            "--features",
+            "bench-allocations",
+            "--bench",
+            "file_pipeline"
+          ],
+          "exit_code": 0,
+          "seconds": 21.79329228401184,
+          "log_evidence": {
+            "path": "checks/allocations/m1-scan-tail/build.log",
+            "sha256": "f07ccd8072eb09f295c7aa3097a6ffe56fcff0bcccf9a2668591eccb68b94c74",
+            "bytes": 199
+          },
+          "rust_suite_counts": []
+        }
+      ]
+    },
+    "allocations/m2-subtree-move/checks.json": {
+      "source": {
+        "path": "checks/allocations/m2-subtree-move/checks.json",
+        "sha256": "7f60ad876452d435d75dacb6651b7b7e7a34bc63b0861c91a6ad33677ee96ee3",
+        "bytes": 259
+      },
+      "observations": [
+        {
+          "candidate": "m2-subtree-move",
+          "command": [
+            "cargo",
+            "build",
+            "--locked",
+            "--release",
+            "--features",
+            "bench-allocations",
+            "--bench",
+            "file_pipeline"
+          ],
+          "exit_code": 0,
+          "seconds": 22.20311141014099,
+          "log_evidence": {
+            "path": "checks/allocations/m2-subtree-move/build.log",
+            "sha256": "56305f27d05a557dc608dba5e750efa69944862f85342315838544115549b1d5",
+            "bytes": 202
+          },
+          "rust_suite_counts": []
+        }
+      ]
+    },
+    "allocations/m3-control-capacity/checks.json": {
+      "source": {
+        "path": "checks/allocations/m3-control-capacity/checks.json",
+        "sha256": "6dbf62043ccd09d3fb2fa57221fe60377a2a434987a0143e76b652767656a610",
+        "bytes": 266
+      },
+      "observations": [
+        {
+          "candidate": "m3-control-capacity",
+          "command": [
+            "cargo",
+            "build",
+            "--locked",
+            "--release",
+            "--features",
+            "bench-allocations",
+            "--bench",
+            "control_messages"
+          ],
+          "exit_code": 0,
+          "seconds": 21.91040277481079,
+          "log_evidence": {
+            "path": "checks/allocations/m3-control-capacity/build.log",
+            "sha256": "0ec64cef84d15e0a6ba30be4e27304cdc61d86dd2070f028d38e0d17b76bcb7c",
+            "bytes": 206
+          },
+          "rust_suite_counts": []
+        }
+      ]
+    },
+    "linux/baseline/attempt-01/checks.json": {
+      "source": {
+        "path": "checks/linux/baseline/attempt-01/checks.json",
+        "sha256": "545050c487a9c01a60b2013a7bbc434d7c723297648a9a09f3c93820f7698b1c",
+        "bytes": 2477
+      },
+      "observations": [
+        {
+          "candidate": "baseline",
+          "check": "fmt",
+          "command": [
+            "/home/test/.cargo/bin/cargo",
+            "fmt",
+            "--all",
+            "--check"
+          ],
+          "exit_code": 0,
+          "seconds": 0.7999733999999998,
+          "log": "/mnt/e/projects/cool_project/fast-dump/results/local/experiments/sender-micro-20261025/checks/linux/baseline/attempt-01/fmt.log",
+          "log_evidence": {
+            "path": "checks/linux/baseline/attempt-01/fmt.log",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "rust_suite_counts": []
+        },
+        {
+          "candidate": "baseline",
+          "check": "default",
+          "command": [
+            "/home/test/.cargo/bin/cargo",
+            "test",
+            "--offline",
+            "--locked",
+            "--quiet"
+          ],
+          "exit_code": 0,
+          "seconds": 51.817607033,
+          "log": "/mnt/e/projects/cool_project/fast-dump/results/local/experiments/sender-micro-20261025/checks/linux/baseline/attempt-01/default.log",
+          "log_evidence": {
+            "path": "checks/linux/baseline/attempt-01/default.log",
+            "sha256": "7495ea25b1bbb2c58d2be5ce4d4cffc12b3d31c22fa5f5e862a44a952fdad7d9",
+            "bytes": 1046
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 298,
+              "failed": 0,
+              "ignored": 3
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            },
+            {
+              "passed": 16,
+              "failed": 0,
+              "ignored": 1
+            },
+            {
+              "passed": 13,
+              "failed": 0,
+              "ignored": 3
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "candidate": "baseline",
+          "check": "all-features",
+          "command": [
+            "/home/test/.cargo/bin/cargo",
+            "test",
+            "--offline",
+            "--locked",
+            "--all-features",
+            "--quiet"
+          ],
+          "exit_code": 0,
+          "seconds": 15.964962114999999,
+          "log": "/mnt/e/projects/cool_project/fast-dump/results/local/experiments/sender-micro-20261025/checks/linux/baseline/attempt-01/all-features.log",
+          "log_evidence": {
+            "path": "checks/linux/baseline/attempt-01/all-features.log",
+            "sha256": "a79bf9679913149f33203ae7018f0dd7779f928c7742d9ba4d2d7b2b6d7e7831",
+            "bytes": 1055
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 304,
+              "failed": 0,
+              "ignored": 3
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            },
+            {
+              "passed": 3,
+              "failed": 0,
+              "ignored": 0
+            },
+            {
+              "passed": 16,
+              "failed": 0,
+              "ignored": 1
+            },
+            {
+              "passed": 13,
+              "failed": 0,
+              "ignored": 3
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "candidate": "baseline",
+          "check": "clippy",
+          "command": [
+            "/home/test/.cargo/bin/cargo",
+            "clippy",
+            "--offline",
+            "--locked",
+            "--all-targets",
+            "--all-features",
+            "--",
+            "-D",
+            "warnings"
+          ],
+          "exit_code": 0,
+          "seconds": 11.869472184000003,
+          "log": "/mnt/e/projects/cool_project/fast-dump/results/local/experiments/sender-micro-20261025/checks/linux/baseline/attempt-01/clippy.log",
+          "log_evidence": {
+            "path": "checks/linux/baseline/attempt-01/clippy.log",
+            "sha256": "d2a3b87ecc3f8bc6ecb3ec6a778717be08591b65fa52391a093b99d932c41f51",
+            "bytes": 3615
+          },
+          "rust_suite_counts": []
+        },
+        {
+          "candidate": "baseline",
+          "check": "benches",
+          "command": [
+            "/home/test/.cargo/bin/cargo",
+            "check",
+            "--offline",
+            "--locked",
+            "--benches",
+            "--all-features"
+          ],
+          "exit_code": 0,
+          "seconds": 3.051493034999993,
+          "log": "/mnt/e/projects/cool_project/fast-dump/results/local/experiments/sender-micro-20261025/checks/linux/baseline/attempt-01/benches.log",
+          "log_evidence": {
+            "path": "checks/linux/baseline/attempt-01/benches.log",
+            "sha256": "f3ee88b5f913510290ba14ffdc4362d86cc4db7276dd0745cdf3bad383e67582",
+            "bytes": 208
+          },
+          "rust_suite_counts": []
+        },
+        {
+          "candidate": "baseline",
+          "check": "python",
+          "command": [
+            "/usr/bin/python3",
+            "-B",
+            "-m",
+            "unittest",
+            "discover",
+            "-s",
+            "scripts",
+            "-p",
+            "test_*.py"
+          ],
+          "exit_code": 0,
+          "seconds": 0.6268831750000032,
+          "log": "/mnt/e/projects/cool_project/fast-dump/results/local/experiments/sender-micro-20261025/checks/linux/baseline/attempt-01/python.log",
+          "log_evidence": {
+            "path": "checks/linux/baseline/attempt-01/python.log",
+            "sha256": "98f3e596d7dbff726d30e9fc3c0c228523125419551ae8211155faa38a17db88",
+            "bytes": 154
+          },
+          "rust_suite_counts": []
+        }
+      ],
+      "environment": {
+        "candidate": "baseline",
+        "source": "/mnt/e/projects/cool_project/fast-dump/results/local/experiments/sender-micro-20261025/sources/baseline",
+        "target": "/tmp/fast-dump-sender-micro-20261025/baseline",
+        "seed": {
+          "reused_own_target": false,
+          "dependency_seed": null,
+          "copied_debug_directories": []
+        },
+        "python": "3.12.3 (main, Mar 23 2026, 19:04:32) [GCC 13.3.0]",
+        "rustc": "rustc 1.94.1 (e408947bf 2026-03-25)\nbinary: rustc\ncommit-hash: e408947bfd200af42db322daf0fadfe7e26d3bd1\ncommit-date: 2026-03-25\nhost: x86_64-unknown-linux-gnu\nrelease: 1.94.1\nLLVM version: 21.1.8\n",
+        "cargo": "cargo 1.94.1 (29ea6fb6a 2026-03-24)\n"
+      }
+    },
+    "linux/m1-scan-tail/attempt-01/checks.json": {
+      "source": {
+        "path": "checks/linux/m1-scan-tail/attempt-01/checks.json",
+        "sha256": "88279e8604472df569c0479b5fe92c734f5a0229c3f3344d4760873ee3f8bb55",
+        "bytes": 2530
+      },
+      "observations": [
+        {
+          "candidate": "m1-scan-tail",
+          "check": "fmt",
+          "command": [
+            "/home/test/.cargo/bin/cargo",
+            "fmt",
+            "--all",
+            "--check"
+          ],
+          "exit_code": 0,
+          "seconds": 0.8354343010000065,
+          "log": "/mnt/e/projects/cool_project/fast-dump/results/local/experiments/sender-micro-20261025/checks/linux/m1-scan-tail/attempt-01/fmt.log",
+          "log_evidence": {
+            "path": "checks/linux/m1-scan-tail/attempt-01/fmt.log",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "rust_suite_counts": []
+        },
+        {
+          "candidate": "m1-scan-tail",
+          "check": "default",
+          "command": [
+            "/home/test/.cargo/bin/cargo",
+            "test",
+            "--offline",
+            "--locked",
+            "--quiet"
+          ],
+          "exit_code": 0,
+          "seconds": 18.791383846000002,
+          "log": "/mnt/e/projects/cool_project/fast-dump/results/local/experiments/sender-micro-20261025/checks/linux/m1-scan-tail/attempt-01/default.log",
+          "log_evidence": {
+            "path": "checks/linux/m1-scan-tail/attempt-01/default.log",
+            "sha256": "49f4d1af72ff801e9dc4075fba3728a03b4dd59f9795c51c2bdb3621f8679b2b",
+            "bytes": 1046
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 298,
+              "failed": 0,
+              "ignored": 3
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            },
+            {
+              "passed": 16,
+              "failed": 0,
+              "ignored": 1
+            },
+            {
+              "passed": 13,
+              "failed": 0,
+              "ignored": 3
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "candidate": "m1-scan-tail",
+          "check": "all-features",
+          "command": [
+            "/home/test/.cargo/bin/cargo",
+            "test",
+            "--offline",
+            "--locked",
+            "--all-features",
+            "--quiet"
+          ],
+          "exit_code": 0,
+          "seconds": 19.041985800999996,
+          "log": "/mnt/e/projects/cool_project/fast-dump/results/local/experiments/sender-micro-20261025/checks/linux/m1-scan-tail/attempt-01/all-features.log",
+          "log_evidence": {
+            "path": "checks/linux/m1-scan-tail/attempt-01/all-features.log",
+            "sha256": "f65772d19fb54ad1b0a156cd22d4a29d6e81b977a87722056bef26f0579079c3",
+            "bytes": 1055
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 304,
+              "failed": 0,
+              "ignored": 3
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            },
+            {
+              "passed": 3,
+              "failed": 0,
+              "ignored": 0
+            },
+            {
+              "passed": 16,
+              "failed": 0,
+              "ignored": 1
+            },
+            {
+              "passed": 13,
+              "failed": 0,
+              "ignored": 3
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "candidate": "m1-scan-tail",
+          "check": "clippy",
+          "command": [
+            "/home/test/.cargo/bin/cargo",
+            "clippy",
+            "--offline",
+            "--locked",
+            "--all-targets",
+            "--all-features",
+            "--",
+            "-D",
+            "warnings"
+          ],
+          "exit_code": 0,
+          "seconds": 4.176795026999997,
+          "log": "/mnt/e/projects/cool_project/fast-dump/results/local/experiments/sender-micro-20261025/checks/linux/m1-scan-tail/attempt-01/clippy.log",
+          "log_evidence": {
+            "path": "checks/linux/m1-scan-tail/attempt-01/clippy.log",
+            "sha256": "877b663ec006ed31ac77b623e465ca005ede512a1808d3624524c71744883c87",
+            "bytes": 212
+          },
+          "rust_suite_counts": []
+        },
+        {
+          "candidate": "m1-scan-tail",
+          "check": "benches",
+          "command": [
+            "/home/test/.cargo/bin/cargo",
+            "check",
+            "--offline",
+            "--locked",
+            "--benches",
+            "--all-features"
+          ],
+          "exit_code": 0,
+          "seconds": 3.196659269999998,
+          "log": "/mnt/e/projects/cool_project/fast-dump/results/local/experiments/sender-micro-20261025/checks/linux/m1-scan-tail/attempt-01/benches.log",
+          "log_evidence": {
+            "path": "checks/linux/m1-scan-tail/attempt-01/benches.log",
+            "sha256": "7a2ea7a903cd19ecc3560de8caf5fdee71a328f5bfb6c57709b792644180c21b",
+            "bytes": 212
+          },
+          "rust_suite_counts": []
+        },
+        {
+          "candidate": "m1-scan-tail",
+          "check": "python",
+          "command": [
+            "/usr/bin/python3",
+            "-B",
+            "-m",
+            "unittest",
+            "discover",
+            "-s",
+            "scripts",
+            "-p",
+            "test_*.py"
+          ],
+          "exit_code": 0,
+          "seconds": 0.6612414909999984,
+          "log": "/mnt/e/projects/cool_project/fast-dump/results/local/experiments/sender-micro-20261025/checks/linux/m1-scan-tail/attempt-01/python.log",
+          "log_evidence": {
+            "path": "checks/linux/m1-scan-tail/attempt-01/python.log",
+            "sha256": "bcdad4c8cdc1b3da3d2d1084ca1b607c8338a044bfa46c4be98d6095b2f25170",
+            "bytes": 154
+          },
+          "rust_suite_counts": []
+        }
+      ],
+      "environment": {
+        "candidate": "m1-scan-tail",
+        "source": "/mnt/e/projects/cool_project/fast-dump/results/local/experiments/sender-micro-20261025/sources/m1-scan-tail",
+        "target": "/tmp/fast-dump-sender-micro-20261025/m1-scan-tail",
+        "seed": {
+          "reused_own_target": false,
+          "dependency_seed": "/tmp/fast-dump-sender-micro-20261025/baseline",
+          "copied_debug_directories": [
+            ".fingerprint",
+            "build",
+            "deps"
+          ]
+        },
+        "python": "3.12.3 (main, Mar 23 2026, 19:04:32) [GCC 13.3.0]",
+        "rustc": "rustc 1.94.1 (e408947bf 2026-03-25)\nbinary: rustc\ncommit-hash: e408947bfd200af42db322daf0fadfe7e26d3bd1\ncommit-date: 2026-03-25\nhost: x86_64-unknown-linux-gnu\nrelease: 1.94.1\nLLVM version: 21.1.8\n",
+        "cargo": "cargo 1.94.1 (29ea6fb6a 2026-03-24)\n"
+      }
+    },
+    "linux/m2-subtree-move/attempt-01/checks.json": {
+      "source": {
+        "path": "checks/linux/m2-subtree-move/attempt-01/checks.json",
+        "sha256": "a5d26a41b9d4e8221f3a0899f3ef75221fb6ac9b7b6258cdd3c1178067f6fc12",
+        "bytes": 2567
+      },
+      "observations": [
+        {
+          "candidate": "m2-subtree-move",
+          "check": "fmt",
+          "command": [
+            "/home/test/.cargo/bin/cargo",
+            "fmt",
+            "--all",
+            "--check"
+          ],
+          "exit_code": 0,
+          "seconds": 0.8127236539999956,
+          "log": "/mnt/e/projects/cool_project/fast-dump/results/local/experiments/sender-micro-20261025/checks/linux/m2-subtree-move/attempt-01/fmt.log",
+          "log_evidence": {
+            "path": "checks/linux/m2-subtree-move/attempt-01/fmt.log",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "rust_suite_counts": []
+        },
+        {
+          "candidate": "m2-subtree-move",
+          "check": "default",
+          "command": [
+            "/home/test/.cargo/bin/cargo",
+            "test",
+            "--offline",
+            "--locked",
+            "--quiet"
+          ],
+          "exit_code": 0,
+          "seconds": 14.720382665000017,
+          "log": "/mnt/e/projects/cool_project/fast-dump/results/local/experiments/sender-micro-20261025/checks/linux/m2-subtree-move/attempt-01/default.log",
+          "log_evidence": {
+            "path": "checks/linux/m2-subtree-move/attempt-01/default.log",
+            "sha256": "8a0c5631e7edf9ced4cb91abf26bcf03b76e4ceec2d680a3eb6ae297d5a22087",
+            "bytes": 1046
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 298,
+              "failed": 0,
+              "ignored": 3
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            },
+            {
+              "passed": 16,
+              "failed": 0,
+              "ignored": 1
+            },
+            {
+              "passed": 13,
+              "failed": 0,
+              "ignored": 3
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "candidate": "m2-subtree-move",
+          "check": "all-features",
+          "command": [
+            "/home/test/.cargo/bin/cargo",
+            "test",
+            "--offline",
+            "--locked",
+            "--all-features",
+            "--quiet"
+          ],
+          "exit_code": 0,
+          "seconds": 28.324701526999974,
+          "log": "/mnt/e/projects/cool_project/fast-dump/results/local/experiments/sender-micro-20261025/checks/linux/m2-subtree-move/attempt-01/all-features.log",
+          "log_evidence": {
+            "path": "checks/linux/m2-subtree-move/attempt-01/all-features.log",
+            "sha256": "b2362bdf8ccc804a0f359af6b63e6835408fdc2202d7ef17ed95889d0ac1704c",
+            "bytes": 1055
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 304,
+              "failed": 0,
+              "ignored": 3
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            },
+            {
+              "passed": 3,
+              "failed": 0,
+              "ignored": 0
+            },
+            {
+              "passed": 16,
+              "failed": 0,
+              "ignored": 1
+            },
+            {
+              "passed": 13,
+              "failed": 0,
+              "ignored": 3
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "candidate": "m2-subtree-move",
+          "check": "clippy",
+          "command": [
+            "/home/test/.cargo/bin/cargo",
+            "clippy",
+            "--offline",
+            "--locked",
+            "--all-targets",
+            "--all-features",
+            "--",
+            "-D",
+            "warnings"
+          ],
+          "exit_code": 0,
+          "seconds": 5.314667804999999,
+          "log": "/mnt/e/projects/cool_project/fast-dump/results/local/experiments/sender-micro-20261025/checks/linux/m2-subtree-move/attempt-01/clippy.log",
+          "log_evidence": {
+            "path": "checks/linux/m2-subtree-move/attempt-01/clippy.log",
+            "sha256": "491961459089d6ddd96864609b398c5c86c46f470b4f6f257718d1b9ddac45ac",
+            "bytes": 215
+          },
+          "rust_suite_counts": []
+        },
+        {
+          "candidate": "m2-subtree-move",
+          "check": "benches",
+          "command": [
+            "/home/test/.cargo/bin/cargo",
+            "check",
+            "--offline",
+            "--locked",
+            "--benches",
+            "--all-features"
+          ],
+          "exit_code": 0,
+          "seconds": 3.0513236759999813,
+          "log": "/mnt/e/projects/cool_project/fast-dump/results/local/experiments/sender-micro-20261025/checks/linux/m2-subtree-move/attempt-01/benches.log",
+          "log_evidence": {
+            "path": "checks/linux/m2-subtree-move/attempt-01/benches.log",
+            "sha256": "24adda3a651777d5e6aed0c9e980038a1cc8e0eee87c183b8d4b9d85878a286e",
+            "bytes": 215
+          },
+          "rust_suite_counts": []
+        },
+        {
+          "candidate": "m2-subtree-move",
+          "check": "python",
+          "command": [
+            "/usr/bin/python3",
+            "-B",
+            "-m",
+            "unittest",
+            "discover",
+            "-s",
+            "scripts",
+            "-p",
+            "test_*.py"
+          ],
+          "exit_code": 0,
+          "seconds": 0.6061431859999971,
+          "log": "/mnt/e/projects/cool_project/fast-dump/results/local/experiments/sender-micro-20261025/checks/linux/m2-subtree-move/attempt-01/python.log",
+          "log_evidence": {
+            "path": "checks/linux/m2-subtree-move/attempt-01/python.log",
+            "sha256": "71b5e629f38d10921d4cb77e209f21cd9083d91880b8c005493b217390c87194",
+            "bytes": 154
+          },
+          "rust_suite_counts": []
+        }
+      ],
+      "environment": {
+        "candidate": "m2-subtree-move",
+        "source": "/mnt/e/projects/cool_project/fast-dump/results/local/experiments/sender-micro-20261025/sources/m2-subtree-move",
+        "target": "/tmp/fast-dump-sender-micro-20261025/m2-subtree-move",
+        "seed": {
+          "reused_own_target": false,
+          "dependency_seed": "/tmp/fast-dump-sender-micro-20261025/baseline",
+          "copied_debug_directories": [
+            ".fingerprint",
+            "build",
+            "deps"
+          ]
+        },
+        "python": "3.12.3 (main, Mar 23 2026, 19:04:32) [GCC 13.3.0]",
+        "rustc": "rustc 1.94.1 (e408947bf 2026-03-25)\nbinary: rustc\ncommit-hash: e408947bfd200af42db322daf0fadfe7e26d3bd1\ncommit-date: 2026-03-25\nhost: x86_64-unknown-linux-gnu\nrelease: 1.94.1\nLLVM version: 21.1.8\n",
+        "cargo": "cargo 1.94.1 (29ea6fb6a 2026-03-24)\n"
+      }
+    },
+    "linux/m3-control-capacity/attempt-01/checks.json": {
+      "source": {
+        "path": "checks/linux/m3-control-capacity/attempt-01/checks.json",
+        "sha256": "432ebfa18455ca201a325c972b8f49c8ee17920ba6991040d768bc4689082d79",
+        "bytes": 2615
+      },
+      "observations": [
+        {
+          "candidate": "m3-control-capacity",
+          "check": "fmt",
+          "command": [
+            "/home/test/.cargo/bin/cargo",
+            "fmt",
+            "--all",
+            "--check"
+          ],
+          "exit_code": 0,
+          "seconds": 0.8405144390000032,
+          "log": "/mnt/e/projects/cool_project/fast-dump/results/local/experiments/sender-micro-20261025/checks/linux/m3-control-capacity/attempt-01/fmt.log",
+          "log_evidence": {
+            "path": "checks/linux/m3-control-capacity/attempt-01/fmt.log",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "rust_suite_counts": []
+        },
+        {
+          "candidate": "m3-control-capacity",
+          "check": "default",
+          "command": [
+            "/home/test/.cargo/bin/cargo",
+            "test",
+            "--offline",
+            "--locked",
+            "--quiet"
+          ],
+          "exit_code": 0,
+          "seconds": 14.218555595999987,
+          "log": "/mnt/e/projects/cool_project/fast-dump/results/local/experiments/sender-micro-20261025/checks/linux/m3-control-capacity/attempt-01/default.log",
+          "log_evidence": {
+            "path": "checks/linux/m3-control-capacity/attempt-01/default.log",
+            "sha256": "ea2d5b122c6235cbae5d366fbd1b18f826359087bd2fd32251e3d673e8904501",
+            "bytes": 1052
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 304,
+              "failed": 0,
+              "ignored": 3
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            },
+            {
+              "passed": 16,
+              "failed": 0,
+              "ignored": 1
+            },
+            {
+              "passed": 13,
+              "failed": 0,
+              "ignored": 3
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "candidate": "m3-control-capacity",
+          "check": "all-features",
+          "command": [
+            "/home/test/.cargo/bin/cargo",
+            "test",
+            "--offline",
+            "--locked",
+            "--all-features",
+            "--quiet"
+          ],
+          "exit_code": 0,
+          "seconds": 13.797146862999995,
+          "log": "/mnt/e/projects/cool_project/fast-dump/results/local/experiments/sender-micro-20261025/checks/linux/m3-control-capacity/attempt-01/all-features.log",
+          "log_evidence": {
+            "path": "checks/linux/m3-control-capacity/attempt-01/all-features.log",
+            "sha256": "23aec653e2d389109a12f65f1f6116ec048c3e9297f282dbd4458ef78d4b5547",
+            "bytes": 1061
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 310,
+              "failed": 0,
+              "ignored": 3
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            },
+            {
+              "passed": 3,
+              "failed": 0,
+              "ignored": 0
+            },
+            {
+              "passed": 16,
+              "failed": 0,
+              "ignored": 1
+            },
+            {
+              "passed": 13,
+              "failed": 0,
+              "ignored": 3
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "candidate": "m3-control-capacity",
+          "check": "clippy",
+          "command": [
+            "/home/test/.cargo/bin/cargo",
+            "clippy",
+            "--offline",
+            "--locked",
+            "--all-targets",
+            "--all-features",
+            "--",
+            "-D",
+            "warnings"
+          ],
+          "exit_code": 0,
+          "seconds": 3.968463366000009,
+          "log": "/mnt/e/projects/cool_project/fast-dump/results/local/experiments/sender-micro-20261025/checks/linux/m3-control-capacity/attempt-01/clippy.log",
+          "log_evidence": {
+            "path": "checks/linux/m3-control-capacity/attempt-01/clippy.log",
+            "sha256": "e9747a985013a685f2cfba8baed5b73c047fefa6a934a11547ce1ebae7ba7306",
+            "bytes": 219
+          },
+          "rust_suite_counts": []
+        },
+        {
+          "candidate": "m3-control-capacity",
+          "check": "benches",
+          "command": [
+            "/home/test/.cargo/bin/cargo",
+            "check",
+            "--offline",
+            "--locked",
+            "--benches",
+            "--all-features"
+          ],
+          "exit_code": 0,
+          "seconds": 2.7574869200000194,
+          "log": "/mnt/e/projects/cool_project/fast-dump/results/local/experiments/sender-micro-20261025/checks/linux/m3-control-capacity/attempt-01/benches.log",
+          "log_evidence": {
+            "path": "checks/linux/m3-control-capacity/attempt-01/benches.log",
+            "sha256": "4404a3b780398fac4c3d15e976f3b3c2cfde078cbeb89090e2132342aa7be0df",
+            "bytes": 219
+          },
+          "rust_suite_counts": []
+        },
+        {
+          "candidate": "m3-control-capacity",
+          "check": "python",
+          "command": [
+            "/usr/bin/python3",
+            "-B",
+            "-m",
+            "unittest",
+            "discover",
+            "-s",
+            "scripts",
+            "-p",
+            "test_*.py"
+          ],
+          "exit_code": 0,
+          "seconds": 0.6566780849999816,
+          "log": "/mnt/e/projects/cool_project/fast-dump/results/local/experiments/sender-micro-20261025/checks/linux/m3-control-capacity/attempt-01/python.log",
+          "log_evidence": {
+            "path": "checks/linux/m3-control-capacity/attempt-01/python.log",
+            "sha256": "23306341ce11d894be058527575e10ba936787fcbb7c64e15bf8aeda8fa29ec8",
+            "bytes": 154
+          },
+          "rust_suite_counts": []
+        }
+      ],
+      "environment": {
+        "candidate": "m3-control-capacity",
+        "source": "/mnt/e/projects/cool_project/fast-dump/results/local/experiments/sender-micro-20261025/sources/m3-control-capacity",
+        "target": "/tmp/fast-dump-sender-micro-20261025/m3-control-capacity",
+        "seed": {
+          "reused_own_target": false,
+          "dependency_seed": "/tmp/fast-dump-sender-micro-20261025/baseline",
+          "copied_debug_directories": [
+            ".fingerprint",
+            "build",
+            "deps"
+          ]
+        },
+        "python": "3.12.3 (main, Mar 23 2026, 19:04:32) [GCC 13.3.0]",
+        "rustc": "rustc 1.94.1 (e408947bf 2026-03-25)\nbinary: rustc\ncommit-hash: e408947bfd200af42db322daf0fadfe7e26d3bd1\ncommit-date: 2026-03-25\nhost: x86_64-unknown-linux-gnu\nrelease: 1.94.1\nLLVM version: 21.1.8\n",
+        "cargo": "cargo 1.94.1 (29ea6fb6a 2026-03-24)\n"
+      }
+    },
+    "windows/baseline/attempt-01/checks.json": {
+      "source": {
+        "path": "checks/windows/baseline/attempt-01/checks.json",
+        "sha256": "47337ceb4d2a5f5a6ac9804503a2f592056b06e92082464d13946cbc5f99a81f",
+        "bytes": 1815
+      },
+      "observations": [
+        {
+          "candidate": "baseline",
+          "check": "fmt",
+          "command": [
+            "cargo",
+            "fmt",
+            "--all",
+            "--check"
+          ],
+          "exit_code": 0,
+          "seconds": 0.48099303245544434,
+          "log_evidence": {
+            "path": "checks/windows/baseline/attempt-01/fmt.log",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "rust_suite_counts": []
+        },
+        {
+          "candidate": "baseline",
+          "check": "default",
+          "command": [
+            "cargo",
+            "test",
+            "--locked",
+            "--quiet"
+          ],
+          "exit_code": 0,
+          "seconds": 18.67482352256775,
+          "log_evidence": {
+            "path": "checks/windows/baseline/attempt-01/default.log",
+            "sha256": "260a3109b604181d4e1341511ce9a9ee1da3bb62f95bbc7ce156dd5b22853cfa",
+            "bytes": 1037
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 290,
+              "failed": 0,
+              "ignored": 3
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            },
+            {
+              "passed": 15,
+              "failed": 0,
+              "ignored": 1
+            },
+            {
+              "passed": 14,
+              "failed": 0,
+              "ignored": 2
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "candidate": "baseline",
+          "check": "all-features",
+          "command": [
+            "cargo",
+            "test",
+            "--locked",
+            "--all-features",
+            "--quiet"
+          ],
+          "exit_code": 0,
+          "seconds": 17.52046513557434,
+          "log_evidence": {
+            "path": "checks/windows/baseline/attempt-01/all-features.log",
+            "sha256": "afe428d18a5d1c4bd6392f7f70801e4ab0b70c0580dc09af0454553d3dc3ad8d",
+            "bytes": 1045
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 295,
+              "failed": 0,
+              "ignored": 3
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            },
+            {
+              "passed": 3,
+              "failed": 0,
+              "ignored": 0
+            },
+            {
+              "passed": 15,
+              "failed": 0,
+              "ignored": 1
+            },
+            {
+              "passed": 14,
+              "failed": 0,
+              "ignored": 2
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "candidate": "baseline",
+          "check": "clippy",
+          "command": [
+            "cargo",
+            "clippy",
+            "--locked",
+            "--all-targets",
+            "--all-features",
+            "--",
+            "-D",
+            "warnings"
+          ],
+          "exit_code": 0,
+          "seconds": 4.1085193157196045,
+          "log_evidence": {
+            "path": "checks/windows/baseline/attempt-01/clippy.log",
+            "sha256": "5e3723696a16299f6d0a431b91127c064ac82458bed90171c851dfef2d1e4928",
+            "bytes": 204
+          },
+          "rust_suite_counts": []
+        },
+        {
+          "candidate": "baseline",
+          "check": "benches",
+          "command": [
+            "cargo",
+            "check",
+            "--locked",
+            "--benches",
+            "--all-features"
+          ],
+          "exit_code": 0,
+          "seconds": 3.203705310821533,
+          "log_evidence": {
+            "path": "checks/windows/baseline/attempt-01/benches.log",
+            "sha256": "0eb99622165bf2b1dc9ecf63754f4df98d8ec3693fedfd57e910373aee9dcd58",
+            "bytes": 204
+          },
+          "rust_suite_counts": []
+        },
+        {
+          "candidate": "baseline",
+          "check": "python",
+          "command": [
+            "python",
+            "-B",
+            "-m",
+            "unittest",
+            "discover",
+            "-s",
+            "scripts",
+            "-p",
+            "test_*.py"
+          ],
+          "exit_code": 0,
+          "seconds": 2.902827024459839,
+          "log_evidence": {
+            "path": "checks/windows/baseline/attempt-01/python.log",
+            "sha256": "72ac41e1442b5f5a4ddad6a79b84d940df836795ab4173721d1ae3c4c9b575e3",
+            "bytes": 159
+          },
+          "rust_suite_counts": []
+        },
+        {
+          "candidate": "baseline",
+          "check": "release",
+          "command": [
+            "cargo",
+            "build",
+            "--locked",
+            "--release",
+            "--bin",
+            "fast-dump",
+            "--benches",
+            "--features",
+            "bench-internals"
+          ],
+          "exit_code": 0,
+          "seconds": 72.29438185691833,
+          "log_evidence": {
+            "path": "checks/windows/baseline/attempt-01/release.log",
+            "sha256": "5d7df081f3f0696d7abc9d8e078155920512c3523c460af7ea40b0f5a2251775",
+            "bytes": 195
+          },
+          "rust_suite_counts": []
+        }
+      ]
+    },
+    "windows/m1-scan-tail/attempt-01/checks.json": {
+      "source": {
+        "path": "checks/windows/m1-scan-tail/attempt-01/checks.json",
+        "sha256": "c9d1a6973adb83c64323f59758a1b56b0ef953f80e068a23a693ee3e6f9ea4cc",
+        "bytes": 1841
+      },
+      "observations": [
+        {
+          "candidate": "m1-scan-tail",
+          "check": "fmt",
+          "command": [
+            "cargo",
+            "fmt",
+            "--all",
+            "--check"
+          ],
+          "exit_code": 0,
+          "seconds": 0.47300195693969727,
+          "log_evidence": {
+            "path": "checks/windows/m1-scan-tail/attempt-01/fmt.log",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "rust_suite_counts": []
+        },
+        {
+          "candidate": "m1-scan-tail",
+          "check": "default",
+          "command": [
+            "cargo",
+            "test",
+            "--locked",
+            "--quiet"
+          ],
+          "exit_code": 0,
+          "seconds": 18.73979616165161,
+          "log_evidence": {
+            "path": "checks/windows/m1-scan-tail/attempt-01/default.log",
+            "sha256": "9aa7080f732b6530e734422b7c356b32bb375e16346d30c2c9b32222b2f5a35e",
+            "bytes": 1037
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 290,
+              "failed": 0,
+              "ignored": 3
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            },
+            {
+              "passed": 15,
+              "failed": 0,
+              "ignored": 1
+            },
+            {
+              "passed": 14,
+              "failed": 0,
+              "ignored": 2
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "candidate": "m1-scan-tail",
+          "check": "all-features",
+          "command": [
+            "cargo",
+            "test",
+            "--locked",
+            "--all-features",
+            "--quiet"
+          ],
+          "exit_code": 0,
+          "seconds": 17.34825372695923,
+          "log_evidence": {
+            "path": "checks/windows/m1-scan-tail/attempt-01/all-features.log",
+            "sha256": "3c6460d7d78302bd081a5a98bab72a2fe869f9039420f68e0dd34951cab8a360",
+            "bytes": 1045
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 295,
+              "failed": 0,
+              "ignored": 3
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            },
+            {
+              "passed": 3,
+              "failed": 0,
+              "ignored": 0
+            },
+            {
+              "passed": 15,
+              "failed": 0,
+              "ignored": 1
+            },
+            {
+              "passed": 14,
+              "failed": 0,
+              "ignored": 2
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "candidate": "m1-scan-tail",
+          "check": "clippy",
+          "command": [
+            "cargo",
+            "clippy",
+            "--locked",
+            "--all-targets",
+            "--all-features",
+            "--",
+            "-D",
+            "warnings"
+          ],
+          "exit_code": 0,
+          "seconds": 4.2894127368927,
+          "log_evidence": {
+            "path": "checks/windows/m1-scan-tail/attempt-01/clippy.log",
+            "sha256": "2115b494313f1669fdc877fcd2886e5e1ac229652e7ba59baf96dc21f7c8b51b",
+            "bytes": 208
+          },
+          "rust_suite_counts": []
+        },
+        {
+          "candidate": "m1-scan-tail",
+          "check": "benches",
+          "command": [
+            "cargo",
+            "check",
+            "--locked",
+            "--benches",
+            "--all-features"
+          ],
+          "exit_code": 0,
+          "seconds": 3.202157735824585,
+          "log_evidence": {
+            "path": "checks/windows/m1-scan-tail/attempt-01/benches.log",
+            "sha256": "a4b6822047db6a86c9585b5df5e0602d86918232bdaca851cf3e3a25100aa41a",
+            "bytes": 208
+          },
+          "rust_suite_counts": []
+        },
+        {
+          "candidate": "m1-scan-tail",
+          "check": "python",
+          "command": [
+            "python",
+            "-B",
+            "-m",
+            "unittest",
+            "discover",
+            "-s",
+            "scripts",
+            "-p",
+            "test_*.py"
+          ],
+          "exit_code": 0,
+          "seconds": 2.6565723419189453,
+          "log_evidence": {
+            "path": "checks/windows/m1-scan-tail/attempt-01/python.log",
+            "sha256": "0674868d2fb1f7fbf7fe63a50310c51183cda07b87d077c965f0a6a74085a7f5",
+            "bytes": 159
+          },
+          "rust_suite_counts": []
+        },
+        {
+          "candidate": "m1-scan-tail",
+          "check": "release",
+          "command": [
+            "cargo",
+            "build",
+            "--locked",
+            "--release",
+            "--bin",
+            "fast-dump",
+            "--benches",
+            "--features",
+            "bench-internals"
+          ],
+          "exit_code": 0,
+          "seconds": 72.19910025596619,
+          "log_evidence": {
+            "path": "checks/windows/m1-scan-tail/attempt-01/release.log",
+            "sha256": "17066bd6e388bb16f0ebac8cb95d73883bd55e8f90fd97b7fcf57d4df3a01dcb",
+            "bytes": 199
+          },
+          "rust_suite_counts": []
+        }
+      ]
+    },
+    "windows/m2-subtree-move/attempt-01/checks.json": {
+      "source": {
+        "path": "checks/windows/m2-subtree-move/attempt-01/checks.json",
+        "sha256": "8272173c296ac2088a735251a115deb82a2ad1ff8023b7f00cb85fb3a316c982",
+        "bytes": 1861
+      },
+      "observations": [
+        {
+          "candidate": "m2-subtree-move",
+          "check": "fmt",
+          "command": [
+            "cargo",
+            "fmt",
+            "--all",
+            "--check"
+          ],
+          "exit_code": 0,
+          "seconds": 0.525094747543335,
+          "log_evidence": {
+            "path": "checks/windows/m2-subtree-move/attempt-01/fmt.log",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "rust_suite_counts": []
+        },
+        {
+          "candidate": "m2-subtree-move",
+          "check": "default",
+          "command": [
+            "cargo",
+            "test",
+            "--locked",
+            "--quiet"
+          ],
+          "exit_code": 0,
+          "seconds": 18.68978786468506,
+          "log_evidence": {
+            "path": "checks/windows/m2-subtree-move/attempt-01/default.log",
+            "sha256": "179d24cb639d2dd84adbd2b1c63e86fca305a6bdf1f7a06c38abb3bfffa8a2a3",
+            "bytes": 1037
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 290,
+              "failed": 0,
+              "ignored": 3
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            },
+            {
+              "passed": 15,
+              "failed": 0,
+              "ignored": 1
+            },
+            {
+              "passed": 14,
+              "failed": 0,
+              "ignored": 2
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "candidate": "m2-subtree-move",
+          "check": "all-features",
+          "command": [
+            "cargo",
+            "test",
+            "--locked",
+            "--all-features",
+            "--quiet"
+          ],
+          "exit_code": 0,
+          "seconds": 18.64211082458496,
+          "log_evidence": {
+            "path": "checks/windows/m2-subtree-move/attempt-01/all-features.log",
+            "sha256": "6f5733a4fd99a8898ee5e0b23543eb145478b13da74e0d1b007d11f8fc7a40ad",
+            "bytes": 1045
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 295,
+              "failed": 0,
+              "ignored": 3
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            },
+            {
+              "passed": 3,
+              "failed": 0,
+              "ignored": 0
+            },
+            {
+              "passed": 15,
+              "failed": 0,
+              "ignored": 1
+            },
+            {
+              "passed": 14,
+              "failed": 0,
+              "ignored": 2
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "candidate": "m2-subtree-move",
+          "check": "clippy",
+          "command": [
+            "cargo",
+            "clippy",
+            "--locked",
+            "--all-targets",
+            "--all-features",
+            "--",
+            "-D",
+            "warnings"
+          ],
+          "exit_code": 0,
+          "seconds": 4.558231592178345,
+          "log_evidence": {
+            "path": "checks/windows/m2-subtree-move/attempt-01/clippy.log",
+            "sha256": "65d7925efad9f0ed9f59ea0fa3131ee8a356f1d5a899b31261b31ac785dbb5be",
+            "bytes": 211
+          },
+          "rust_suite_counts": []
+        },
+        {
+          "candidate": "m2-subtree-move",
+          "check": "benches",
+          "command": [
+            "cargo",
+            "check",
+            "--locked",
+            "--benches",
+            "--all-features"
+          ],
+          "exit_code": 0,
+          "seconds": 3.0225906372070312,
+          "log_evidence": {
+            "path": "checks/windows/m2-subtree-move/attempt-01/benches.log",
+            "sha256": "db9bc73533a4e3323ef0d487f18ae64b1735d7664e99a2ffeff1471fce6e66a0",
+            "bytes": 211
+          },
+          "rust_suite_counts": []
+        },
+        {
+          "candidate": "m2-subtree-move",
+          "check": "python",
+          "command": [
+            "python",
+            "-B",
+            "-m",
+            "unittest",
+            "discover",
+            "-s",
+            "scripts",
+            "-p",
+            "test_*.py"
+          ],
+          "exit_code": 0,
+          "seconds": 1.872518539428711,
+          "log_evidence": {
+            "path": "checks/windows/m2-subtree-move/attempt-01/python.log",
+            "sha256": "11c98474bed91e30ae5f834c7a76bade684cbd31a0c8ddbaf7c4903234c7bee5",
+            "bytes": 159
+          },
+          "rust_suite_counts": []
+        },
+        {
+          "candidate": "m2-subtree-move",
+          "check": "release",
+          "command": [
+            "cargo",
+            "build",
+            "--locked",
+            "--release",
+            "--bin",
+            "fast-dump",
+            "--benches",
+            "--features",
+            "bench-internals"
+          ],
+          "exit_code": 0,
+          "seconds": 68.5536515712738,
+          "log_evidence": {
+            "path": "checks/windows/m2-subtree-move/attempt-01/release.log",
+            "sha256": "a3c0f3e7fbd7737bb7bbf4a4bade359d3a50d9e0daa62b170d6cdb4bd618a6e2",
+            "bytes": 202
+          },
+          "rust_suite_counts": []
+        }
+      ]
+    },
+    "windows/m3-control-capacity/attempt-01/checks.json": {
+      "source": {
+        "path": "checks/windows/m3-control-capacity/attempt-01/checks.json",
+        "sha256": "2aff9e249a8add4917174e8c8bf9316f2c7570d5d8c0277b5870d23e2992b4dc",
+        "bytes": 1892
+      },
+      "observations": [
+        {
+          "candidate": "m3-control-capacity",
+          "check": "fmt",
+          "command": [
+            "cargo",
+            "fmt",
+            "--all",
+            "--check"
+          ],
+          "exit_code": 0,
+          "seconds": 0.5115020275115967,
+          "log_evidence": {
+            "path": "checks/windows/m3-control-capacity/attempt-01/fmt.log",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "rust_suite_counts": []
+        },
+        {
+          "candidate": "m3-control-capacity",
+          "check": "default",
+          "command": [
+            "cargo",
+            "test",
+            "--locked",
+            "--quiet"
+          ],
+          "exit_code": 0,
+          "seconds": 18.64334487915039,
+          "log_evidence": {
+            "path": "checks/windows/m3-control-capacity/attempt-01/default.log",
+            "sha256": "24228d630c9c88a7577a8015813882fe2e4198c17a48d6d6328091b1627d0db7",
+            "bytes": 1043
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 296,
+              "failed": 0,
+              "ignored": 3
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            },
+            {
+              "passed": 15,
+              "failed": 0,
+              "ignored": 1
+            },
+            {
+              "passed": 14,
+              "failed": 0,
+              "ignored": 2
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "candidate": "m3-control-capacity",
+          "check": "all-features",
+          "command": [
+            "cargo",
+            "test",
+            "--locked",
+            "--all-features",
+            "--quiet"
+          ],
+          "exit_code": 0,
+          "seconds": 18.459126710891724,
+          "log_evidence": {
+            "path": "checks/windows/m3-control-capacity/attempt-01/all-features.log",
+            "sha256": "4fe662dfa494af5ff4e2638fb67c5d61733bfa115fa216545e76ab0ec2e5224f",
+            "bytes": 1051
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 301,
+              "failed": 0,
+              "ignored": 3
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            },
+            {
+              "passed": 3,
+              "failed": 0,
+              "ignored": 0
+            },
+            {
+              "passed": 15,
+              "failed": 0,
+              "ignored": 1
+            },
+            {
+              "passed": 14,
+              "failed": 0,
+              "ignored": 2
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "candidate": "m3-control-capacity",
+          "check": "clippy",
+          "command": [
+            "cargo",
+            "clippy",
+            "--locked",
+            "--all-targets",
+            "--all-features",
+            "--",
+            "-D",
+            "warnings"
+          ],
+          "exit_code": 0,
+          "seconds": 4.532743692398071,
+          "log_evidence": {
+            "path": "checks/windows/m3-control-capacity/attempt-01/clippy.log",
+            "sha256": "5acbaffd99a931e3ceb5ebcaa76d028dad4ff95e2df39369ba2daff38c5ec017",
+            "bytes": 215
+          },
+          "rust_suite_counts": []
+        },
+        {
+          "candidate": "m3-control-capacity",
+          "check": "benches",
+          "command": [
+            "cargo",
+            "check",
+            "--locked",
+            "--benches",
+            "--all-features"
+          ],
+          "exit_code": 0,
+          "seconds": 2.9903581142425537,
+          "log_evidence": {
+            "path": "checks/windows/m3-control-capacity/attempt-01/benches.log",
+            "sha256": "a61a258182aca017c3abbd15efff700666287e8efa701a1e9d8421517deeb373",
+            "bytes": 215
+          },
+          "rust_suite_counts": []
+        },
+        {
+          "candidate": "m3-control-capacity",
+          "check": "python",
+          "command": [
+            "python",
+            "-B",
+            "-m",
+            "unittest",
+            "discover",
+            "-s",
+            "scripts",
+            "-p",
+            "test_*.py"
+          ],
+          "exit_code": 0,
+          "seconds": 2.070312738418579,
+          "log_evidence": {
+            "path": "checks/windows/m3-control-capacity/attempt-01/python.log",
+            "sha256": "f5f5280c2306d91b5fb48a572b2c95d352f88c35483cb02a958f310eac8df0c4",
+            "bytes": 159
+          },
+          "rust_suite_counts": []
+        },
+        {
+          "candidate": "m3-control-capacity",
+          "check": "release",
+          "command": [
+            "cargo",
+            "build",
+            "--locked",
+            "--release",
+            "--bin",
+            "fast-dump",
+            "--benches",
+            "--features",
+            "bench-internals"
+          ],
+          "exit_code": 0,
+          "seconds": 68.88415360450745,
+          "log_evidence": {
+            "path": "checks/windows/m3-control-capacity/attempt-01/release.log",
+            "sha256": "2c5838be86263c86f357253b7e55f0532ab748b105306a2a0fab909307d84b26",
+            "bytes": 206
+          },
+          "rust_suite_counts": []
+        }
+      ]
+    }
+  },
+  "additional_checks": {
+    "provenance": {
+      "baseline_commit": "4c58969a1ac1d4fbf18675077cac105485f2f2ab",
+      "compiler": {
+        "recorded_windows_identity": "rustc 1.93.1 (01f6ddf75 2026-02-11)\nbinary: rustc\ncommit-hash: 01f6ddf7588f42ae2d7eb0a2f21d44e8e96674cf\ncommit-date: 2026-02-11\nhost: x86_64-pc-windows-msvc\nrelease: 1.93.1\nLLVM version: 21.1.8\n",
+        "identity_text_sha256": "f133056ecf1576257a2bcb9da126bfb7e84725ccc144caee31dc2f70b42f6f20",
+        "executable_path": "C:\\Users\\SAIKODEV\\.rustup\\toolchains\\stable-x86_64-pc-windows-msvc\\bin\\rustc.exe",
+        "executable_sha256": "830890c09c00c504a860016bb34903a5df44bddb8115dc8db15cbf23d5464a2b",
+        "executable_observed_utc": "2026-10-25T13:57:46.449263+00:00",
+        "scope": "Executable hashed during final packaging, not at build time; identity matches recorded build rustc -vV. Linux compiler identities are retained per check environment."
+      },
+      "sources": {
+        "snapshots": {
+          "baseline_original": {
+            "source_sha256": "177309d73b87f4517ba390f6f20825823698543c9a701a508c7abf340f1e603e",
+            "changed_paths": []
+          },
+          "baseline": {
+            "source_sha256": "8e612720caf664690f6c04f79574d253efc931f7bb9a6762aec11557dfdd700d",
+            "changed_paths": [
+              "Cargo.toml",
+              "benches/control_messages.rs",
+              "docs/benchmarks.md",
+              "src/network/control_bench.rs",
+              "src/network/mod.rs",
+              "src/sender/file_bench.rs"
+            ]
+          },
+          "m1-scan-tail": {
+            "source_sha256": "8c09cea9a8868de1e3fe2109035971e5b637d001b86155e33b1706ff593a048e",
+            "changed_paths": [
+              "src/sender/scan/producer.rs"
+            ]
+          },
+          "m2-subtree-move": {
+            "source_sha256": "1b5fb48dbb41fe20e273e2402da5e7e27d75f10976f6102ebc67ced12f50eb2c",
+            "changed_paths": [
+              "src/sender/scan/producer.rs"
+            ]
+          },
+          "m3-control-capacity": {
+            "source_sha256": "9e6a6c04c348e9a8ae17d5cf0823d08cc57cd632e91c52e79184572ce021f544",
+            "changed_paths": [
+              "docs/runtime.md",
+              "src/network/protocol/wire.rs",
+              "src/network/protocol/wire/codec.rs",
+              "src/sender/plan.rs"
+            ]
+          }
+        },
+        "patches": {
+          "common-harness": {
+            "path": "patches/common-harness.patch",
+            "sha256": "6585ce18248a7bdc992983e6b46d567bb4aa90fe27e48bc39eab4f941fb7eebd",
+            "bytes": 15856,
+            "base": "baseline_original",
+            "candidate": "baseline",
+            "base_source_sha256": "177309d73b87f4517ba390f6f20825823698543c9a701a508c7abf340f1e603e",
+            "candidate_source_sha256": "8e612720caf664690f6c04f79574d253efc931f7bb9a6762aec11557dfdd700d",
+            "changed_paths": [
+              "Cargo.toml",
+              "benches/control_messages.rs",
+              "docs/benchmarks.md",
+              "src/network/control_bench.rs",
+              "src/network/mod.rs",
+              "src/sender/file_bench.rs"
+            ]
+          },
+          "m1-scan-tail": {
+            "path": "patches/m1-scan-tail.patch",
+            "sha256": "c09a90ccca08f6656eb96571618faf0f393458f12098055c1ece9855f5d29407",
+            "bytes": 1680,
+            "base": "baseline",
+            "candidate": "m1-scan-tail",
+            "base_source_sha256": "8e612720caf664690f6c04f79574d253efc931f7bb9a6762aec11557dfdd700d",
+            "candidate_source_sha256": "8c09cea9a8868de1e3fe2109035971e5b637d001b86155e33b1706ff593a048e",
+            "changed_paths": [
+              "src/sender/scan/producer.rs"
+            ]
+          },
+          "m2-subtree-move": {
+            "path": "patches/m2-subtree-move.patch",
+            "sha256": "2c282e5294164b86edec9cf4281b3f191d2918e39b1abff3421de4ce8b97b4a4",
+            "bytes": 1414,
+            "base": "baseline",
+            "candidate": "m2-subtree-move",
+            "base_source_sha256": "8e612720caf664690f6c04f79574d253efc931f7bb9a6762aec11557dfdd700d",
+            "candidate_source_sha256": "1b5fb48dbb41fe20e273e2402da5e7e27d75f10976f6102ebc67ced12f50eb2c",
+            "changed_paths": [
+              "src/sender/scan/producer.rs"
+            ]
+          },
+          "m3-control-capacity": {
+            "path": "patches/m3-control-capacity.patch",
+            "sha256": "74237c3d865a7dfa3e16ae8f42b9ddf8f9a0ece8f03a0d89b19f81c005182aab",
+            "bytes": 15175,
+            "base": "baseline",
+            "candidate": "m3-control-capacity",
+            "base_source_sha256": "8e612720caf664690f6c04f79574d253efc931f7bb9a6762aec11557dfdd700d",
+            "candidate_source_sha256": "9e6a6c04c348e9a8ae17d5cf0823d08cc57cd632e91c52e79184572ce021f544",
+            "changed_paths": [
+              "docs/runtime.md",
+              "src/network/protocol/wire.rs",
+              "src/network/protocol/wire/codec.rs",
+              "src/sender/plan.rs"
+            ]
+          }
+        },
+        "manifest": {
+          "path": "source-manifests.json",
+          "sha256": "bac79b7d390378d06f8b5c463063728e842ad2eba51328444a8a1a830a23a990",
+          "bytes": 68099
+        }
+      },
+      "binary_sha256": {
+        "baseline": {
+          "fast-dump": "5ebfb0d3900b5bb934a24982f4f015aa873c0388af76bdb2dafc036d504a029b",
+          "loopback_send_dump": "2ccde76544b70aa323099f8c073af1581c07cee147b2a56e9a16c2b6c1c8fd5f",
+          "file_pipeline": "4ab0df8217ace933c56efa148a6d8e339d66c3b0155259b8ecffe1726ea14b34",
+          "control_messages": "307016122ad4372f78bebfffa361262c2f2b9347b3f86c29c38d2427cd97503c"
+        },
+        "baseline-alloc": {
+          "file_pipeline": "b50593f9b036ba0c9da5fb70dc18bfcae5b2c0adc8b69c07d127edca40c87204",
+          "control_messages": "1ff3d3d38cef144ef69b55c05d3f2657307500efc6e19ccfcb924b3fe64c0d28"
+        },
+        "m1-scan-tail": {
+          "fast-dump": "05ab0dda36243c8667bff633e6b1953c56d3e8edfba2c1d860580b9fa47d2aa2",
+          "loopback_send_dump": "13ef6769cc479141308fca41ffedd78bcca8cb6ea8f450a85018b965a1f1f963",
+          "file_pipeline": "147a73d653da69129702dbfe874a8cbdc27bbc179e272ec296501816d029327d",
+          "control_messages": "dc17c8ba29e73ba009888fc7054fbba5a3fe944dd1083a69cb12618ccc2840eb"
+        },
+        "m1-scan-tail-alloc": {
+          "file_pipeline": "77536d06466f1ee923385968a6842db5223d43e558b46dcc5392872a0bda614f"
+        },
+        "m2-subtree-move": {
+          "fast-dump": "8c3680a933303fd25c8e7ca9e0033fb7b9fe0c3194d6cd18fcf98e0cdc151850",
+          "loopback_send_dump": "ce35312b0ebf5a109690dafd4d5698915fd7ab4c90443e7805c3e559cea294fb",
+          "file_pipeline": "1f3272e84e10e344011ef749acc45b312bbe536a2954060620600b7265c98830",
+          "control_messages": "c35d5e0e48dca4603ddb05a85526260cb4678dc3a191c9129394fb93bcf31c2d"
+        },
+        "m2-subtree-move-alloc": {
+          "file_pipeline": "10a53aabd4fc2fc0690150244ed9fe353b197d3d68ffdb95c2d9e816c43e3e1b"
+        },
+        "m3-control-capacity": {
+          "fast-dump": "b8249b92d8b04bc3ca959c0e044b8dbd55c3d47f1a4a6aff2a667de61b7d4182",
+          "loopback_send_dump": "4007176bf7ef94dee709ecd4a9427902127c6e274c9ba01141596bd5013460a0",
+          "file_pipeline": "afeb5201144cc6cb215b12a247be7b122d23dd11dca1ba90de902e0ef01433b2",
+          "control_messages": "e0ad9a7e3fd14cd01da549f589cdff1e2ee3cb70c6d7843ce7ae4b121d3477a6"
+        },
+        "m3-control-capacity-alloc": {
+          "control_messages": "61419853e110b924f56cdd8c0f9fbbf2f4344ed302ef84e23065588b99d4147a"
+        }
+      },
+      "analysis": {
+        "path": "analysis.json",
+        "sha256": "766c82ba3482629bf11c893d77cf6c7158e6c26e1191c54247f66c1c32b21cd2",
+        "bytes": 7606858
+      },
+      "fixtures": {
+        "paths": {
+          "manySmallFiles": "E:\\projects\\cool_project\\fast-dump\\results\\local\\experiments\\sender-20261025\\fixtures\\manySmallFiles",
+          "bigFiles": "E:\\projects\\cool_project\\fast-dump\\results\\local\\experiments\\sender-20261025\\fixtures\\bigFiles",
+          "mixed": "E:\\projects\\cool_project\\fast-dump\\results\\local\\experiments\\sender-20261025\\fixtures\\mixed",
+          "wide-tree": "E:\\projects\\cool_project\\fast-dump\\results\\local\\experiments\\sender-micro-20261025\\fixtures\\wide-tree"
+        },
+        "wide_tree": {
+          "directories": 512,
+          "files": 4096,
+          "bytes": 2355178,
+          "sha256_path_and_content_digest": "d792b470db7895fcdbfe8c4fb24f72c864e00d33005f9914e3cf9a3aaecf6fd6"
+        },
+        "prior_fixture_source": "E:\\projects\\cool_project\\fast-dump\\results\\local\\experiments\\sender-20261025\\fixtures",
+        "cache": "uncontrolled; verification can warm later samples"
+      },
+      "analysis_script": {
+        "path": "analyze_measurements.py",
+        "sha256": "e5dccebf9e25cc8d6e182c813c3d0e5defd143b8daa6e83910d62a653cb4685c",
+        "bytes": 31964
+      },
+      "measurement_driver": {
+        "path": "run_measurements.py",
+        "sha256": "0c88cb1861c9692abb1e49354483eee730ece465c32e7437d409160428e7374f",
+        "bytes": 8012
+      },
+      "patch_apply_checks": [
+        {
+          "patch": "common-harness.patch",
+          "command": [
+            "git",
+            "apply",
+            "--check",
+            "--",
+            "E:\\projects\\cool_project\\fast-dump\\results\\local\\experiments\\sender-micro-20261025\\patches\\common-harness.patch"
+          ],
+          "cwd": "E:\\projects\\cool_project\\fast-dump",
+          "sha256": "6585ce18248a7bdc992983e6b46d567bb4aa90fe27e48bc39eab4f941fb7eebd",
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "patch": "m1-scan-tail.patch",
+          "command": [
+            "git",
+            "apply",
+            "--check",
+            "--",
+            "E:\\projects\\cool_project\\fast-dump\\results\\local\\experiments\\sender-micro-20261025\\patches\\m1-scan-tail.patch"
+          ],
+          "cwd": "E:\\projects\\cool_project\\fast-dump",
+          "sha256": "c09a90ccca08f6656eb96571618faf0f393458f12098055c1ece9855f5d29407",
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "patch": "m2-subtree-move.patch",
+          "command": [
+            "git",
+            "apply",
+            "--check",
+            "--",
+            "E:\\projects\\cool_project\\fast-dump\\results\\local\\experiments\\sender-micro-20261025\\patches\\m2-subtree-move.patch"
+          ],
+          "cwd": "E:\\projects\\cool_project\\fast-dump",
+          "sha256": "2c282e5294164b86edec9cf4281b3f191d2918e39b1abff3421de4ce8b97b4a4",
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": ""
+        },
+        {
+          "patch": "m3-control-capacity.patch",
+          "command": [
+            "git",
+            "apply",
+            "--check",
+            "--",
+            "E:\\projects\\cool_project\\fast-dump\\results\\local\\experiments\\sender-micro-20261025\\patches\\m3-control-capacity.patch"
+          ],
+          "cwd": "E:\\projects\\cool_project\\fast-dump",
+          "sha256": "74237c3d865a7dfa3e16ae8f42b9ddf8f9a0ece8f03a0d89b19f81c005182aab",
+          "exit_code": 0,
+          "stdout": "",
+          "stderr": ""
+        }
+      ],
+      "reviewed_decisions_source": {
+        "path": "reviewed-decisions.json",
+        "sha256": "8740b790b706540f3e2921ded213ba14020e7b32e0f1b3783606e54710fd4a7e",
+        "bytes": 5810
+      }
+    },
+    "all_failed_attempts_retained": [],
+    "measurement_consistency": {
+      "series": 45,
+      "valid_series": 45,
+      "observations": 560,
+      "e2e_observations": 120,
+      "timing_observations": 450,
+      "allocation_observations": 110,
+      "e2e_counter_totals": {
+        "skipped_files": 0,
+        "frame_aborts": 0,
+        "frame_rebuilds": 0
+      },
+      "e2e_equal_count_checks": {
+        "aa-e2e-bigFiles": {
+          "compressed_payload_bytes": [
+            525610974.0
+          ],
+          "files_count": [
+            3.0
+          ],
+          "raw_read_bytes": [
+            1342177280.0
+          ]
+        },
+        "aa-e2e-manySmallFiles": {
+          "compressed_payload_bytes": [
+            93317996.0
+          ],
+          "files_count": [
+            40000.0
+          ],
+          "raw_read_bytes": [
+            92160000.0
+          ]
+        },
+        "aa-e2e-mixed": {
+          "compressed_payload_bytes": [
+            388741825.0
+          ],
+          "files_count": [
+            10134.0
+          ],
+          "raw_read_bytes": [
+            916426752.0
+          ]
+        },
+        "m1-scan-tail-e2e-bigFiles": {
+          "compressed_payload_bytes": [
+            525610974.0
+          ],
+          "files_count": [
+            3.0
+          ],
+          "raw_read_bytes": [
+            1342177280.0
+          ]
+        },
+        "m1-scan-tail-e2e-manySmallFiles": {
+          "compressed_payload_bytes": [
+            93317996.0
+          ],
+          "files_count": [
+            40000.0
+          ],
+          "raw_read_bytes": [
+            92160000.0
+          ]
+        },
+        "m1-scan-tail-e2e-mixed": {
+          "compressed_payload_bytes": [
+            388741825.0
+          ],
+          "files_count": [
+            10134.0
+          ],
+          "raw_read_bytes": [
+            916426752.0
+          ]
+        },
+        "m2-subtree-move-e2e-bigFiles": {
+          "compressed_payload_bytes": [
+            525610974.0
+          ],
+          "files_count": [
+            3.0
+          ],
+          "raw_read_bytes": [
+            1342177280.0
+          ]
+        },
+        "m2-subtree-move-e2e-manySmallFiles": {
+          "compressed_payload_bytes": [
+            93317996.0
+          ],
+          "files_count": [
+            40000.0
+          ],
+          "raw_read_bytes": [
+            92160000.0
+          ]
+        },
+        "m2-subtree-move-e2e-mixed": {
+          "compressed_payload_bytes": [
+            388741825.0
+          ],
+          "files_count": [
+            10134.0
+          ],
+          "raw_read_bytes": [
+            916426752.0
+          ]
+        },
+        "m3-control-capacity-e2e-bigFiles": {
+          "compressed_payload_bytes": [
+            525610974.0
+          ],
+          "files_count": [
+            3.0
+          ],
+          "raw_read_bytes": [
+            1342177280.0
+          ]
+        },
+        "m3-control-capacity-e2e-manySmallFiles": {
+          "compressed_payload_bytes": [
+            93317996.0
+          ],
+          "files_count": [
+            40000.0
+          ],
+          "raw_read_bytes": [
+            92160000.0
+          ]
+        },
+        "m3-control-capacity-e2e-mixed": {
+          "compressed_payload_bytes": [
+            388741825.0
+          ],
+          "files_count": [
+            10134.0
+          ],
+          "raw_read_bytes": [
+            916426752.0
+          ]
+        }
+      },
+      "control_packet_identity": "Analyzer requires case/iterations/packet_bytes/body_bytes/fingerprint equality across every before/after sample within each series."
+    }
+  },
+  "limitations": [
+    "Производительность измерена на одной Windows-машине. Linux checks проверяют корректность, а не Linux performance.",
+    "E2E использует localhost; source/output находятся на одном томе. Кэш и фоновая нагрузка не контролируются; verification может прогреть следующие samples.",
+    "Все первые samples и выбросы сохранены. Парный bootstrap описательный, без поправки на множественные сравнения.",
+    "Instrumented allocator timing/CPU сохранены только как диагностика и не используются для доказательства ускорения или регрессии.",
+    "Control wall time и allocator counts охватывают только цикл. CPU/cycles snapshots немного шире и включают hooks/instrumentation. Noop не вычитается автоматически.",
+    "До control timing выполняются reference encode/decode: allocator и код прогреваются подготовкой. Это не cold-start измерение. RSS — lifetime peak, включая fixture/reference.",
+    "Control benchmark включает запись сериализованных bytes в заранее выделенный memory sink; он не измеряет задержку сети.",
+    "E2E CPU/RSS относятся к общему процессу sender+receiver. Scan CPU измеряет стадию, её RSS остаётся lifetime peak.",
+    "Allocation counts относятся к Rust global allocator; это не live memory и не подсчёт всех native zstd allocations. Reallocation bytes — полный новый размер.",
+    "Windows process cycles не равны retired instructions; process I/O не равен физическому I/O накопителя.",
+    "Снижение локальной работы не доказывает ускорение всей передачи. Принятие микрооптимизации допускает неподтверждённый E2E gain, но требует рассмотрения подтверждённых регрессий.",
+    "Три candidate patches независимы относительно baseline с общим benchmark harness. Common harness сохранён отдельным patch; mainline source не изменён.",
+    "E2E A/A CI noise bounds: manySmallFiles 30.74%, mixed 16.65%, bigFiles 17.86%. Эти данные не подтверждают общий speedup и не исключают небольшие регрессии. Номинальные отрицательные результаты сохранены, не отброшены.",
+    "Экономия requested bytes — уменьшение суммарных запросов к allocator за обход, не уменьшение RSS на столько же. Whole-stage allocation counts включают динамическую работу каналов и потоков; расхождение с числом удалённых операций сохранено.",
+    "Performance измерен на Windows rustc 1.93.1. Проверки корректности также выполнены на Linux rustc 1.94.1. Rust 1.89 в этой локальной серии не запускался.",
+    "M1 и M2 измерялись по отдельности. Эффект совместного применения не измерен; patches сохранены независимо для решения о внедрении.",
+    "После независимого review статистический gate ужесточён: весь CI должен выходить за matching A/A noise band. Формула bootstrap, samples и порядок измерений не менялись; критерий остаётся исследовательским, не эквивалентен формальному тесту отсутствия регрессии."
+  ]
+}

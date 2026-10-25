@@ -1,0 +1,23 @@
+{
+  "decision": "accept",
+  "parent_commit": "e46d64e9bdbff490a1d05219a162b06e91e45b25",
+  "checks": [
+    "checks\\windows\\m2\\checks\\checks.json",
+    "checks\\linux\\m2\\attempt-01\\checks.json"
+  ],
+  "source_sha256": "c3a9719421f5862a896a52e6698c339fd3d5a26a1f2e1d4e3503f9f0c8feb82c",
+  "analysis": "m2-analysis.json",
+  "analysis_sha256": "8dddf69d605bdcffb461d656608d78888bd1f99f6ee55430ee6053cb20aaa0c8",
+  "criterion": "Reproducible saved allocations/bytes in both scan fixtures; all correctness checks pass; no regression CI wholly exceeds matching AA noise. E2E gain not established, small regressions not excluded.",
+  "allocation_savings": {
+    "wide-tree": {
+      "alloc_successes": 1028.3999999999978,
+      "alloc_bytes": 66982.39999999851
+    },
+    "manySmallFiles": {
+      "alloc_successes": 46.20000000001164,
+      "alloc_bytes": 2756.2000000029802
+    }
+  },
+  "commit": "2a7c8eeeb70f9046a4629168d66d4fc0123f247e"
+}

@@ -1,0 +1,151 @@
+{
+  "schema_version": 1,
+  "id": "legacy-results-local-experiments-sender-micro2-20261025-measurement-781ee8633235",
+  "kind": "benchmark",
+  "label": "progress-guard-none-1m-ab",
+  "status": "imported",
+  "started_utc": "2026-10-25T19:56:14.493336+00:00",
+  "time_source": "original_file_mtime",
+  "imported_utc": "2026-10-25T20:13:00.363089+00:00",
+  "experiment_path": "results/local/experiments/sender-micro2-20261025/measurements/progress-guard-none-1m-ab",
+  "import_sha256": "781ee8633235e4ad05125f3ae28ccd82e48067324252896a56eaf6a74ae6b92e",
+  "origin": "results/local/experiments/sender-micro2-20261025/measurements",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "binary_sha256": {
+      "before": "5eb76cf74a7c41f5ad544c7487955fff0c78fcc748eaf2a67b55eb4947bc3254",
+      "after": "aa6e99785962ce16e2976c2e0f0de08ab59636d7f8ebb2d39c0c43cbb2b2b7e0"
+    },
+    "comparison_kind": "A/B",
+    "common_arguments": [
+      "--case",
+      "none",
+      "--iterations",
+      "1000000",
+      "--repeats",
+      "1"
+    ],
+    "allocations_diagnostic": false,
+    "repeats": 10,
+    "policy": "Alternating AB/BA; every observation retained; no dropped warmup or outliers.",
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 6,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 6,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 7,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 7,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 8,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 8,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 9,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 9,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 10,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 10,
+        "side": "before",
+        "exit_code": 0
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "progress-guard-none-1m-ab/samples.csv",
+      "sha256": "82a9d387e23d50ccfd8a3b91e171fe95fc91f983d7dc9bb06570e7d95db8a80e",
+      "bytes": 7658,
+      "saved": "raw/samples.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "progress-guard-none-1m-ab/paired-run.json",
+      "sha256": "2d28f9bcdb0fd5acd3058e21d565708fdbd954d464ddfe469493e1631e033c76",
+      "bytes": 29295
+    }
+  ]
+}

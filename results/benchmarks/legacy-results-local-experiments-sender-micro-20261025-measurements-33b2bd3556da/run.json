@@ -1,0 +1,145 @@
+{
+  "schema_version": 1,
+  "id": "legacy-results-local-experiments-sender-micro-20261025-measurements-33b2bd3556da",
+  "kind": "benchmark",
+  "label": "m3-control-capacity-e2e-manySmallFiles",
+  "status": "imported",
+  "started_utc": "2026-10-25T13:51:43.398410+00:00",
+  "time_source": "original_file_mtime",
+  "imported_utc": "2026-10-25T13:57:55.292974+00:00",
+  "experiment_path": "results/local/experiments/sender-micro-20261025/measurements/m3-control-capacity-e2e-manySmallFiles",
+  "import_sha256": "33b2bd3556dadf8999077a9d87ec12fb1a261739854d7aec9cb002f74e994a17",
+  "origin": "results/local/experiments/sender-micro-20261025/measurements",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "binary_sha256": {
+      "before": "2ccde76544b70aa323099f8c073af1581c07cee147b2a56e9a16c2b6c1c8fd5f",
+      "after": "4007176bf7ef94dee709ecd4a9427902127c6e274c9ba01141596bd5013460a0"
+    },
+    "comparison_kind": "A/B",
+    "requested_readers": {
+      "before": 8,
+      "after": 8
+    },
+    "common_arguments": [
+      "--repeats",
+      "1",
+      "--shuffle-scenarios",
+      "--shuffle-seed",
+      "91",
+      "--source",
+      "E:\\projects\\cool_project\\fast-dump\\results\\local\\experiments\\sender-20261025\\fixtures\\manySmallFiles",
+      "--network-profile",
+      "loopback-localhost",
+      "--threads",
+      "4",
+      "--frames",
+      "64",
+      "--buffers",
+      "1024",
+      "--executor",
+      "default"
+    ],
+    "repeats_per_side": 5,
+    "policy": "AB then BA alternating; all samples retained; no automatic warmup or trimming",
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "after",
+        "exit_code": 0
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "m3-control-capacity-e2e-manySmallFiles/before/run.log",
+      "sha256": "632da72ebaec3a6c032d683cd62b24528ad1884729bef505cc749afcc070d65b",
+      "bytes": 17663,
+      "extracted_sha256": "0ff3286ad582d03a2bb652e6a90d281a241ed6189263f09f138d7b54dadc8bed",
+      "saved": "raw/before/resource_samples.csv"
+    },
+    {
+      "source": "m3-control-capacity-e2e-manySmallFiles/before/results_raw.csv",
+      "sha256": "d2cb7c33a93e626543e49dda4f34d76b8d5722c08194ff882c1580769bd6f535",
+      "bytes": 4359,
+      "saved": "raw/before/results_raw.csv"
+    },
+    {
+      "source": "m3-control-capacity-e2e-manySmallFiles/after/run.log",
+      "sha256": "8693019703655bbf3f1039601833ccd132fe6cff75a93be9fdf1aa355378e53d",
+      "bytes": 17647,
+      "extracted_sha256": "54963011a7257bd61c2be3e3644069423689d2d3a793a8a6660c417752a84265",
+      "saved": "raw/after/resource_samples.csv"
+    },
+    {
+      "source": "m3-control-capacity-e2e-manySmallFiles/after/results_raw.csv",
+      "sha256": "be5594ee16b16d73e7ecbe06e62743c98865247823e860a0f5efddd3287921a4",
+      "bytes": 4359,
+      "saved": "raw/after/results_raw.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "m3-control-capacity-e2e-manySmallFiles/paired-run.json",
+      "sha256": "6c4d6da66239f7514605e1eca352dfb2c06d597f025ec3f8bd2cb91b4447a528",
+      "bytes": 10824
+    },
+    {
+      "source": "m3-control-capacity-e2e-manySmallFiles/before/run.log",
+      "sha256": "632da72ebaec3a6c032d683cd62b24528ad1884729bef505cc749afcc070d65b",
+      "bytes": 17663
+    },
+    {
+      "source": "m3-control-capacity-e2e-manySmallFiles/after/run.log",
+      "sha256": "8693019703655bbf3f1039601833ccd132fe6cff75a93be9fdf1aa355378e53d",
+      "bytes": 17647
+    }
+  ]
+}

@@ -1,0 +1,3648 @@
+{
+  "checks": {
+    "baseline/attempt-01/checks.json": {
+      "source": {
+        "path": "checks-isolated/baseline/attempt-01/checks.json",
+        "sha256": "f2e7b58cfd80022078575121bf2fb813871037490b5a2a1c89286fa2246fcded",
+        "bytes": 1608
+      },
+      "observations": [
+        {
+          "check": "fmt",
+          "command": [
+            "cargo",
+            "fmt",
+            "--all",
+            "--check"
+          ],
+          "exit_code": 0,
+          "seconds": 0.4389815330505371,
+          "log_evidence": {
+            "path": "checks-isolated/baseline/attempt-01/fmt.log",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "rust_suite_counts": []
+        },
+        {
+          "check": "default",
+          "command": [
+            "cargo",
+            "test",
+            "--locked",
+            "--quiet"
+          ],
+          "exit_code": 0,
+          "seconds": 16.481138944625854,
+          "log_evidence": {
+            "path": "checks-isolated/baseline/attempt-01/default.log",
+            "sha256": "1341322e62e2ecf7ca4b69245d0008ac121b61ddcd3d9c0c79dc3fabf58f82b2",
+            "bytes": 1037
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 290,
+              "failed": 0,
+              "ignored": 3
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            },
+            {
+              "passed": 15,
+              "failed": 0,
+              "ignored": 1
+            },
+            {
+              "passed": 14,
+              "failed": 0,
+              "ignored": 2
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "check": "all-features",
+          "command": [
+            "cargo",
+            "test",
+            "--locked",
+            "--all-features",
+            "--quiet"
+          ],
+          "exit_code": 0,
+          "seconds": 17.853582859039307,
+          "log_evidence": {
+            "path": "checks-isolated/baseline/attempt-01/all-features.log",
+            "sha256": "645c56718d1be353eda838c98c2952d555f65e7cd56714aa7f62fdfb22a2f000",
+            "bytes": 1043
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 293,
+              "failed": 0,
+              "ignored": 3
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            },
+            {
+              "passed": 3,
+              "failed": 0,
+              "ignored": 0
+            },
+            {
+              "passed": 15,
+              "failed": 0,
+              "ignored": 1
+            },
+            {
+              "passed": 14,
+              "failed": 0,
+              "ignored": 2
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "check": "clippy",
+          "command": [
+            "cargo",
+            "clippy",
+            "--locked",
+            "--all-targets",
+            "--all-features",
+            "--",
+            "-D",
+            "warnings"
+          ],
+          "exit_code": 0,
+          "seconds": 3.6201388835906982,
+          "log_evidence": {
+            "path": "checks-isolated/baseline/attempt-01/clippy.log",
+            "sha256": "4fc5469bcb52c3bf9452c8dbc26701ad5fe1bdb8f86fe1c6b449d9f04fe0b4ea",
+            "bytes": 198
+          },
+          "rust_suite_counts": []
+        },
+        {
+          "check": "benches",
+          "command": [
+            "cargo",
+            "check",
+            "--locked",
+            "--benches",
+            "--all-features"
+          ],
+          "exit_code": 0,
+          "seconds": 2.9233083724975586,
+          "log_evidence": {
+            "path": "checks-isolated/baseline/attempt-01/benches.log",
+            "sha256": "c360605469210341012d1cc4af1cb1ef3acb9b068e1c57763ed0b6072773f8e1",
+            "bytes": 198
+          },
+          "rust_suite_counts": []
+        },
+        {
+          "check": "python",
+          "command": [
+            "python",
+            "-B",
+            "-m",
+            "unittest",
+            "discover",
+            "-s",
+            "scripts",
+            "-p",
+            "test_*.py"
+          ],
+          "exit_code": 0,
+          "seconds": 1.7294113636016846,
+          "log_evidence": {
+            "path": "checks-isolated/baseline/attempt-01/python.log",
+            "sha256": "372d74bf0f6d9af3be2bcefa30c63f8a2702c3606f4c3d035ff9f3f81db95dd2",
+            "bytes": 159
+          },
+          "rust_suite_counts": []
+        },
+        {
+          "check": "release",
+          "command": [
+            "cargo",
+            "build",
+            "--locked",
+            "--release",
+            "--bin",
+            "fast-dump",
+            "--benches",
+            "--features",
+            "bench-internals"
+          ],
+          "exit_code": 0,
+          "seconds": 72.54604506492615,
+          "log_evidence": {
+            "path": "checks-isolated/baseline/attempt-01/release.log",
+            "sha256": "caddd087d70b98fd8c15e8cf961778038f0c7ad14f21b6bbe31184b666988dac",
+            "bytes": 189
+          },
+          "rust_suite_counts": []
+        }
+      ]
+    },
+    "exp2-metadata/attempt-01/checks.json": {
+      "source": {
+        "path": "checks-isolated/exp2-metadata/attempt-01/checks.json",
+        "sha256": "9fdcbdff7f2f94aa5e808dd29de66137b05894cdfa775ed4c956166a100902d2",
+        "bytes": 1608
+      },
+      "observations": [
+        {
+          "check": "fmt",
+          "command": [
+            "cargo",
+            "fmt",
+            "--all",
+            "--check"
+          ],
+          "exit_code": 0,
+          "seconds": 0.45271825790405273,
+          "log_evidence": {
+            "path": "checks-isolated/exp2-metadata/attempt-01/fmt.log",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "rust_suite_counts": []
+        },
+        {
+          "check": "default",
+          "command": [
+            "cargo",
+            "test",
+            "--locked",
+            "--quiet"
+          ],
+          "exit_code": 0,
+          "seconds": 16.477771282196045,
+          "log_evidence": {
+            "path": "checks-isolated/exp2-metadata/attempt-01/default.log",
+            "sha256": "f7a4c338733cf27cc0b91983f2079cf7ae521cb9aeb489d908fa7b1c4e55e3e7",
+            "bytes": 1040
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 293,
+              "failed": 0,
+              "ignored": 3
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            },
+            {
+              "passed": 15,
+              "failed": 0,
+              "ignored": 1
+            },
+            {
+              "passed": 14,
+              "failed": 0,
+              "ignored": 2
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "check": "all-features",
+          "command": [
+            "cargo",
+            "test",
+            "--locked",
+            "--all-features",
+            "--quiet"
+          ],
+          "exit_code": 0,
+          "seconds": 17.952446937561035,
+          "log_evidence": {
+            "path": "checks-isolated/exp2-metadata/attempt-01/all-features.log",
+            "sha256": "27ab0e1e8da765266b662a1fc3ffffd2cc81ac4da06309d1e350f9d2553eadf5",
+            "bytes": 1046
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 296,
+              "failed": 0,
+              "ignored": 3
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            },
+            {
+              "passed": 3,
+              "failed": 0,
+              "ignored": 0
+            },
+            {
+              "passed": 15,
+              "failed": 0,
+              "ignored": 1
+            },
+            {
+              "passed": 14,
+              "failed": 0,
+              "ignored": 2
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "check": "clippy",
+          "command": [
+            "cargo",
+            "clippy",
+            "--locked",
+            "--all-targets",
+            "--all-features",
+            "--",
+            "-D",
+            "warnings"
+          ],
+          "exit_code": 0,
+          "seconds": 3.540248394012451,
+          "log_evidence": {
+            "path": "checks-isolated/exp2-metadata/attempt-01/clippy.log",
+            "sha256": "0a00d89ba08a5665a67c7b54a82a2f08627ef3b0f50078ce53b6ffa02ab8b51f",
+            "bytes": 203
+          },
+          "rust_suite_counts": []
+        },
+        {
+          "check": "benches",
+          "command": [
+            "cargo",
+            "check",
+            "--locked",
+            "--benches",
+            "--all-features"
+          ],
+          "exit_code": 0,
+          "seconds": 2.9900074005126953,
+          "log_evidence": {
+            "path": "checks-isolated/exp2-metadata/attempt-01/benches.log",
+            "sha256": "42ddc9c99ccad35d5faec2e79c1e96bcdcdc05fec3295746779c03c32decf448",
+            "bytes": 203
+          },
+          "rust_suite_counts": []
+        },
+        {
+          "check": "python",
+          "command": [
+            "python",
+            "-B",
+            "-m",
+            "unittest",
+            "discover",
+            "-s",
+            "scripts",
+            "-p",
+            "test_*.py"
+          ],
+          "exit_code": 0,
+          "seconds": 2.1061766147613525,
+          "log_evidence": {
+            "path": "checks-isolated/exp2-metadata/attempt-01/python.log",
+            "sha256": "6b4a46f69a5497a4f4096b3f601b0b482d2846cc6f3c7a78f2f906a3c2b0c979",
+            "bytes": 159
+          },
+          "rust_suite_counts": []
+        },
+        {
+          "check": "release",
+          "command": [
+            "cargo",
+            "build",
+            "--locked",
+            "--release",
+            "--bin",
+            "fast-dump",
+            "--benches",
+            "--features",
+            "bench-internals"
+          ],
+          "exit_code": 0,
+          "seconds": 73.26978611946106,
+          "log_evidence": {
+            "path": "checks-isolated/exp2-metadata/attempt-01/release.log",
+            "sha256": "fe268068a9fd119190cf09d73bd718cc49cf63faecf265fe35f626240cb51e46",
+            "bytes": 194
+          },
+          "rust_suite_counts": []
+        }
+      ]
+    },
+    "exp3-refill/attempt-01/checks.json": {
+      "source": {
+        "path": "checks-isolated/exp3-refill/attempt-01/checks.json",
+        "sha256": "73aec3054ae0a220dc9960ae2e66f7110b045e3a2f34797bd01043638e07265a",
+        "bytes": 1603
+      },
+      "observations": [
+        {
+          "check": "fmt",
+          "command": [
+            "cargo",
+            "fmt",
+            "--all",
+            "--check"
+          ],
+          "exit_code": 0,
+          "seconds": 0.578850507736206,
+          "log_evidence": {
+            "path": "checks-isolated/exp3-refill/attempt-01/fmt.log",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "rust_suite_counts": []
+        },
+        {
+          "check": "default",
+          "command": [
+            "cargo",
+            "test",
+            "--locked",
+            "--quiet"
+          ],
+          "exit_code": 0,
+          "seconds": 18.55601978302002,
+          "log_evidence": {
+            "path": "checks-isolated/exp3-refill/attempt-01/default.log",
+            "sha256": "a35d6ce2a830889746f7788ce92ce566317fff6cf99a5ce4c7f5f86d26778e59",
+            "bytes": 1042
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 295,
+              "failed": 0,
+              "ignored": 3
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            },
+            {
+              "passed": 15,
+              "failed": 0,
+              "ignored": 1
+            },
+            {
+              "passed": 14,
+              "failed": 0,
+              "ignored": 2
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "check": "all-features",
+          "command": [
+            "cargo",
+            "test",
+            "--locked",
+            "--all-features",
+            "--quiet"
+          ],
+          "exit_code": 0,
+          "seconds": 18.6727774143219,
+          "log_evidence": {
+            "path": "checks-isolated/exp3-refill/attempt-01/all-features.log",
+            "sha256": "319b5895ead1eafb0d6b522a8f692d0dcd28f3772696ed945b353715e9107fc7",
+            "bytes": 1048
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 298,
+              "failed": 0,
+              "ignored": 3
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            },
+            {
+              "passed": 3,
+              "failed": 0,
+              "ignored": 0
+            },
+            {
+              "passed": 15,
+              "failed": 0,
+              "ignored": 1
+            },
+            {
+              "passed": 14,
+              "failed": 0,
+              "ignored": 2
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "check": "clippy",
+          "command": [
+            "cargo",
+            "clippy",
+            "--locked",
+            "--all-targets",
+            "--all-features",
+            "--",
+            "-D",
+            "warnings"
+          ],
+          "exit_code": 0,
+          "seconds": 4.108462333679199,
+          "log_evidence": {
+            "path": "checks-isolated/exp3-refill/attempt-01/clippy.log",
+            "sha256": "06ef71472961279b59e5886479a56f792481ce159235600338f869e7ffb4e670",
+            "bytes": 201
+          },
+          "rust_suite_counts": []
+        },
+        {
+          "check": "benches",
+          "command": [
+            "cargo",
+            "check",
+            "--locked",
+            "--benches",
+            "--all-features"
+          ],
+          "exit_code": 0,
+          "seconds": 3.1522328853607178,
+          "log_evidence": {
+            "path": "checks-isolated/exp3-refill/attempt-01/benches.log",
+            "sha256": "e24599543c074ed8c357078b58cbe1e698e8f4c28a7c7fa49deacc3d7961f8ff",
+            "bytes": 201
+          },
+          "rust_suite_counts": []
+        },
+        {
+          "check": "python",
+          "command": [
+            "python",
+            "-B",
+            "-m",
+            "unittest",
+            "discover",
+            "-s",
+            "scripts",
+            "-p",
+            "test_*.py"
+          ],
+          "exit_code": 0,
+          "seconds": 2.1008543968200684,
+          "log_evidence": {
+            "path": "checks-isolated/exp3-refill/attempt-01/python.log",
+            "sha256": "34d5aaf24b381ec04d2dc21475ad6fb062ba6bbe6cc7cb1e5ab239cf7f6453b4",
+            "bytes": 159
+          },
+          "rust_suite_counts": []
+        },
+        {
+          "check": "release",
+          "command": [
+            "cargo",
+            "build",
+            "--locked",
+            "--release",
+            "--bin",
+            "fast-dump",
+            "--benches",
+            "--features",
+            "bench-internals"
+          ],
+          "exit_code": 0,
+          "seconds": 67.58131909370422,
+          "log_evidence": {
+            "path": "checks-isolated/exp3-refill/attempt-01/release.log",
+            "sha256": "ec8148ca0be8f29e42a177f48b9768dbb6db52b84ff977b75defef7b30ffd594",
+            "bytes": 192
+          },
+          "rust_suite_counts": []
+        }
+      ]
+    },
+    "exp4-double-buffer/attempt-01/checks.json": {
+      "source": {
+        "path": "checks-isolated/exp4-double-buffer/attempt-01/checks.json",
+        "sha256": "2983147229e2c98c3b00860c67b0b4c4d28e05f8bad608b1298dd41c05a00337",
+        "bytes": 1604
+      },
+      "observations": [
+        {
+          "check": "fmt",
+          "command": [
+            "cargo",
+            "fmt",
+            "--all",
+            "--check"
+          ],
+          "exit_code": 0,
+          "seconds": 0.5893199443817139,
+          "log_evidence": {
+            "path": "checks-isolated/exp4-double-buffer/attempt-01/fmt.log",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "rust_suite_counts": []
+        },
+        {
+          "check": "default",
+          "command": [
+            "cargo",
+            "test",
+            "--locked",
+            "--quiet"
+          ],
+          "exit_code": 0,
+          "seconds": 18.301019191741943,
+          "log_evidence": {
+            "path": "checks-isolated/exp4-double-buffer/attempt-01/default.log",
+            "sha256": "1a32bbc818fef569485e18385bffe7672a8d8f87695e56f9fbc068b2b34abc18",
+            "bytes": 1041
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 294,
+              "failed": 0,
+              "ignored": 3
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            },
+            {
+              "passed": 15,
+              "failed": 0,
+              "ignored": 1
+            },
+            {
+              "passed": 14,
+              "failed": 0,
+              "ignored": 2
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "check": "all-features",
+          "command": [
+            "cargo",
+            "test",
+            "--locked",
+            "--all-features",
+            "--quiet"
+          ],
+          "exit_code": 0,
+          "seconds": 18.7842435836792,
+          "log_evidence": {
+            "path": "checks-isolated/exp4-double-buffer/attempt-01/all-features.log",
+            "sha256": "c3853a34bb144e231b2f471ee84d793ad6a8ab9e97da2f7a31081752c1ff179b",
+            "bytes": 1047
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 297,
+              "failed": 0,
+              "ignored": 3
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            },
+            {
+              "passed": 3,
+              "failed": 0,
+              "ignored": 0
+            },
+            {
+              "passed": 15,
+              "failed": 0,
+              "ignored": 1
+            },
+            {
+              "passed": 14,
+              "failed": 0,
+              "ignored": 2
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "check": "clippy",
+          "command": [
+            "cargo",
+            "clippy",
+            "--locked",
+            "--all-targets",
+            "--all-features",
+            "--",
+            "-D",
+            "warnings"
+          ],
+          "exit_code": 0,
+          "seconds": 4.026606559753418,
+          "log_evidence": {
+            "path": "checks-isolated/exp4-double-buffer/attempt-01/clippy.log",
+            "sha256": "b3c19db58c6e335616f6504570fec8674815c4ca2709ab23c34945af8c111f43",
+            "bytes": 208
+          },
+          "rust_suite_counts": []
+        },
+        {
+          "check": "benches",
+          "command": [
+            "cargo",
+            "check",
+            "--locked",
+            "--benches",
+            "--all-features"
+          ],
+          "exit_code": 0,
+          "seconds": 3.2251148223876953,
+          "log_evidence": {
+            "path": "checks-isolated/exp4-double-buffer/attempt-01/benches.log",
+            "sha256": "dc2882d9fd72c707d0a2cb098d88ead5c7db3d519679cfa60633e7df11564c76",
+            "bytes": 208
+          },
+          "rust_suite_counts": []
+        },
+        {
+          "check": "python",
+          "command": [
+            "python",
+            "-B",
+            "-m",
+            "unittest",
+            "discover",
+            "-s",
+            "scripts",
+            "-p",
+            "test_*.py"
+          ],
+          "exit_code": 0,
+          "seconds": 1.710226058959961,
+          "log_evidence": {
+            "path": "checks-isolated/exp4-double-buffer/attempt-01/python.log",
+            "sha256": "4b35fe456d78bf6dd54ef766ecf53a6ef7308bebf540b323e4df9f2949c8204b",
+            "bytes": 159
+          },
+          "rust_suite_counts": []
+        },
+        {
+          "check": "release",
+          "command": [
+            "cargo",
+            "build",
+            "--locked",
+            "--release",
+            "--bin",
+            "fast-dump",
+            "--benches",
+            "--features",
+            "bench-internals"
+          ],
+          "exit_code": 0,
+          "seconds": 69.42928385734558,
+          "log_evidence": {
+            "path": "checks-isolated/exp4-double-buffer/attempt-01/release.log",
+            "sha256": "2aedd80b93e77a64b5cff4d644a0e64e82b62edde0a02b826a6e46afe4b7a506",
+            "bytes": 199
+          },
+          "rust_suite_counts": []
+        }
+      ]
+    },
+    "exp5-prefix/attempt-01/checks.json": {
+      "source": {
+        "path": "checks-isolated/exp5-prefix/attempt-01/checks.json",
+        "sha256": "ae83ca52f0ced49e7f21c4c4ff10923103acc8cb2b51df0776978dd628f09b26",
+        "bytes": 1608
+      },
+      "observations": [
+        {
+          "check": "fmt",
+          "command": [
+            "cargo",
+            "fmt",
+            "--all",
+            "--check"
+          ],
+          "exit_code": 0,
+          "seconds": 0.5018477439880371,
+          "log_evidence": {
+            "path": "checks-isolated/exp5-prefix/attempt-01/fmt.log",
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bytes": 0
+          },
+          "rust_suite_counts": []
+        },
+        {
+          "check": "default",
+          "command": [
+            "cargo",
+            "test",
+            "--locked",
+            "--quiet"
+          ],
+          "exit_code": 0,
+          "seconds": 14.824729919433594,
+          "log_evidence": {
+            "path": "checks-isolated/exp5-prefix/attempt-01/default.log",
+            "sha256": "b57f9754a2d49205447d316d5804dff90bbddf3a00083a3733f4d811a22ca7a3",
+            "bytes": 1045
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 298,
+              "failed": 0,
+              "ignored": 3
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            },
+            {
+              "passed": 15,
+              "failed": 0,
+              "ignored": 1
+            },
+            {
+              "passed": 14,
+              "failed": 0,
+              "ignored": 2
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "check": "all-features",
+          "command": [
+            "cargo",
+            "test",
+            "--locked",
+            "--all-features",
+            "--quiet"
+          ],
+          "exit_code": 0,
+          "seconds": 14.410181522369385,
+          "log_evidence": {
+            "path": "checks-isolated/exp5-prefix/attempt-01/all-features.log",
+            "sha256": "8cd7949fb9909d34f5afdc802b10029ce2e02e1b15d93d266c04603529fac527",
+            "bytes": 1051
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 301,
+              "failed": 0,
+              "ignored": 3
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            },
+            {
+              "passed": 3,
+              "failed": 0,
+              "ignored": 0
+            },
+            {
+              "passed": 15,
+              "failed": 0,
+              "ignored": 1
+            },
+            {
+              "passed": 14,
+              "failed": 0,
+              "ignored": 2
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "check": "clippy",
+          "command": [
+            "cargo",
+            "clippy",
+            "--locked",
+            "--all-targets",
+            "--all-features",
+            "--",
+            "-D",
+            "warnings"
+          ],
+          "exit_code": 0,
+          "seconds": 3.4097821712493896,
+          "log_evidence": {
+            "path": "checks-isolated/exp5-prefix/attempt-01/clippy.log",
+            "sha256": "de3db79ecfcb16c765bf0f5718aad1f176889672d9bdabf0107a2554ae7e709b",
+            "bytes": 201
+          },
+          "rust_suite_counts": []
+        },
+        {
+          "check": "benches",
+          "command": [
+            "cargo",
+            "check",
+            "--locked",
+            "--benches",
+            "--all-features"
+          ],
+          "exit_code": 0,
+          "seconds": 2.6311593055725098,
+          "log_evidence": {
+            "path": "checks-isolated/exp5-prefix/attempt-01/benches.log",
+            "sha256": "4075bcbe4f4b092f02eff4d441df49ceab57da3cb8701b32d570a0f657f7ae79",
+            "bytes": 201
+          },
+          "rust_suite_counts": []
+        },
+        {
+          "check": "python",
+          "command": [
+            "python",
+            "-B",
+            "-m",
+            "unittest",
+            "discover",
+            "-s",
+            "scripts",
+            "-p",
+            "test_*.py"
+          ],
+          "exit_code": 0,
+          "seconds": 3.4760704040527344,
+          "log_evidence": {
+            "path": "checks-isolated/exp5-prefix/attempt-01/python.log",
+            "sha256": "497e69ddc0c8378c94750e332867265e1844c496cdacb9e1fa131316514039cc",
+            "bytes": 159
+          },
+          "rust_suite_counts": []
+        },
+        {
+          "check": "release",
+          "command": [
+            "cargo",
+            "build",
+            "--locked",
+            "--release",
+            "--bin",
+            "fast-dump",
+            "--benches",
+            "--features",
+            "bench-internals"
+          ],
+          "exit_code": 0,
+          "seconds": 55.23426556587219,
+          "log_evidence": {
+            "path": "checks-isolated/exp5-prefix/attempt-01/release.log",
+            "sha256": "b97ab7e1fe5d43541af702c741726046b6c14ac1179749e21aa78b4b1d283dfe",
+            "bytes": 192
+          },
+          "rust_suite_counts": []
+        }
+      ]
+    },
+    "linux/checks.json": {
+      "source": {
+        "path": "checks-isolated/linux/checks.json",
+        "sha256": "cc8cab637a6440fe19e3569f28abb30ad2a895f07442dd42eaf1d9a9a5b2bba6",
+        "bytes": 2476
+      },
+      "observations": [
+        {
+          "candidate": "baseline",
+          "check": "all-features",
+          "command": [
+            "cargo",
+            "test",
+            "--offline",
+            "--locked",
+            "--all-features",
+            "--quiet"
+          ],
+          "exit_code": 0,
+          "seconds": 51.96107602119446,
+          "log_evidence": {
+            "path": "checks-isolated/linux/baseline-all-features.log",
+            "sha256": "d6e81e59a6d7adf2fa8b6219fbcc789950605b1636cd3e6ca6ca3a5c8540106a",
+            "bytes": 1053
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 302,
+              "failed": 0,
+              "ignored": 3
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            },
+            {
+              "passed": 3,
+              "failed": 0,
+              "ignored": 0
+            },
+            {
+              "passed": 16,
+              "failed": 0,
+              "ignored": 1
+            },
+            {
+              "passed": 13,
+              "failed": 0,
+              "ignored": 3
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "candidate": "baseline",
+          "check": "clippy",
+          "command": [
+            "cargo",
+            "clippy",
+            "--offline",
+            "--locked",
+            "--all-targets",
+            "--all-features",
+            "--",
+            "-D",
+            "warnings"
+          ],
+          "exit_code": 0,
+          "seconds": 11.354726314544678,
+          "log_evidence": {
+            "path": "checks-isolated/linux/baseline-clippy.log",
+            "sha256": "ffb335567cd3f4b9db3ca3fac5e5187150dc06181de1583d67cf1f8ef137c3b1",
+            "bytes": 3609
+          },
+          "rust_suite_counts": []
+        },
+        {
+          "candidate": "exp2-metadata",
+          "check": "all-features",
+          "command": [
+            "cargo",
+            "test",
+            "--offline",
+            "--locked",
+            "--all-features",
+            "--quiet"
+          ],
+          "exit_code": 0,
+          "seconds": 17.919986963272095,
+          "log_evidence": {
+            "path": "checks-isolated/linux/exp2-metadata-all-features.log",
+            "sha256": "61422e947c8de7b1c7804cb98f17369145aef26e4b804d0a07614df5dbd7bffb",
+            "bytes": 1053
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 302,
+              "failed": 0,
+              "ignored": 3
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            },
+            {
+              "passed": 3,
+              "failed": 0,
+              "ignored": 0
+            },
+            {
+              "passed": 16,
+              "failed": 0,
+              "ignored": 1
+            },
+            {
+              "passed": 13,
+              "failed": 0,
+              "ignored": 3
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "candidate": "exp2-metadata",
+          "check": "clippy",
+          "command": [
+            "cargo",
+            "clippy",
+            "--offline",
+            "--locked",
+            "--all-targets",
+            "--all-features",
+            "--",
+            "-D",
+            "warnings"
+          ],
+          "exit_code": 0,
+          "seconds": 5.145991325378418,
+          "log_evidence": {
+            "path": "checks-isolated/linux/exp2-metadata-clippy.log",
+            "sha256": "2d127165d0969c2aed3e82f6b5d1baec0b8cae67d304819fb5a91c09c4ce030b",
+            "bytes": 207
+          },
+          "rust_suite_counts": []
+        },
+        {
+          "candidate": "exp3-refill",
+          "check": "all-features",
+          "command": [
+            "cargo",
+            "test",
+            "--offline",
+            "--locked",
+            "--all-features",
+            "--quiet"
+          ],
+          "exit_code": 0,
+          "seconds": 18.706008672714233,
+          "log_evidence": {
+            "path": "checks-isolated/linux/exp3-refill-all-features.log",
+            "sha256": "72609c13a8794d4af23f38054d80a8d1682144f9c126d3a7872a19418fdca9b9",
+            "bytes": 1058
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 307,
+              "failed": 0,
+              "ignored": 3
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            },
+            {
+              "passed": 3,
+              "failed": 0,
+              "ignored": 0
+            },
+            {
+              "passed": 16,
+              "failed": 0,
+              "ignored": 1
+            },
+            {
+              "passed": 13,
+              "failed": 0,
+              "ignored": 3
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "candidate": "exp3-refill",
+          "check": "clippy",
+          "command": [
+            "cargo",
+            "clippy",
+            "--offline",
+            "--locked",
+            "--all-targets",
+            "--all-features",
+            "--",
+            "-D",
+            "warnings"
+          ],
+          "exit_code": 0,
+          "seconds": 4.642329931259155,
+          "log_evidence": {
+            "path": "checks-isolated/linux/exp3-refill-clippy.log",
+            "sha256": "a0c20202482025115385653452071bdce2d7d1d6c5358f012de7a5538b2f98cd",
+            "bytes": 205
+          },
+          "rust_suite_counts": []
+        },
+        {
+          "candidate": "exp4-double-buffer",
+          "check": "all-features",
+          "command": [
+            "cargo",
+            "test",
+            "--offline",
+            "--locked",
+            "--all-features",
+            "--quiet"
+          ],
+          "exit_code": 0,
+          "seconds": 15.327204942703247,
+          "log_evidence": {
+            "path": "checks-isolated/linux/exp4-double-buffer-all-features.log",
+            "sha256": "3cdd93a1dedec63bc53f5a8922105a2d00f0deddff8b1ce2e32a766f661aa047",
+            "bytes": 1057
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 306,
+              "failed": 0,
+              "ignored": 3
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            },
+            {
+              "passed": 3,
+              "failed": 0,
+              "ignored": 0
+            },
+            {
+              "passed": 16,
+              "failed": 0,
+              "ignored": 1
+            },
+            {
+              "passed": 13,
+              "failed": 0,
+              "ignored": 3
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "candidate": "exp4-double-buffer",
+          "check": "clippy",
+          "command": [
+            "cargo",
+            "clippy",
+            "--offline",
+            "--locked",
+            "--all-targets",
+            "--all-features",
+            "--",
+            "-D",
+            "warnings"
+          ],
+          "exit_code": 0,
+          "seconds": 7.5148656368255615,
+          "log_evidence": {
+            "path": "checks-isolated/linux/exp4-double-buffer-clippy.log",
+            "sha256": "46fd700494152483bd285e3fc7e434057fdde671b4942ab8dba52824b8b3a838",
+            "bytes": 212
+          },
+          "rust_suite_counts": []
+        },
+        {
+          "candidate": "exp5-prefix",
+          "check": "all-features",
+          "command": [
+            "cargo",
+            "test",
+            "--offline",
+            "--locked",
+            "--all-features",
+            "--quiet"
+          ],
+          "exit_code": 101,
+          "seconds": 17.433502674102783,
+          "log_evidence": {
+            "path": "checks-isolated/linux/exp5-prefix-all-features.log",
+            "sha256": "87488b823737c4467365a74e904791b7fb8acf1e390ce77a1c402c8e79d1675e",
+            "bytes": 1509
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 308,
+              "failed": 2,
+              "ignored": 3
+            }
+          ],
+          "failure_excerpt": "\nrunning 313 tests\n......................................................................................i 87/313\n....................................................................................... 174/313\n..............................................................................i........ 261/313\n...i.......................... 291/313\ntests::streamed_abort::streamed_abort_after_received_payload_resumes_without_losing_prior_bundle --- FAILED\ntests::terminal_skips_persist_across_resume_without_reopening_the_file --- FAILED\n....................\nfailures:\n\n---- tests::streamed_abort::streamed_abort_after_received_payload_resumes_without_losing_prior_bundle stdout ----\n\nthread 'tests::streamed_abort::streamed_abort_after_received_payload_resumes_without_losing_prior_bundle' (14212) panicked at src/tests/streamed_abort.rs:248:5:\nassertion `left == right` failed\n  left: 0\n right: 1\n\n---- tests::terminal_skips_persist_across_resume_without_reopening_the_file stdout ----\n\nthread 'tests::terminal_skips_persist_across_resume_without_reopening_the_file' (14214) panicked at src/sender/read.rs:934:57:\ncalled `Result::unwrap()` on an `Err` value: PoisonError { .. }\n\n\nfailures:\n    tests::streamed_abort::streamed_abort_after_received_payload_resumes_without_losing_prior_bundle\n    tests::terminal_skips_persist_across_resume_without_reopening_the_file\n\ntest result: FAILED. 308 passed; 2 failed; 3 ignored; 0 measured; 0 filtered out; finished in 3.67s\n\nerror: test failed, to rerun pass `--lib`\n"
+        }
+      ]
+    },
+    "linux-flake/results.json": {
+      "source": {
+        "path": "checks-isolated/linux-flake/results.json",
+        "sha256": "2b3a93bb30846a66280db7e9da521a1a161d72eef58f3e57538be96466248add",
+        "bytes": 28504
+      },
+      "observations": [
+        {
+          "candidate": "baseline",
+          "sample": 1,
+          "exit_code": 0,
+          "seconds": 0.4026537999999995,
+          "log": "baseline-01.log",
+          "executable": "/tmp/fast-dump-sender-20261025-isolated/baseline/debug/deps/fast_dump-0c5c05642d1d50a9",
+          "receiver_hashes": {
+            "src/receiver/network.rs": "741ada154fffceff25e046a48135fa761848cafe79708b5c10150d38e84467ae",
+            "src/receiver/network/events.rs": "16861aafe89b99434f99f6a6e0e7f431ed8bda9cb706ad2572a821b0e92b779e",
+            "src/receiver/network/pending.rs": "f185883499dbaff9e5df45b1f89a000b48da35d90207d96c05794d6c1824b9da",
+            "src/tests/streamed_abort.rs": "35b76e4e5289ca4da31c57f0e399a9572ca6e72a5739f7780d900423b7367629"
+          },
+          "log_evidence": {
+            "path": "checks-isolated/linux-flake/baseline-01.log",
+            "sha256": "99b8eb6cf4c9f79080d6da1b67faa80a685c6578de3dc7b71b88124aad0fa874",
+            "bytes": 223
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 1,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "candidate": "baseline",
+          "sample": 2,
+          "exit_code": 0,
+          "seconds": 0.40577989999999886,
+          "log": "baseline-02.log",
+          "executable": "/tmp/fast-dump-sender-20261025-isolated/baseline/debug/deps/fast_dump-0c5c05642d1d50a9",
+          "receiver_hashes": {
+            "src/receiver/network.rs": "741ada154fffceff25e046a48135fa761848cafe79708b5c10150d38e84467ae",
+            "src/receiver/network/events.rs": "16861aafe89b99434f99f6a6e0e7f431ed8bda9cb706ad2572a821b0e92b779e",
+            "src/receiver/network/pending.rs": "f185883499dbaff9e5df45b1f89a000b48da35d90207d96c05794d6c1824b9da",
+            "src/tests/streamed_abort.rs": "35b76e4e5289ca4da31c57f0e399a9572ca6e72a5739f7780d900423b7367629"
+          },
+          "log_evidence": {
+            "path": "checks-isolated/linux-flake/baseline-02.log",
+            "sha256": "a287c9445d683b0a2026e07206d9489416fcd878adafe0c924655349c31fa31f",
+            "bytes": 223
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 1,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "candidate": "baseline",
+          "sample": 3,
+          "exit_code": 0,
+          "seconds": 0.3930802,
+          "log": "baseline-03.log",
+          "executable": "/tmp/fast-dump-sender-20261025-isolated/baseline/debug/deps/fast_dump-0c5c05642d1d50a9",
+          "receiver_hashes": {
+            "src/receiver/network.rs": "741ada154fffceff25e046a48135fa761848cafe79708b5c10150d38e84467ae",
+            "src/receiver/network/events.rs": "16861aafe89b99434f99f6a6e0e7f431ed8bda9cb706ad2572a821b0e92b779e",
+            "src/receiver/network/pending.rs": "f185883499dbaff9e5df45b1f89a000b48da35d90207d96c05794d6c1824b9da",
+            "src/tests/streamed_abort.rs": "35b76e4e5289ca4da31c57f0e399a9572ca6e72a5739f7780d900423b7367629"
+          },
+          "log_evidence": {
+            "path": "checks-isolated/linux-flake/baseline-03.log",
+            "sha256": "99b8eb6cf4c9f79080d6da1b67faa80a685c6578de3dc7b71b88124aad0fa874",
+            "bytes": 223
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 1,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "candidate": "baseline",
+          "sample": 4,
+          "exit_code": 0,
+          "seconds": 0.3909607000000008,
+          "log": "baseline-04.log",
+          "executable": "/tmp/fast-dump-sender-20261025-isolated/baseline/debug/deps/fast_dump-0c5c05642d1d50a9",
+          "receiver_hashes": {
+            "src/receiver/network.rs": "741ada154fffceff25e046a48135fa761848cafe79708b5c10150d38e84467ae",
+            "src/receiver/network/events.rs": "16861aafe89b99434f99f6a6e0e7f431ed8bda9cb706ad2572a821b0e92b779e",
+            "src/receiver/network/pending.rs": "f185883499dbaff9e5df45b1f89a000b48da35d90207d96c05794d6c1824b9da",
+            "src/tests/streamed_abort.rs": "35b76e4e5289ca4da31c57f0e399a9572ca6e72a5739f7780d900423b7367629"
+          },
+          "log_evidence": {
+            "path": "checks-isolated/linux-flake/baseline-04.log",
+            "sha256": "787cd97f095895fc566d10dbfb39f95745dcdfafafeba559375a95ecb3c89318",
+            "bytes": 223
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 1,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "candidate": "baseline",
+          "sample": 5,
+          "exit_code": 0,
+          "seconds": 0.3891373000000016,
+          "log": "baseline-05.log",
+          "executable": "/tmp/fast-dump-sender-20261025-isolated/baseline/debug/deps/fast_dump-0c5c05642d1d50a9",
+          "receiver_hashes": {
+            "src/receiver/network.rs": "741ada154fffceff25e046a48135fa761848cafe79708b5c10150d38e84467ae",
+            "src/receiver/network/events.rs": "16861aafe89b99434f99f6a6e0e7f431ed8bda9cb706ad2572a821b0e92b779e",
+            "src/receiver/network/pending.rs": "f185883499dbaff9e5df45b1f89a000b48da35d90207d96c05794d6c1824b9da",
+            "src/tests/streamed_abort.rs": "35b76e4e5289ca4da31c57f0e399a9572ca6e72a5739f7780d900423b7367629"
+          },
+          "log_evidence": {
+            "path": "checks-isolated/linux-flake/baseline-05.log",
+            "sha256": "787cd97f095895fc566d10dbfb39f95745dcdfafafeba559375a95ecb3c89318",
+            "bytes": 223
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 1,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "candidate": "baseline",
+          "sample": 6,
+          "exit_code": 0,
+          "seconds": 0.3950634999999991,
+          "log": "baseline-06.log",
+          "executable": "/tmp/fast-dump-sender-20261025-isolated/baseline/debug/deps/fast_dump-0c5c05642d1d50a9",
+          "receiver_hashes": {
+            "src/receiver/network.rs": "741ada154fffceff25e046a48135fa761848cafe79708b5c10150d38e84467ae",
+            "src/receiver/network/events.rs": "16861aafe89b99434f99f6a6e0e7f431ed8bda9cb706ad2572a821b0e92b779e",
+            "src/receiver/network/pending.rs": "f185883499dbaff9e5df45b1f89a000b48da35d90207d96c05794d6c1824b9da",
+            "src/tests/streamed_abort.rs": "35b76e4e5289ca4da31c57f0e399a9572ca6e72a5739f7780d900423b7367629"
+          },
+          "log_evidence": {
+            "path": "checks-isolated/linux-flake/baseline-06.log",
+            "sha256": "99b8eb6cf4c9f79080d6da1b67faa80a685c6578de3dc7b71b88124aad0fa874",
+            "bytes": 223
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 1,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "candidate": "baseline",
+          "sample": 7,
+          "exit_code": 0,
+          "seconds": 0.3945937999999991,
+          "log": "baseline-07.log",
+          "executable": "/tmp/fast-dump-sender-20261025-isolated/baseline/debug/deps/fast_dump-0c5c05642d1d50a9",
+          "receiver_hashes": {
+            "src/receiver/network.rs": "741ada154fffceff25e046a48135fa761848cafe79708b5c10150d38e84467ae",
+            "src/receiver/network/events.rs": "16861aafe89b99434f99f6a6e0e7f431ed8bda9cb706ad2572a821b0e92b779e",
+            "src/receiver/network/pending.rs": "f185883499dbaff9e5df45b1f89a000b48da35d90207d96c05794d6c1824b9da",
+            "src/tests/streamed_abort.rs": "35b76e4e5289ca4da31c57f0e399a9572ca6e72a5739f7780d900423b7367629"
+          },
+          "log_evidence": {
+            "path": "checks-isolated/linux-flake/baseline-07.log",
+            "sha256": "99b8eb6cf4c9f79080d6da1b67faa80a685c6578de3dc7b71b88124aad0fa874",
+            "bytes": 223
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 1,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "candidate": "baseline",
+          "sample": 8,
+          "exit_code": 0,
+          "seconds": 0.390004900000001,
+          "log": "baseline-08.log",
+          "executable": "/tmp/fast-dump-sender-20261025-isolated/baseline/debug/deps/fast_dump-0c5c05642d1d50a9",
+          "receiver_hashes": {
+            "src/receiver/network.rs": "741ada154fffceff25e046a48135fa761848cafe79708b5c10150d38e84467ae",
+            "src/receiver/network/events.rs": "16861aafe89b99434f99f6a6e0e7f431ed8bda9cb706ad2572a821b0e92b779e",
+            "src/receiver/network/pending.rs": "f185883499dbaff9e5df45b1f89a000b48da35d90207d96c05794d6c1824b9da",
+            "src/tests/streamed_abort.rs": "35b76e4e5289ca4da31c57f0e399a9572ca6e72a5739f7780d900423b7367629"
+          },
+          "log_evidence": {
+            "path": "checks-isolated/linux-flake/baseline-08.log",
+            "sha256": "787cd97f095895fc566d10dbfb39f95745dcdfafafeba559375a95ecb3c89318",
+            "bytes": 223
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 1,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "candidate": "baseline",
+          "sample": 9,
+          "exit_code": 0,
+          "seconds": 0.39660280000000014,
+          "log": "baseline-09.log",
+          "executable": "/tmp/fast-dump-sender-20261025-isolated/baseline/debug/deps/fast_dump-0c5c05642d1d50a9",
+          "receiver_hashes": {
+            "src/receiver/network.rs": "741ada154fffceff25e046a48135fa761848cafe79708b5c10150d38e84467ae",
+            "src/receiver/network/events.rs": "16861aafe89b99434f99f6a6e0e7f431ed8bda9cb706ad2572a821b0e92b779e",
+            "src/receiver/network/pending.rs": "f185883499dbaff9e5df45b1f89a000b48da35d90207d96c05794d6c1824b9da",
+            "src/tests/streamed_abort.rs": "35b76e4e5289ca4da31c57f0e399a9572ca6e72a5739f7780d900423b7367629"
+          },
+          "log_evidence": {
+            "path": "checks-isolated/linux-flake/baseline-09.log",
+            "sha256": "99b8eb6cf4c9f79080d6da1b67faa80a685c6578de3dc7b71b88124aad0fa874",
+            "bytes": 223
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 1,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "candidate": "baseline",
+          "sample": 10,
+          "exit_code": 0,
+          "seconds": 0.40210349999999906,
+          "log": "baseline-10.log",
+          "executable": "/tmp/fast-dump-sender-20261025-isolated/baseline/debug/deps/fast_dump-0c5c05642d1d50a9",
+          "receiver_hashes": {
+            "src/receiver/network.rs": "741ada154fffceff25e046a48135fa761848cafe79708b5c10150d38e84467ae",
+            "src/receiver/network/events.rs": "16861aafe89b99434f99f6a6e0e7f431ed8bda9cb706ad2572a821b0e92b779e",
+            "src/receiver/network/pending.rs": "f185883499dbaff9e5df45b1f89a000b48da35d90207d96c05794d6c1824b9da",
+            "src/tests/streamed_abort.rs": "35b76e4e5289ca4da31c57f0e399a9572ca6e72a5739f7780d900423b7367629"
+          },
+          "log_evidence": {
+            "path": "checks-isolated/linux-flake/baseline-10.log",
+            "sha256": "a287c9445d683b0a2026e07206d9489416fcd878adafe0c924655349c31fa31f",
+            "bytes": 223
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 1,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "candidate": "baseline",
+          "sample": 11,
+          "exit_code": 0,
+          "seconds": 0.3977472999999989,
+          "log": "baseline-11.log",
+          "executable": "/tmp/fast-dump-sender-20261025-isolated/baseline/debug/deps/fast_dump-0c5c05642d1d50a9",
+          "receiver_hashes": {
+            "src/receiver/network.rs": "741ada154fffceff25e046a48135fa761848cafe79708b5c10150d38e84467ae",
+            "src/receiver/network/events.rs": "16861aafe89b99434f99f6a6e0e7f431ed8bda9cb706ad2572a821b0e92b779e",
+            "src/receiver/network/pending.rs": "f185883499dbaff9e5df45b1f89a000b48da35d90207d96c05794d6c1824b9da",
+            "src/tests/streamed_abort.rs": "35b76e4e5289ca4da31c57f0e399a9572ca6e72a5739f7780d900423b7367629"
+          },
+          "log_evidence": {
+            "path": "checks-isolated/linux-flake/baseline-11.log",
+            "sha256": "99b8eb6cf4c9f79080d6da1b67faa80a685c6578de3dc7b71b88124aad0fa874",
+            "bytes": 223
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 1,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "candidate": "baseline",
+          "sample": 12,
+          "exit_code": 0,
+          "seconds": 0.40608849999999563,
+          "log": "baseline-12.log",
+          "executable": "/tmp/fast-dump-sender-20261025-isolated/baseline/debug/deps/fast_dump-0c5c05642d1d50a9",
+          "receiver_hashes": {
+            "src/receiver/network.rs": "741ada154fffceff25e046a48135fa761848cafe79708b5c10150d38e84467ae",
+            "src/receiver/network/events.rs": "16861aafe89b99434f99f6a6e0e7f431ed8bda9cb706ad2572a821b0e92b779e",
+            "src/receiver/network/pending.rs": "f185883499dbaff9e5df45b1f89a000b48da35d90207d96c05794d6c1824b9da",
+            "src/tests/streamed_abort.rs": "35b76e4e5289ca4da31c57f0e399a9572ca6e72a5739f7780d900423b7367629"
+          },
+          "log_evidence": {
+            "path": "checks-isolated/linux-flake/baseline-12.log",
+            "sha256": "a287c9445d683b0a2026e07206d9489416fcd878adafe0c924655349c31fa31f",
+            "bytes": 223
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 1,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "candidate": "baseline",
+          "sample": 13,
+          "exit_code": 0,
+          "seconds": 0.3941592999999983,
+          "log": "baseline-13.log",
+          "executable": "/tmp/fast-dump-sender-20261025-isolated/baseline/debug/deps/fast_dump-0c5c05642d1d50a9",
+          "receiver_hashes": {
+            "src/receiver/network.rs": "741ada154fffceff25e046a48135fa761848cafe79708b5c10150d38e84467ae",
+            "src/receiver/network/events.rs": "16861aafe89b99434f99f6a6e0e7f431ed8bda9cb706ad2572a821b0e92b779e",
+            "src/receiver/network/pending.rs": "f185883499dbaff9e5df45b1f89a000b48da35d90207d96c05794d6c1824b9da",
+            "src/tests/streamed_abort.rs": "35b76e4e5289ca4da31c57f0e399a9572ca6e72a5739f7780d900423b7367629"
+          },
+          "log_evidence": {
+            "path": "checks-isolated/linux-flake/baseline-13.log",
+            "sha256": "99b8eb6cf4c9f79080d6da1b67faa80a685c6578de3dc7b71b88124aad0fa874",
+            "bytes": 223
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 1,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "candidate": "baseline",
+          "sample": 14,
+          "exit_code": 0,
+          "seconds": 0.42350760899999784,
+          "log": "baseline-14.log",
+          "executable": "/tmp/fast-dump-sender-20261025-isolated/baseline/debug/deps/fast_dump-0c5c05642d1d50a9",
+          "receiver_hashes": {
+            "src/receiver/network.rs": "741ada154fffceff25e046a48135fa761848cafe79708b5c10150d38e84467ae",
+            "src/receiver/network/events.rs": "16861aafe89b99434f99f6a6e0e7f431ed8bda9cb706ad2572a821b0e92b779e",
+            "src/receiver/network/pending.rs": "f185883499dbaff9e5df45b1f89a000b48da35d90207d96c05794d6c1824b9da",
+            "src/tests/streamed_abort.rs": "35b76e4e5289ca4da31c57f0e399a9572ca6e72a5739f7780d900423b7367629"
+          },
+          "log_evidence": {
+            "path": "checks-isolated/linux-flake/baseline-14.log",
+            "sha256": "74552788b7f22573e10362a7d95ac82f52098aa81dc9ad58054f230932a0d3a6",
+            "bytes": 223
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 1,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "candidate": "baseline",
+          "sample": 15,
+          "exit_code": 0,
+          "seconds": 0.4278695419999963,
+          "log": "baseline-15.log",
+          "executable": "/tmp/fast-dump-sender-20261025-isolated/baseline/debug/deps/fast_dump-0c5c05642d1d50a9",
+          "receiver_hashes": {
+            "src/receiver/network.rs": "741ada154fffceff25e046a48135fa761848cafe79708b5c10150d38e84467ae",
+            "src/receiver/network/events.rs": "16861aafe89b99434f99f6a6e0e7f431ed8bda9cb706ad2572a821b0e92b779e",
+            "src/receiver/network/pending.rs": "f185883499dbaff9e5df45b1f89a000b48da35d90207d96c05794d6c1824b9da",
+            "src/tests/streamed_abort.rs": "35b76e4e5289ca4da31c57f0e399a9572ca6e72a5739f7780d900423b7367629"
+          },
+          "log_evidence": {
+            "path": "checks-isolated/linux-flake/baseline-15.log",
+            "sha256": "74552788b7f22573e10362a7d95ac82f52098aa81dc9ad58054f230932a0d3a6",
+            "bytes": 223
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 1,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "candidate": "baseline",
+          "sample": 16,
+          "exit_code": 0,
+          "seconds": 0.4306673580000009,
+          "log": "baseline-16.log",
+          "executable": "/tmp/fast-dump-sender-20261025-isolated/baseline/debug/deps/fast_dump-0c5c05642d1d50a9",
+          "receiver_hashes": {
+            "src/receiver/network.rs": "741ada154fffceff25e046a48135fa761848cafe79708b5c10150d38e84467ae",
+            "src/receiver/network/events.rs": "16861aafe89b99434f99f6a6e0e7f431ed8bda9cb706ad2572a821b0e92b779e",
+            "src/receiver/network/pending.rs": "f185883499dbaff9e5df45b1f89a000b48da35d90207d96c05794d6c1824b9da",
+            "src/tests/streamed_abort.rs": "35b76e4e5289ca4da31c57f0e399a9572ca6e72a5739f7780d900423b7367629"
+          },
+          "log_evidence": {
+            "path": "checks-isolated/linux-flake/baseline-16.log",
+            "sha256": "74552788b7f22573e10362a7d95ac82f52098aa81dc9ad58054f230932a0d3a6",
+            "bytes": 223
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 1,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "candidate": "baseline",
+          "sample": 17,
+          "exit_code": 0,
+          "seconds": 0.42708087500000147,
+          "log": "baseline-17.log",
+          "executable": "/tmp/fast-dump-sender-20261025-isolated/baseline/debug/deps/fast_dump-0c5c05642d1d50a9",
+          "receiver_hashes": {
+            "src/receiver/network.rs": "741ada154fffceff25e046a48135fa761848cafe79708b5c10150d38e84467ae",
+            "src/receiver/network/events.rs": "16861aafe89b99434f99f6a6e0e7f431ed8bda9cb706ad2572a821b0e92b779e",
+            "src/receiver/network/pending.rs": "f185883499dbaff9e5df45b1f89a000b48da35d90207d96c05794d6c1824b9da",
+            "src/tests/streamed_abort.rs": "35b76e4e5289ca4da31c57f0e399a9572ca6e72a5739f7780d900423b7367629"
+          },
+          "log_evidence": {
+            "path": "checks-isolated/linux-flake/baseline-17.log",
+            "sha256": "74552788b7f22573e10362a7d95ac82f52098aa81dc9ad58054f230932a0d3a6",
+            "bytes": 223
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 1,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "candidate": "baseline",
+          "sample": 18,
+          "exit_code": 0,
+          "seconds": 0.4293498079999978,
+          "log": "baseline-18.log",
+          "executable": "/tmp/fast-dump-sender-20261025-isolated/baseline/debug/deps/fast_dump-0c5c05642d1d50a9",
+          "receiver_hashes": {
+            "src/receiver/network.rs": "741ada154fffceff25e046a48135fa761848cafe79708b5c10150d38e84467ae",
+            "src/receiver/network/events.rs": "16861aafe89b99434f99f6a6e0e7f431ed8bda9cb706ad2572a821b0e92b779e",
+            "src/receiver/network/pending.rs": "f185883499dbaff9e5df45b1f89a000b48da35d90207d96c05794d6c1824b9da",
+            "src/tests/streamed_abort.rs": "35b76e4e5289ca4da31c57f0e399a9572ca6e72a5739f7780d900423b7367629"
+          },
+          "log_evidence": {
+            "path": "checks-isolated/linux-flake/baseline-18.log",
+            "sha256": "74552788b7f22573e10362a7d95ac82f52098aa81dc9ad58054f230932a0d3a6",
+            "bytes": 223
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 1,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "candidate": "baseline",
+          "sample": 19,
+          "exit_code": 0,
+          "seconds": 0.41699749300000377,
+          "log": "baseline-19.log",
+          "executable": "/tmp/fast-dump-sender-20261025-isolated/baseline/debug/deps/fast_dump-0c5c05642d1d50a9",
+          "receiver_hashes": {
+            "src/receiver/network.rs": "741ada154fffceff25e046a48135fa761848cafe79708b5c10150d38e84467ae",
+            "src/receiver/network/events.rs": "16861aafe89b99434f99f6a6e0e7f431ed8bda9cb706ad2572a821b0e92b779e",
+            "src/receiver/network/pending.rs": "f185883499dbaff9e5df45b1f89a000b48da35d90207d96c05794d6c1824b9da",
+            "src/tests/streamed_abort.rs": "35b76e4e5289ca4da31c57f0e399a9572ca6e72a5739f7780d900423b7367629"
+          },
+          "log_evidence": {
+            "path": "checks-isolated/linux-flake/baseline-19.log",
+            "sha256": "8896ee73f3e4878ace611d8fa274af8c1f1a24cbf4f830f7dc9be3d577049183",
+            "bytes": 223
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 1,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "candidate": "baseline",
+          "sample": 20,
+          "exit_code": 0,
+          "seconds": 0.42785124099999905,
+          "log": "baseline-20.log",
+          "executable": "/tmp/fast-dump-sender-20261025-isolated/baseline/debug/deps/fast_dump-0c5c05642d1d50a9",
+          "receiver_hashes": {
+            "src/receiver/network.rs": "741ada154fffceff25e046a48135fa761848cafe79708b5c10150d38e84467ae",
+            "src/receiver/network/events.rs": "16861aafe89b99434f99f6a6e0e7f431ed8bda9cb706ad2572a821b0e92b779e",
+            "src/receiver/network/pending.rs": "f185883499dbaff9e5df45b1f89a000b48da35d90207d96c05794d6c1824b9da",
+            "src/tests/streamed_abort.rs": "35b76e4e5289ca4da31c57f0e399a9572ca6e72a5739f7780d900423b7367629"
+          },
+          "log_evidence": {
+            "path": "checks-isolated/linux-flake/baseline-20.log",
+            "sha256": "74552788b7f22573e10362a7d95ac82f52098aa81dc9ad58054f230932a0d3a6",
+            "bytes": 223
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 1,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "candidate": "exp5-prefix",
+          "sample": 1,
+          "exit_code": 0,
+          "seconds": 0.3974001700000045,
+          "log": "exp5-prefix-01.log",
+          "executable": "/tmp/fast-dump-sender-20261025-isolated/exp5-prefix/debug/deps/fast_dump-0c5c05642d1d50a9",
+          "receiver_hashes": {
+            "src/receiver/network.rs": "741ada154fffceff25e046a48135fa761848cafe79708b5c10150d38e84467ae",
+            "src/receiver/network/events.rs": "16861aafe89b99434f99f6a6e0e7f431ed8bda9cb706ad2572a821b0e92b779e",
+            "src/receiver/network/pending.rs": "f185883499dbaff9e5df45b1f89a000b48da35d90207d96c05794d6c1824b9da",
+            "src/tests/streamed_abort.rs": "35b76e4e5289ca4da31c57f0e399a9572ca6e72a5739f7780d900423b7367629"
+          },
+          "log_evidence": {
+            "path": "checks-isolated/linux-flake/exp5-prefix-01.log",
+            "sha256": "3667a48e46db906cedc901003dfaf4a80c69963345b4c4e23b8581bc519d4c53",
+            "bytes": 223
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 1,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "candidate": "exp5-prefix",
+          "sample": 2,
+          "exit_code": 0,
+          "seconds": 0.3923737900000006,
+          "log": "exp5-prefix-02.log",
+          "executable": "/tmp/fast-dump-sender-20261025-isolated/exp5-prefix/debug/deps/fast_dump-0c5c05642d1d50a9",
+          "receiver_hashes": {
+            "src/receiver/network.rs": "741ada154fffceff25e046a48135fa761848cafe79708b5c10150d38e84467ae",
+            "src/receiver/network/events.rs": "16861aafe89b99434f99f6a6e0e7f431ed8bda9cb706ad2572a821b0e92b779e",
+            "src/receiver/network/pending.rs": "f185883499dbaff9e5df45b1f89a000b48da35d90207d96c05794d6c1824b9da",
+            "src/tests/streamed_abort.rs": "35b76e4e5289ca4da31c57f0e399a9572ca6e72a5739f7780d900423b7367629"
+          },
+          "log_evidence": {
+            "path": "checks-isolated/linux-flake/exp5-prefix-02.log",
+            "sha256": "3667a48e46db906cedc901003dfaf4a80c69963345b4c4e23b8581bc519d4c53",
+            "bytes": 223
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 1,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "candidate": "exp5-prefix",
+          "sample": 3,
+          "exit_code": 0,
+          "seconds": 0.3993862200000038,
+          "log": "exp5-prefix-03.log",
+          "executable": "/tmp/fast-dump-sender-20261025-isolated/exp5-prefix/debug/deps/fast_dump-0c5c05642d1d50a9",
+          "receiver_hashes": {
+            "src/receiver/network.rs": "741ada154fffceff25e046a48135fa761848cafe79708b5c10150d38e84467ae",
+            "src/receiver/network/events.rs": "16861aafe89b99434f99f6a6e0e7f431ed8bda9cb706ad2572a821b0e92b779e",
+            "src/receiver/network/pending.rs": "f185883499dbaff9e5df45b1f89a000b48da35d90207d96c05794d6c1824b9da",
+            "src/tests/streamed_abort.rs": "35b76e4e5289ca4da31c57f0e399a9572ca6e72a5739f7780d900423b7367629"
+          },
+          "log_evidence": {
+            "path": "checks-isolated/linux-flake/exp5-prefix-03.log",
+            "sha256": "3667a48e46db906cedc901003dfaf4a80c69963345b4c4e23b8581bc519d4c53",
+            "bytes": 223
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 1,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "candidate": "exp5-prefix",
+          "sample": 4,
+          "exit_code": 0,
+          "seconds": 0.3886374719999992,
+          "log": "exp5-prefix-04.log",
+          "executable": "/tmp/fast-dump-sender-20261025-isolated/exp5-prefix/debug/deps/fast_dump-0c5c05642d1d50a9",
+          "receiver_hashes": {
+            "src/receiver/network.rs": "741ada154fffceff25e046a48135fa761848cafe79708b5c10150d38e84467ae",
+            "src/receiver/network/events.rs": "16861aafe89b99434f99f6a6e0e7f431ed8bda9cb706ad2572a821b0e92b779e",
+            "src/receiver/network/pending.rs": "f185883499dbaff9e5df45b1f89a000b48da35d90207d96c05794d6c1824b9da",
+            "src/tests/streamed_abort.rs": "35b76e4e5289ca4da31c57f0e399a9572ca6e72a5739f7780d900423b7367629"
+          },
+          "log_evidence": {
+            "path": "checks-isolated/linux-flake/exp5-prefix-04.log",
+            "sha256": "07f22013afcc4e6b912457ae2b16f87b6643f7b7b11b7e860980d3fe1db5107e",
+            "bytes": 223
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 1,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "candidate": "exp5-prefix",
+          "sample": 5,
+          "exit_code": 0,
+          "seconds": 0.3944925770000012,
+          "log": "exp5-prefix-05.log",
+          "executable": "/tmp/fast-dump-sender-20261025-isolated/exp5-prefix/debug/deps/fast_dump-0c5c05642d1d50a9",
+          "receiver_hashes": {
+            "src/receiver/network.rs": "741ada154fffceff25e046a48135fa761848cafe79708b5c10150d38e84467ae",
+            "src/receiver/network/events.rs": "16861aafe89b99434f99f6a6e0e7f431ed8bda9cb706ad2572a821b0e92b779e",
+            "src/receiver/network/pending.rs": "f185883499dbaff9e5df45b1f89a000b48da35d90207d96c05794d6c1824b9da",
+            "src/tests/streamed_abort.rs": "35b76e4e5289ca4da31c57f0e399a9572ca6e72a5739f7780d900423b7367629"
+          },
+          "log_evidence": {
+            "path": "checks-isolated/linux-flake/exp5-prefix-05.log",
+            "sha256": "3667a48e46db906cedc901003dfaf4a80c69963345b4c4e23b8581bc519d4c53",
+            "bytes": 223
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 1,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "candidate": "exp5-prefix",
+          "sample": 6,
+          "exit_code": 0,
+          "seconds": 0.38702509699999865,
+          "log": "exp5-prefix-06.log",
+          "executable": "/tmp/fast-dump-sender-20261025-isolated/exp5-prefix/debug/deps/fast_dump-0c5c05642d1d50a9",
+          "receiver_hashes": {
+            "src/receiver/network.rs": "741ada154fffceff25e046a48135fa761848cafe79708b5c10150d38e84467ae",
+            "src/receiver/network/events.rs": "16861aafe89b99434f99f6a6e0e7f431ed8bda9cb706ad2572a821b0e92b779e",
+            "src/receiver/network/pending.rs": "f185883499dbaff9e5df45b1f89a000b48da35d90207d96c05794d6c1824b9da",
+            "src/tests/streamed_abort.rs": "35b76e4e5289ca4da31c57f0e399a9572ca6e72a5739f7780d900423b7367629"
+          },
+          "log_evidence": {
+            "path": "checks-isolated/linux-flake/exp5-prefix-06.log",
+            "sha256": "07f22013afcc4e6b912457ae2b16f87b6643f7b7b11b7e860980d3fe1db5107e",
+            "bytes": 223
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 1,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "candidate": "exp5-prefix",
+          "sample": 7,
+          "exit_code": 0,
+          "seconds": 0.39638315900000265,
+          "log": "exp5-prefix-07.log",
+          "executable": "/tmp/fast-dump-sender-20261025-isolated/exp5-prefix/debug/deps/fast_dump-0c5c05642d1d50a9",
+          "receiver_hashes": {
+            "src/receiver/network.rs": "741ada154fffceff25e046a48135fa761848cafe79708b5c10150d38e84467ae",
+            "src/receiver/network/events.rs": "16861aafe89b99434f99f6a6e0e7f431ed8bda9cb706ad2572a821b0e92b779e",
+            "src/receiver/network/pending.rs": "f185883499dbaff9e5df45b1f89a000b48da35d90207d96c05794d6c1824b9da",
+            "src/tests/streamed_abort.rs": "35b76e4e5289ca4da31c57f0e399a9572ca6e72a5739f7780d900423b7367629"
+          },
+          "log_evidence": {
+            "path": "checks-isolated/linux-flake/exp5-prefix-07.log",
+            "sha256": "3667a48e46db906cedc901003dfaf4a80c69963345b4c4e23b8581bc519d4c53",
+            "bytes": 223
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 1,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "candidate": "exp5-prefix",
+          "sample": 8,
+          "exit_code": 0,
+          "seconds": 0.3911486260000032,
+          "log": "exp5-prefix-08.log",
+          "executable": "/tmp/fast-dump-sender-20261025-isolated/exp5-prefix/debug/deps/fast_dump-0c5c05642d1d50a9",
+          "receiver_hashes": {
+            "src/receiver/network.rs": "741ada154fffceff25e046a48135fa761848cafe79708b5c10150d38e84467ae",
+            "src/receiver/network/events.rs": "16861aafe89b99434f99f6a6e0e7f431ed8bda9cb706ad2572a821b0e92b779e",
+            "src/receiver/network/pending.rs": "f185883499dbaff9e5df45b1f89a000b48da35d90207d96c05794d6c1824b9da",
+            "src/tests/streamed_abort.rs": "35b76e4e5289ca4da31c57f0e399a9572ca6e72a5739f7780d900423b7367629"
+          },
+          "log_evidence": {
+            "path": "checks-isolated/linux-flake/exp5-prefix-08.log",
+            "sha256": "07f22013afcc4e6b912457ae2b16f87b6643f7b7b11b7e860980d3fe1db5107e",
+            "bytes": 223
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 1,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "candidate": "exp5-prefix",
+          "sample": 9,
+          "exit_code": 0,
+          "seconds": 0.4005747959999937,
+          "log": "exp5-prefix-09.log",
+          "executable": "/tmp/fast-dump-sender-20261025-isolated/exp5-prefix/debug/deps/fast_dump-0c5c05642d1d50a9",
+          "receiver_hashes": {
+            "src/receiver/network.rs": "741ada154fffceff25e046a48135fa761848cafe79708b5c10150d38e84467ae",
+            "src/receiver/network/events.rs": "16861aafe89b99434f99f6a6e0e7f431ed8bda9cb706ad2572a821b0e92b779e",
+            "src/receiver/network/pending.rs": "f185883499dbaff9e5df45b1f89a000b48da35d90207d96c05794d6c1824b9da",
+            "src/tests/streamed_abort.rs": "35b76e4e5289ca4da31c57f0e399a9572ca6e72a5739f7780d900423b7367629"
+          },
+          "log_evidence": {
+            "path": "checks-isolated/linux-flake/exp5-prefix-09.log",
+            "sha256": "3667a48e46db906cedc901003dfaf4a80c69963345b4c4e23b8581bc519d4c53",
+            "bytes": 223
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 1,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "candidate": "exp5-prefix",
+          "sample": 10,
+          "exit_code": 0,
+          "seconds": 0.39388031400000045,
+          "log": "exp5-prefix-10.log",
+          "executable": "/tmp/fast-dump-sender-20261025-isolated/exp5-prefix/debug/deps/fast_dump-0c5c05642d1d50a9",
+          "receiver_hashes": {
+            "src/receiver/network.rs": "741ada154fffceff25e046a48135fa761848cafe79708b5c10150d38e84467ae",
+            "src/receiver/network/events.rs": "16861aafe89b99434f99f6a6e0e7f431ed8bda9cb706ad2572a821b0e92b779e",
+            "src/receiver/network/pending.rs": "f185883499dbaff9e5df45b1f89a000b48da35d90207d96c05794d6c1824b9da",
+            "src/tests/streamed_abort.rs": "35b76e4e5289ca4da31c57f0e399a9572ca6e72a5739f7780d900423b7367629"
+          },
+          "log_evidence": {
+            "path": "checks-isolated/linux-flake/exp5-prefix-10.log",
+            "sha256": "3667a48e46db906cedc901003dfaf4a80c69963345b4c4e23b8581bc519d4c53",
+            "bytes": 223
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 1,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "candidate": "exp5-prefix",
+          "sample": 11,
+          "exit_code": 0,
+          "seconds": 0.39465221300000053,
+          "log": "exp5-prefix-11.log",
+          "executable": "/tmp/fast-dump-sender-20261025-isolated/exp5-prefix/debug/deps/fast_dump-0c5c05642d1d50a9",
+          "receiver_hashes": {
+            "src/receiver/network.rs": "741ada154fffceff25e046a48135fa761848cafe79708b5c10150d38e84467ae",
+            "src/receiver/network/events.rs": "16861aafe89b99434f99f6a6e0e7f431ed8bda9cb706ad2572a821b0e92b779e",
+            "src/receiver/network/pending.rs": "f185883499dbaff9e5df45b1f89a000b48da35d90207d96c05794d6c1824b9da",
+            "src/tests/streamed_abort.rs": "35b76e4e5289ca4da31c57f0e399a9572ca6e72a5739f7780d900423b7367629"
+          },
+          "log_evidence": {
+            "path": "checks-isolated/linux-flake/exp5-prefix-11.log",
+            "sha256": "3667a48e46db906cedc901003dfaf4a80c69963345b4c4e23b8581bc519d4c53",
+            "bytes": 223
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 1,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "candidate": "exp5-prefix",
+          "sample": 12,
+          "exit_code": 0,
+          "seconds": 0.3898312100000112,
+          "log": "exp5-prefix-12.log",
+          "executable": "/tmp/fast-dump-sender-20261025-isolated/exp5-prefix/debug/deps/fast_dump-0c5c05642d1d50a9",
+          "receiver_hashes": {
+            "src/receiver/network.rs": "741ada154fffceff25e046a48135fa761848cafe79708b5c10150d38e84467ae",
+            "src/receiver/network/events.rs": "16861aafe89b99434f99f6a6e0e7f431ed8bda9cb706ad2572a821b0e92b779e",
+            "src/receiver/network/pending.rs": "f185883499dbaff9e5df45b1f89a000b48da35d90207d96c05794d6c1824b9da",
+            "src/tests/streamed_abort.rs": "35b76e4e5289ca4da31c57f0e399a9572ca6e72a5739f7780d900423b7367629"
+          },
+          "log_evidence": {
+            "path": "checks-isolated/linux-flake/exp5-prefix-12.log",
+            "sha256": "07f22013afcc4e6b912457ae2b16f87b6643f7b7b11b7e860980d3fe1db5107e",
+            "bytes": 223
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 1,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "candidate": "exp5-prefix",
+          "sample": 13,
+          "exit_code": 0,
+          "seconds": 0.3950191319999874,
+          "log": "exp5-prefix-13.log",
+          "executable": "/tmp/fast-dump-sender-20261025-isolated/exp5-prefix/debug/deps/fast_dump-0c5c05642d1d50a9",
+          "receiver_hashes": {
+            "src/receiver/network.rs": "741ada154fffceff25e046a48135fa761848cafe79708b5c10150d38e84467ae",
+            "src/receiver/network/events.rs": "16861aafe89b99434f99f6a6e0e7f431ed8bda9cb706ad2572a821b0e92b779e",
+            "src/receiver/network/pending.rs": "f185883499dbaff9e5df45b1f89a000b48da35d90207d96c05794d6c1824b9da",
+            "src/tests/streamed_abort.rs": "35b76e4e5289ca4da31c57f0e399a9572ca6e72a5739f7780d900423b7367629"
+          },
+          "log_evidence": {
+            "path": "checks-isolated/linux-flake/exp5-prefix-13.log",
+            "sha256": "3667a48e46db906cedc901003dfaf4a80c69963345b4c4e23b8581bc519d4c53",
+            "bytes": 223
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 1,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "candidate": "exp5-prefix",
+          "sample": 14,
+          "exit_code": 0,
+          "seconds": 0.39101490600000943,
+          "log": "exp5-prefix-14.log",
+          "executable": "/tmp/fast-dump-sender-20261025-isolated/exp5-prefix/debug/deps/fast_dump-0c5c05642d1d50a9",
+          "receiver_hashes": {
+            "src/receiver/network.rs": "741ada154fffceff25e046a48135fa761848cafe79708b5c10150d38e84467ae",
+            "src/receiver/network/events.rs": "16861aafe89b99434f99f6a6e0e7f431ed8bda9cb706ad2572a821b0e92b779e",
+            "src/receiver/network/pending.rs": "f185883499dbaff9e5df45b1f89a000b48da35d90207d96c05794d6c1824b9da",
+            "src/tests/streamed_abort.rs": "35b76e4e5289ca4da31c57f0e399a9572ca6e72a5739f7780d900423b7367629"
+          },
+          "log_evidence": {
+            "path": "checks-isolated/linux-flake/exp5-prefix-14.log",
+            "sha256": "07f22013afcc4e6b912457ae2b16f87b6643f7b7b11b7e860980d3fe1db5107e",
+            "bytes": 223
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 1,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "candidate": "exp5-prefix",
+          "sample": 15,
+          "exit_code": 0,
+          "seconds": 0.39137262699999553,
+          "log": "exp5-prefix-15.log",
+          "executable": "/tmp/fast-dump-sender-20261025-isolated/exp5-prefix/debug/deps/fast_dump-0c5c05642d1d50a9",
+          "receiver_hashes": {
+            "src/receiver/network.rs": "741ada154fffceff25e046a48135fa761848cafe79708b5c10150d38e84467ae",
+            "src/receiver/network/events.rs": "16861aafe89b99434f99f6a6e0e7f431ed8bda9cb706ad2572a821b0e92b779e",
+            "src/receiver/network/pending.rs": "f185883499dbaff9e5df45b1f89a000b48da35d90207d96c05794d6c1824b9da",
+            "src/tests/streamed_abort.rs": "35b76e4e5289ca4da31c57f0e399a9572ca6e72a5739f7780d900423b7367629"
+          },
+          "log_evidence": {
+            "path": "checks-isolated/linux-flake/exp5-prefix-15.log",
+            "sha256": "07f22013afcc4e6b912457ae2b16f87b6643f7b7b11b7e860980d3fe1db5107e",
+            "bytes": 223
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 1,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "candidate": "exp5-prefix",
+          "sample": 16,
+          "exit_code": 0,
+          "seconds": 0.3903002200000003,
+          "log": "exp5-prefix-16.log",
+          "executable": "/tmp/fast-dump-sender-20261025-isolated/exp5-prefix/debug/deps/fast_dump-0c5c05642d1d50a9",
+          "receiver_hashes": {
+            "src/receiver/network.rs": "741ada154fffceff25e046a48135fa761848cafe79708b5c10150d38e84467ae",
+            "src/receiver/network/events.rs": "16861aafe89b99434f99f6a6e0e7f431ed8bda9cb706ad2572a821b0e92b779e",
+            "src/receiver/network/pending.rs": "f185883499dbaff9e5df45b1f89a000b48da35d90207d96c05794d6c1824b9da",
+            "src/tests/streamed_abort.rs": "35b76e4e5289ca4da31c57f0e399a9572ca6e72a5739f7780d900423b7367629"
+          },
+          "log_evidence": {
+            "path": "checks-isolated/linux-flake/exp5-prefix-16.log",
+            "sha256": "07f22013afcc4e6b912457ae2b16f87b6643f7b7b11b7e860980d3fe1db5107e",
+            "bytes": 223
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 1,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "candidate": "exp5-prefix",
+          "sample": 17,
+          "exit_code": 0,
+          "seconds": 0.39481458100000566,
+          "log": "exp5-prefix-17.log",
+          "executable": "/tmp/fast-dump-sender-20261025-isolated/exp5-prefix/debug/deps/fast_dump-0c5c05642d1d50a9",
+          "receiver_hashes": {
+            "src/receiver/network.rs": "741ada154fffceff25e046a48135fa761848cafe79708b5c10150d38e84467ae",
+            "src/receiver/network/events.rs": "16861aafe89b99434f99f6a6e0e7f431ed8bda9cb706ad2572a821b0e92b779e",
+            "src/receiver/network/pending.rs": "f185883499dbaff9e5df45b1f89a000b48da35d90207d96c05794d6c1824b9da",
+            "src/tests/streamed_abort.rs": "35b76e4e5289ca4da31c57f0e399a9572ca6e72a5739f7780d900423b7367629"
+          },
+          "log_evidence": {
+            "path": "checks-isolated/linux-flake/exp5-prefix-17.log",
+            "sha256": "3667a48e46db906cedc901003dfaf4a80c69963345b4c4e23b8581bc519d4c53",
+            "bytes": 223
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 1,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "candidate": "exp5-prefix",
+          "sample": 18,
+          "exit_code": 0,
+          "seconds": 0.39743323100000794,
+          "log": "exp5-prefix-18.log",
+          "executable": "/tmp/fast-dump-sender-20261025-isolated/exp5-prefix/debug/deps/fast_dump-0c5c05642d1d50a9",
+          "receiver_hashes": {
+            "src/receiver/network.rs": "741ada154fffceff25e046a48135fa761848cafe79708b5c10150d38e84467ae",
+            "src/receiver/network/events.rs": "16861aafe89b99434f99f6a6e0e7f431ed8bda9cb706ad2572a821b0e92b779e",
+            "src/receiver/network/pending.rs": "f185883499dbaff9e5df45b1f89a000b48da35d90207d96c05794d6c1824b9da",
+            "src/tests/streamed_abort.rs": "35b76e4e5289ca4da31c57f0e399a9572ca6e72a5739f7780d900423b7367629"
+          },
+          "log_evidence": {
+            "path": "checks-isolated/linux-flake/exp5-prefix-18.log",
+            "sha256": "3667a48e46db906cedc901003dfaf4a80c69963345b4c4e23b8581bc519d4c53",
+            "bytes": 223
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 1,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "candidate": "exp5-prefix",
+          "sample": 19,
+          "exit_code": 0,
+          "seconds": 0.3902432280000028,
+          "log": "exp5-prefix-19.log",
+          "executable": "/tmp/fast-dump-sender-20261025-isolated/exp5-prefix/debug/deps/fast_dump-0c5c05642d1d50a9",
+          "receiver_hashes": {
+            "src/receiver/network.rs": "741ada154fffceff25e046a48135fa761848cafe79708b5c10150d38e84467ae",
+            "src/receiver/network/events.rs": "16861aafe89b99434f99f6a6e0e7f431ed8bda9cb706ad2572a821b0e92b779e",
+            "src/receiver/network/pending.rs": "f185883499dbaff9e5df45b1f89a000b48da35d90207d96c05794d6c1824b9da",
+            "src/tests/streamed_abort.rs": "35b76e4e5289ca4da31c57f0e399a9572ca6e72a5739f7780d900423b7367629"
+          },
+          "log_evidence": {
+            "path": "checks-isolated/linux-flake/exp5-prefix-19.log",
+            "sha256": "07f22013afcc4e6b912457ae2b16f87b6643f7b7b11b7e860980d3fe1db5107e",
+            "bytes": 223
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 1,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "candidate": "exp5-prefix",
+          "sample": 20,
+          "exit_code": 0,
+          "seconds": 0.4024008909999992,
+          "log": "exp5-prefix-20.log",
+          "executable": "/tmp/fast-dump-sender-20261025-isolated/exp5-prefix/debug/deps/fast_dump-0c5c05642d1d50a9",
+          "receiver_hashes": {
+            "src/receiver/network.rs": "741ada154fffceff25e046a48135fa761848cafe79708b5c10150d38e84467ae",
+            "src/receiver/network/events.rs": "16861aafe89b99434f99f6a6e0e7f431ed8bda9cb706ad2572a821b0e92b779e",
+            "src/receiver/network/pending.rs": "f185883499dbaff9e5df45b1f89a000b48da35d90207d96c05794d6c1824b9da",
+            "src/tests/streamed_abort.rs": "35b76e4e5289ca4da31c57f0e399a9572ca6e72a5739f7780d900423b7367629"
+          },
+          "log_evidence": {
+            "path": "checks-isolated/linux-flake/exp5-prefix-20.log",
+            "sha256": "a3f9318dbc3e95fb491f487ce00ba9d9fd3c744e8b105a52394dff116b3b103c",
+            "bytes": 223
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 1,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "candidate": "exp5-prefix",
+          "check": "all-features-rerun",
+          "exit_code": 0,
+          "seconds": 10.128349795000005,
+          "log_evidence": {
+            "path": "checks-isolated/linux-flake/exp5-prefix-all-features-rerun.log",
+            "sha256": "da579b038caf10c0ad0ab4d2533124347161c61a6af86989b5f35f7925aec4a0",
+            "bytes": 1061
+          },
+          "rust_suite_counts": [
+            {
+              "passed": 310,
+              "failed": 0,
+              "ignored": 3
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            },
+            {
+              "passed": 3,
+              "failed": 0,
+              "ignored": 0
+            },
+            {
+              "passed": 16,
+              "failed": 0,
+              "ignored": 1
+            },
+            {
+              "passed": 13,
+              "failed": 0,
+              "ignored": 3
+            },
+            {
+              "passed": 0,
+              "failed": 0,
+              "ignored": 0
+            }
+          ]
+        },
+        {
+          "candidate": "exp5-prefix",
+          "check": "clippy-rerun",
+          "exit_code": 0,
+          "seconds": 10.704463212999997,
+          "log_evidence": {
+            "path": "checks-isolated/linux-flake/exp5-prefix-clippy-rerun.log",
+            "sha256": "cfa8139345a3fa1b3d1461863e1e87f2dee71b05e36d33d9e31ccb7f5be06e31",
+            "bytes": 3612
+          },
+          "rust_suite_counts": []
+        }
+      ]
+    }
+  },
+  "additional_checks": {
+    "provenance": {
+      "baseline_commit": "4c58969a1ac1d4fbf18675077cac105485f2f2ab",
+      "compiler": {
+        "recorded_identity": "rustc 1.93.1 (01f6ddf75 2026-02-11)\nbinary: rustc\ncommit-hash: 01f6ddf7588f42ae2d7eb0a2f21d44e8e96674cf\ncommit-date: 2026-02-11\nhost: x86_64-pc-windows-msvc\nrelease: 1.93.1\nLLVM version: 21.1.8\n",
+        "compiler_identity_text_sha256": "f133056ecf1576257a2bcb9da126bfb7e84725ccc144caee31dc2f70b42f6f20",
+        "executable_path": "C:\\Users\\SAIKODEV\\.rustup\\toolchains\\stable-x86_64-pc-windows-msvc\\bin\\rustc.exe",
+        "executable_sha256": "830890c09c00c504a860016bb34903a5df44bddb8115dc8db15cbf23d5464a2b",
+        "executable_hash_observed_utc": "2026-10-25T12:53:49.874541+00:00",
+        "scope": "Executable hashed at final packaging; identity matches recorded build rustc -vV. Executable hash was not recorded at build time."
+      },
+      "source_snapshots": {
+        "baseline": {
+          "source_sha256": "177309d73b87f4517ba390f6f20825823698543c9a701a508c7abf340f1e603e",
+          "changed_paths": []
+        },
+        "exp2-metadata": {
+          "source_sha256": "8c2d868cde9fe1d1bc70435c0302e251361019235e5a4d1120fd6d0f8c107d7d",
+          "changed_paths": [
+            "docs/runtime.md",
+            "src/sender/read.rs"
+          ],
+          "patch": {
+            "path": "patches/exp2-metadata.patch",
+            "sha256": "6a9e56a465fd28512a07c8373d64cd7b5d499737f8d13cd68aa17de339988583",
+            "bytes": 9221
+          },
+          "patch_base_source_sha256": "177309d73b87f4517ba390f6f20825823698543c9a701a508c7abf340f1e603e",
+          "patch_validation": "exact regenerated unified diff from baseline to candidate; text newline normalization follows package_sources.py"
+        },
+        "exp3-refill": {
+          "source_sha256": "509f3b7e883ee5875ca65ccc1ed413e6534bbc7a1e5e1eb32abe9546c3535b04",
+          "changed_paths": [
+            "docs/runtime.md",
+            "src/sender/read_ahead.rs",
+            "src/sender/scan.rs"
+          ],
+          "patch": {
+            "path": "patches/exp3-refill.patch",
+            "sha256": "0cd20fb837a72b83388729ac724f111fb4dd71179cd0c47582cf51f44e19a74d",
+            "bytes": 22186
+          },
+          "patch_base_source_sha256": "177309d73b87f4517ba390f6f20825823698543c9a701a508c7abf340f1e603e",
+          "patch_validation": "exact regenerated unified diff from baseline to candidate; text newline normalization follows package_sources.py"
+        },
+        "exp4-double-buffer": {
+          "source_sha256": "2241c507662920ed69262f90ec006729d47353d9af578e76ad04a2f4d99f66b4",
+          "changed_paths": [
+            "docs/benchmarks.md",
+            "docs/runtime.md",
+            "src/network/protocol.md",
+            "src/sender/stream.rs",
+            "src/sender/stream/source.rs",
+            "src/sender/tar.rs"
+          ],
+          "patch": {
+            "path": "patches/exp4-double-buffer.patch",
+            "sha256": "56ee42a0238e826790f46355b3dcb722276bf29c32371324d969ec540db5f222",
+            "bytes": 28180
+          },
+          "patch_base_source_sha256": "177309d73b87f4517ba390f6f20825823698543c9a701a508c7abf340f1e603e",
+          "patch_validation": "exact regenerated unified diff from baseline to candidate; text newline normalization follows package_sources.py"
+        },
+        "exp5-prefix": {
+          "source_sha256": "754b5afaa86d1d0e22bfa83675039fbf91224235fa01ba963663d007808bdce0",
+          "changed_paths": [
+            "docs/runtime.md",
+            "src/sender/file_bench.rs",
+            "src/sender/read.rs",
+            "src/sender/read/prefetch.rs",
+            "src/sender/read_ahead.rs",
+            "src/sender/stream.rs",
+            "src/sender/tar.rs"
+          ],
+          "patch": {
+            "path": "patches/exp5-prefix.patch",
+            "sha256": "d5cf51984d92bec84d722e4ba8d14f2e321769f76b69fb96bc1ff4e514717948",
+            "bytes": 34644
+          },
+          "patch_base_source_sha256": "177309d73b87f4517ba390f6f20825823698543c9a701a508c7abf340f1e603e",
+          "patch_validation": "exact regenerated unified diff from baseline to candidate; text newline normalization follows package_sources.py"
+        }
+      },
+      "isolated_binary_sha256": {
+        "baseline": {
+          "fast-dump": "4e10eb0efe0c1cbf4a0b6740c2b96e15b7a002452816625a911b2beccf0282af",
+          "loopback_send_dump": "6a7f3a02b327c98f814c1b8406411dde2b030931cd2b52d86d1f82403fe2d011",
+          "file_pipeline": "5bddf7a268b5cc6e7fc11fd5c73c693f11a1a1a61bc5e0adf75930775eba1cfe"
+        },
+        "exp2-metadata": {
+          "fast-dump": "cab29d9bb5ba89855ae020552efcbff873e89657f99f0af735204a248a24aae8",
+          "loopback_send_dump": "769f435c3bb88b278d0f6ae687b358427dc3dc49827fd8b83637cfe1a7cc106e",
+          "file_pipeline": "a1058295810c430ad93bcf36ac395e56f2af616241593d70a6701fbd505285ce"
+        },
+        "exp3-refill": {
+          "fast-dump": "e8ba0522e040e9ee61ff0a5c510cad2ec479e509f3f455704a2f3d2e1ee99c08",
+          "loopback_send_dump": "3bbf9615280556de7cad5fc6bcc6b66ffc65029c2c094de03c6fb55ed2093659",
+          "file_pipeline": "e415844d206cdda2ee58eae4112af0a1384b9bc66d2c5de471064829ac0d0e79"
+        },
+        "exp4-double-buffer": {
+          "fast-dump": "2e1749d66d38decc882ce5fb28a17af4f4bc34744509cf8d6fed8c7776af6f84",
+          "loopback_send_dump": "b4497b1095a9a21ad500ba0d9c6d7c3d8929e7c06c2531583d0c32d6d805d623",
+          "file_pipeline": "97408da06d910369d206f6966753d4e849d35c9f32961ab9d10ea77db046daf4"
+        },
+        "exp5-prefix": {
+          "fast-dump": "492e0bef894ff0e76161dcecd71bdecbae02c9bb7945121f5743ccc15cdcbfda",
+          "loopback_send_dump": "716449d93b975e8a7f76b951e1382a29db252e10c75ec3dee8f7181fcc951157",
+          "file_pipeline": "14bea5d6de405e13c44c3bc8d3e03f7e8bd0bd23e1fd92c3737ba7e47ce18b4c"
+        }
+      },
+      "fixture_manifest": {
+        "path": "fixture-manifest.json",
+        "sha256": "5a36409c8f87e073e6be69e0fe4f1c6d9e9416e8b18de2e475d499469f299986",
+        "bytes": 3623293
+      },
+      "analysis_file": {
+        "path": "analysis.json",
+        "sha256": "d307341a5b34948cb1f6865e9f85967d5bc9753acf6921260d8e8b72ca339377",
+        "bytes": 3187690
+      },
+      "shared_target_invalidation": {
+        "valid_for_validation_or_performance_evidence": false,
+        "reason": {
+          "reason": "Shared Cargo target reused package outputs across copied paths whose source mtimes predated the previous build. All shared-target verification records and candidate artifacts are superseded by isolated-target rebuilds before benchmarking.",
+          "measurements_started": false,
+          "replacement_target": "E:\\projects\\cool_project\\fast-dump\\target\\sender-experiments-isolated"
+        },
+        "records": [
+          {
+            "source": {
+              "path": "checks/baseline/attempt-01/checks.json",
+              "sha256": "bfca47fac3500bb10826baa8169cd5da1cf08c0a0194b19d3a868e0a0869d958",
+              "bytes": 1135
+            },
+            "observations": [
+              {
+                "check": "fmt",
+                "command": [
+                  "cargo",
+                  "fmt",
+                  "--all",
+                  "--check"
+                ],
+                "exit_code": 0,
+                "seconds": 0.42679929733276367
+              },
+              {
+                "check": "all-features",
+                "command": [
+                  "cargo",
+                  "test",
+                  "--locked",
+                  "--all-features",
+                  "--quiet"
+                ],
+                "exit_code": 0,
+                "seconds": 6.7769036293029785
+              },
+              {
+                "check": "clippy",
+                "command": [
+                  "cargo",
+                  "clippy",
+                  "--locked",
+                  "--all-targets",
+                  "--all-features",
+                  "--",
+                  "-D",
+                  "warnings"
+                ],
+                "exit_code": 0,
+                "seconds": 0.31781840324401855
+              },
+              {
+                "check": "benches",
+                "command": [
+                  "cargo",
+                  "check",
+                  "--locked",
+                  "--benches",
+                  "--all-features"
+                ],
+                "exit_code": 0,
+                "seconds": 0.23478293418884277
+              },
+              {
+                "check": "python",
+                "command": [
+                  "python",
+                  "-B",
+                  "-m",
+                  "unittest",
+                  "discover",
+                  "-s",
+                  "scripts",
+                  "-p",
+                  "test_*.py"
+                ],
+                "exit_code": 0,
+                "seconds": 1.467665195465088
+              }
+            ]
+          },
+          {
+            "source": {
+              "path": "checks/exp2-metadata/attempt-01/checks.json",
+              "sha256": "146176e53680dc0ab3c9d9a837a5e389a6bf8445f0ba658d324282c169bbab2a",
+              "bytes": 1133
+            },
+            "observations": [
+              {
+                "check": "fmt",
+                "command": [
+                  "cargo",
+                  "fmt",
+                  "--all",
+                  "--check"
+                ],
+                "exit_code": 0,
+                "seconds": 0.446918249130249
+              },
+              {
+                "check": "all-features",
+                "command": [
+                  "cargo",
+                  "test",
+                  "--locked",
+                  "--all-features",
+                  "--quiet"
+                ],
+                "exit_code": 0,
+                "seconds": 6.755307674407959
+              },
+              {
+                "check": "clippy",
+                "command": [
+                  "cargo",
+                  "clippy",
+                  "--locked",
+                  "--all-targets",
+                  "--all-features",
+                  "--",
+                  "-D",
+                  "warnings"
+                ],
+                "exit_code": 0,
+                "seconds": 0.30013322830200195
+              },
+              {
+                "check": "benches",
+                "command": [
+                  "cargo",
+                  "check",
+                  "--locked",
+                  "--benches",
+                  "--all-features"
+                ],
+                "exit_code": 0,
+                "seconds": 0.23121118545532227
+              },
+              {
+                "check": "python",
+                "command": [
+                  "python",
+                  "-B",
+                  "-m",
+                  "unittest",
+                  "discover",
+                  "-s",
+                  "scripts",
+                  "-p",
+                  "test_*.py"
+                ],
+                "exit_code": 0,
+                "seconds": 1.4189436435699463
+              }
+            ]
+          },
+          {
+            "source": {
+              "path": "checks/exp3-refill/attempt-01/checks.json",
+              "sha256": "c9fc5a40839ad883258e95555525df17a6fd71908c429a846ea5eeba5061b40a",
+              "bytes": 1134
+            },
+            "observations": [
+              {
+                "check": "fmt",
+                "command": [
+                  "cargo",
+                  "fmt",
+                  "--all",
+                  "--check"
+                ],
+                "exit_code": 0,
+                "seconds": 0.4440586566925049
+              },
+              {
+                "check": "all-features",
+                "command": [
+                  "cargo",
+                  "test",
+                  "--locked",
+                  "--all-features",
+                  "--quiet"
+                ],
+                "exit_code": 0,
+                "seconds": 6.837315082550049
+              },
+              {
+                "check": "clippy",
+                "command": [
+                  "cargo",
+                  "clippy",
+                  "--locked",
+                  "--all-targets",
+                  "--all-features",
+                  "--",
+                  "-D",
+                  "warnings"
+                ],
+                "exit_code": 0,
+                "seconds": 0.29965734481811523
+              },
+              {
+                "check": "benches",
+                "command": [
+                  "cargo",
+                  "check",
+                  "--locked",
+                  "--benches",
+                  "--all-features"
+                ],
+                "exit_code": 0,
+                "seconds": 0.24779891967773438
+              },
+              {
+                "check": "python",
+                "command": [
+                  "python",
+                  "-B",
+                  "-m",
+                  "unittest",
+                  "discover",
+                  "-s",
+                  "scripts",
+                  "-p",
+                  "test_*.py"
+                ],
+                "exit_code": 0,
+                "seconds": 1.4579992294311523
+              }
+            ]
+          },
+          {
+            "source": {
+              "path": "checks/exp4-double-buffer/attempt-01/checks.json",
+              "sha256": "78f1189803851a129881ba3d2146f90ecca0beec1fd44bb95be55be8ee8ea222",
+              "bytes": 1033
+            },
+            "observations": [
+              {
+                "check": "clippy",
+                "command": [
+                  "cargo",
+                  "clippy",
+                  "--locked",
+                  "--all-targets",
+                  "--all-features",
+                  "--",
+                  "-D",
+                  "warnings"
+                ],
+                "exit_code": 0,
+                "seconds": 3.2698216438293457
+              },
+              {
+                "check": "benches",
+                "command": [
+                  "cargo",
+                  "check",
+                  "--locked",
+                  "--benches",
+                  "--all-features"
+                ],
+                "exit_code": 0,
+                "seconds": 2.6730456352233887
+              },
+              {
+                "check": "python",
+                "command": [
+                  "python",
+                  "-B",
+                  "-m",
+                  "unittest",
+                  "discover",
+                  "-s",
+                  "scripts",
+                  "-p",
+                  "test_*.py"
+                ],
+                "exit_code": 0,
+                "seconds": 2.1647915840148926
+              },
+              {
+                "check": "release",
+                "command": [
+                  "cargo",
+                  "build",
+                  "--locked",
+                  "--release",
+                  "--bin",
+                  "fast-dump",
+                  "--benches",
+                  "--features",
+                  "bench-internals"
+                ],
+                "exit_code": 0,
+                "seconds": 0.19291329383850098
+              }
+            ]
+          },
+          {
+            "source": {
+              "path": "checks/exp4-double-buffer/checks.json",
+              "sha256": "380e0e11816085655c94863726e223a90148b0904a5daa9ab4b36b3f009c4fd7",
+              "bytes": 843
+            },
+            "observations": [
+              {
+                "check": "fmt",
+                "command": [
+                  "cargo",
+                  "fmt",
+                  "--all",
+                  "--check"
+                ],
+                "exit_code": 0,
+                "seconds": 0.5029788017272949
+              },
+              {
+                "check": "default",
+                "command": [
+                  "cargo",
+                  "test",
+                  "--locked",
+                  "--quiet"
+                ],
+                "exit_code": 0,
+                "seconds": 6.801889181137085
+              },
+              {
+                "check": "all-features",
+                "command": [
+                  "cargo",
+                  "test",
+                  "--locked",
+                  "--all-features",
+                  "--quiet"
+                ],
+                "exit_code": 0,
+                "seconds": 14.294653415679932
+              },
+              {
+                "check": "clippy",
+                "command": [
+                  "cargo",
+                  "clippy",
+                  "--locked",
+                  "--all-targets",
+                  "--all-features",
+                  "--",
+                  "-D",
+                  "warnings"
+                ],
+                "exit_code": 101,
+                "seconds": 8.70952844619751
+              }
+            ]
+          },
+          {
+            "source": {
+              "path": "checks/exp5-prefix/attempt-01/checks.json",
+              "sha256": "5b216d1e2c0393a16e6e4acb26b360b0a636d46d6dc04ba527ed273ca16f1ea4",
+              "bytes": 1605
+            },
+            "observations": [
+              {
+                "check": "fmt",
+                "command": [
+                  "cargo",
+                  "fmt",
+                  "--all",
+                  "--check"
+                ],
+                "exit_code": 0,
+                "seconds": 0.4387068748474121
+              },
+              {
+                "check": "default",
+                "command": [
+                  "cargo",
+                  "test",
+                  "--locked",
+                  "--quiet"
+                ],
+                "exit_code": 0,
+                "seconds": 14.407813549041748
+              },
+              {
+                "check": "all-features",
+                "command": [
+                  "cargo",
+                  "test",
+                  "--locked",
+                  "--all-features",
+                  "--quiet"
+                ],
+                "exit_code": 0,
+                "seconds": 14.72582721710205
+              },
+              {
+                "check": "clippy",
+                "command": [
+                  "cargo",
+                  "clippy",
+                  "--locked",
+                  "--all-targets",
+                  "--all-features",
+                  "--",
+                  "-D",
+                  "warnings"
+                ],
+                "exit_code": 0,
+                "seconds": 3.413648843765259
+              },
+              {
+                "check": "benches",
+                "command": [
+                  "cargo",
+                  "check",
+                  "--locked",
+                  "--benches",
+                  "--all-features"
+                ],
+                "exit_code": 0,
+                "seconds": 2.6990718841552734
+              },
+              {
+                "check": "python",
+                "command": [
+                  "python",
+                  "-B",
+                  "-m",
+                  "unittest",
+                  "discover",
+                  "-s",
+                  "scripts",
+                  "-p",
+                  "test_*.py"
+                ],
+                "exit_code": 0,
+                "seconds": 1.478710412979126
+              },
+              {
+                "check": "release",
+                "command": [
+                  "cargo",
+                  "build",
+                  "--locked",
+                  "--release",
+                  "--bin",
+                  "fast-dump",
+                  "--benches",
+                  "--features",
+                  "bench-internals"
+                ],
+                "exit_code": 0,
+                "seconds": 54.48354649543762
+              }
+            ]
+          },
+          {
+            "source": {
+              "path": "checks/linux/checks.json",
+              "sha256": "37b6781772eebccd26975c3e60c015e491eeb253e7b5e38c0e1e1033d6500b25",
+              "bytes": 2772
+            },
+            "observations": [
+              {
+                "candidate": "baseline",
+                "check": "all-features",
+                "command": [
+                  "cargo",
+                  "test",
+                  "--offline",
+                  "--locked",
+                  "--all-features",
+                  "--quiet"
+                ],
+                "exit_code": 0,
+                "seconds": 32.36518454551697
+              },
+              {
+                "candidate": "baseline",
+                "check": "clippy",
+                "command": [
+                  "cargo",
+                  "clippy",
+                  "--offline",
+                  "--locked",
+                  "--all-targets",
+                  "--all-features",
+                  "--",
+                  "-D",
+                  "warnings"
+                ],
+                "exit_code": 0,
+                "seconds": 11.46564769744873
+              },
+              {
+                "candidate": "exp2-metadata",
+                "check": "all-features",
+                "command": [
+                  "cargo",
+                  "test",
+                  "--offline",
+                  "--locked",
+                  "--all-features",
+                  "--quiet"
+                ],
+                "exit_code": 0,
+                "seconds": 5.863804578781128
+              },
+              {
+                "candidate": "exp2-metadata",
+                "check": "clippy",
+                "command": [
+                  "cargo",
+                  "clippy",
+                  "--offline",
+                  "--locked",
+                  "--all-targets",
+                  "--all-features",
+                  "--",
+                  "-D",
+                  "warnings"
+                ],
+                "exit_code": 0,
+                "seconds": 0.26357054710388184
+              },
+              {
+                "candidate": "exp3-refill",
+                "check": "all-features",
+                "command": [
+                  "cargo",
+                  "test",
+                  "--offline",
+                  "--locked",
+                  "--all-features",
+                  "--quiet"
+                ],
+                "exit_code": 0,
+                "seconds": 5.696883916854858
+              },
+              {
+                "candidate": "exp3-refill",
+                "check": "clippy",
+                "command": [
+                  "cargo",
+                  "clippy",
+                  "--offline",
+                  "--locked",
+                  "--all-targets",
+                  "--all-features",
+                  "--",
+                  "-D",
+                  "warnings"
+                ],
+                "exit_code": 0,
+                "seconds": 0.25881457328796387
+              },
+              {
+                "candidate": "exp4-double-buffer",
+                "check": "all-features",
+                "command": [
+                  "cargo",
+                  "test",
+                  "--offline",
+                  "--locked",
+                  "--all-features",
+                  "--quiet"
+                ],
+                "exit_code": 0,
+                "seconds": 5.712427854537964
+              },
+              {
+                "candidate": "exp4-double-buffer",
+                "check": "clippy",
+                "command": [
+                  "cargo",
+                  "clippy",
+                  "--offline",
+                  "--locked",
+                  "--all-targets",
+                  "--all-features",
+                  "--",
+                  "-D",
+                  "warnings"
+                ],
+                "exit_code": 0,
+                "seconds": 0.26070094108581543
+              },
+              {
+                "candidate": "exp5-prefix",
+                "check": "all-features",
+                "command": [
+                  "cargo",
+                  "test",
+                  "--offline",
+                  "--locked",
+                  "--all-features",
+                  "--quiet"
+                ],
+                "exit_code": 0,
+                "seconds": 4.905037879943848
+              },
+              {
+                "candidate": "exp5-prefix",
+                "check": "clippy",
+                "command": [
+                  "cargo",
+                  "clippy",
+                  "--offline",
+                  "--locked",
+                  "--all-targets",
+                  "--all-features",
+                  "--",
+                  "-D",
+                  "warnings"
+                ],
+                "exit_code": 0,
+                "seconds": 0.2575232982635498
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "initial_and_rerun_failures_retained": [
+      {
+        "source": "linux/checks.json",
+        "candidate": "exp5-prefix",
+        "check": "all-features",
+        "command": [
+          "cargo",
+          "test",
+          "--offline",
+          "--locked",
+          "--all-features",
+          "--quiet"
+        ],
+        "exit_code": 101,
+        "seconds": 17.433502674102783,
+        "log_evidence": {
+          "path": "checks-isolated/linux/exp5-prefix-all-features.log",
+          "sha256": "87488b823737c4467365a74e904791b7fb8acf1e390ce77a1c402c8e79d1675e",
+          "bytes": 1509
+        },
+        "rust_suite_counts": [
+          {
+            "passed": 308,
+            "failed": 2,
+            "ignored": 3
+          }
+        ],
+        "failure_excerpt": "\nrunning 313 tests\n......................................................................................i 87/313\n....................................................................................... 174/313\n..............................................................................i........ 261/313\n...i.......................... 291/313\ntests::streamed_abort::streamed_abort_after_received_payload_resumes_without_losing_prior_bundle --- FAILED\ntests::terminal_skips_persist_across_resume_without_reopening_the_file --- FAILED\n....................\nfailures:\n\n---- tests::streamed_abort::streamed_abort_after_received_payload_resumes_without_losing_prior_bundle stdout ----\n\nthread 'tests::streamed_abort::streamed_abort_after_received_payload_resumes_without_losing_prior_bundle' (14212) panicked at src/tests/streamed_abort.rs:248:5:\nassertion `left == right` failed\n  left: 0\n right: 1\n\n---- tests::terminal_skips_persist_across_resume_without_reopening_the_file stdout ----\n\nthread 'tests::terminal_skips_persist_across_resume_without_reopening_the_file' (14214) panicked at src/sender/read.rs:934:57:\ncalled `Result::unwrap()` on an `Err` value: PoisonError { .. }\n\n\nfailures:\n    tests::streamed_abort::streamed_abort_after_received_payload_resumes_without_losing_prior_bundle\n    tests::terminal_skips_persist_across_resume_without_reopening_the_file\n\ntest result: FAILED. 308 passed; 2 failed; 3 ignored; 0 measured; 0 filtered out; finished in 3.67s\n\nerror: test failed, to rerun pass `--lib`\n"
+      }
+    ],
+    "patch_apply_checks": {
+      "evidence_kind": "coordinator_reported_check; no raw log supplied",
+      "reported_result": "Each of four patches passed git apply --check against the clean baseline independently.",
+      "observations": [
+        {
+          "candidate": "exp2-metadata",
+          "command": [
+            "git",
+            "apply",
+            "--check",
+            "exp2-metadata.patch"
+          ],
+          "cwd": "clean baseline copy",
+          "exit_code": 0
+        },
+        {
+          "candidate": "exp3-refill",
+          "command": [
+            "git",
+            "apply",
+            "--check",
+            "exp3-refill.patch"
+          ],
+          "cwd": "clean baseline copy",
+          "exit_code": 0
+        },
+        {
+          "candidate": "exp4-double-buffer",
+          "command": [
+            "git",
+            "apply",
+            "--check",
+            "exp4-double-buffer.patch"
+          ],
+          "cwd": "clean baseline copy",
+          "exit_code": 0
+        },
+        {
+          "candidate": "exp5-prefix",
+          "command": [
+            "git",
+            "apply",
+            "--check",
+            "exp5-prefix.patch"
+          ],
+          "cwd": "clean baseline copy",
+          "exit_code": 0
+        }
+      ],
+      "independent_local_verification": "Packager regenerated all four baseline-to-candidate diffs and compared their exact bytes with saved patches."
+    },
+    "measurement_consistency": {
+      "series": 29,
+      "valid_series": 29,
+      "observations": 290,
+      "e2e_observations": 230,
+      "read_observations": 60,
+      "e2e_counter_totals": {
+        "skipped_files": 0.0,
+        "frame_aborts": 0.0,
+        "frame_rebuilds": 0.0
+      },
+      "e2e_series_identity_checks": {
+        "aa-bigFiles": {
+          "distinct_values": {
+            "compressed_payload_bytes": [
+              525610974.0
+            ],
+            "files_count": [
+              3.0
+            ],
+            "raw_read_bytes": [
+              1342177280.0
+            ]
+          },
+          "all_equal_within_series": true
+        },
+        "aa-incompressible": {
+          "distinct_values": {
+            "compressed_payload_bytes": [
+              268442121.0
+            ],
+            "files_count": [
+              1.0
+            ],
+            "raw_read_bytes": [
+              268435456.0
+            ]
+          },
+          "all_equal_within_series": true
+        },
+        "aa-manySmallFiles": {
+          "distinct_values": {
+            "compressed_payload_bytes": [
+              93317996.0
+            ],
+            "files_count": [
+              40000.0
+            ],
+            "raw_read_bytes": [
+              92160000.0
+            ]
+          },
+          "all_equal_within_series": true
+        },
+        "aa-medium-prefix": {
+          "distinct_values": {
+            "compressed_payload_bytes": [
+              181710003.0
+            ],
+            "files_count": [
+              272.0
+            ],
+            "raw_read_bytes": [
+              508559360.0
+            ]
+          },
+          "all_equal_within_series": true
+        },
+        "aa-mixed": {
+          "distinct_values": {
+            "compressed_payload_bytes": [
+              388741825.0
+            ],
+            "files_count": [
+              10134.0
+            ],
+            "raw_read_bytes": [
+              916426752.0
+            ]
+          },
+          "all_equal_within_series": true
+        },
+        "aa-startup-tree": {
+          "distinct_values": {
+            "compressed_payload_bytes": [
+              42194450.0
+            ],
+            "files_count": [
+              17408.0
+            ],
+            "raw_read_bytes": [
+              41943040.0
+            ]
+          },
+          "all_equal_within_series": true
+        },
+        "exp2-big-control": {
+          "distinct_values": {
+            "compressed_payload_bytes": [
+              525610974.0
+            ],
+            "files_count": [
+              3.0
+            ],
+            "raw_read_bytes": [
+              1342177280.0
+            ]
+          },
+          "all_equal_within_series": true
+        },
+        "exp2-mixed-control": {
+          "distinct_values": {
+            "compressed_payload_bytes": [
+              388741825.0
+            ],
+            "files_count": [
+              10134.0
+            ],
+            "raw_read_bytes": [
+              916426752.0
+            ]
+          },
+          "all_equal_within_series": true
+        },
+        "exp2-small": {
+          "distinct_values": {
+            "compressed_payload_bytes": [
+              93317996.0
+            ],
+            "files_count": [
+              40000.0
+            ],
+            "raw_read_bytes": [
+              92160000.0
+            ]
+          },
+          "all_equal_within_series": true
+        },
+        "exp2-small-confirm": {
+          "distinct_values": {
+            "compressed_payload_bytes": [
+              93317996.0
+            ],
+            "files_count": [
+              40000.0
+            ],
+            "raw_read_bytes": [
+              92160000.0
+            ]
+          },
+          "all_equal_within_series": true
+        },
+        "exp3-small": {
+          "distinct_values": {
+            "compressed_payload_bytes": [
+              93317996.0
+            ],
+            "files_count": [
+              40000.0
+            ],
+            "raw_read_bytes": [
+              92160000.0
+            ]
+          },
+          "all_equal_within_series": true
+        },
+        "exp3-small-confirm": {
+          "distinct_values": {
+            "compressed_payload_bytes": [
+              93317996.0
+            ],
+            "files_count": [
+              40000.0
+            ],
+            "raw_read_bytes": [
+              92160000.0
+            ]
+          },
+          "all_equal_within_series": true
+        },
+        "exp3-startup": {
+          "distinct_values": {
+            "compressed_payload_bytes": [
+              42194450.0
+            ],
+            "files_count": [
+              17408.0
+            ],
+            "raw_read_bytes": [
+              41943040.0
+            ]
+          },
+          "all_equal_within_series": true
+        },
+        "exp3-startup-confirm": {
+          "distinct_values": {
+            "compressed_payload_bytes": [
+              42194450.0
+            ],
+            "files_count": [
+              17408.0
+            ],
+            "raw_read_bytes": [
+              41943040.0
+            ]
+          },
+          "all_equal_within_series": true
+        },
+        "exp4-big": {
+          "distinct_values": {
+            "compressed_payload_bytes": [
+              525610974.0
+            ],
+            "files_count": [
+              3.0
+            ],
+            "raw_read_bytes": [
+              1342177280.0
+            ]
+          },
+          "all_equal_within_series": true
+        },
+        "exp4-big-confirm": {
+          "distinct_values": {
+            "compressed_payload_bytes": [
+              525610974.0
+            ],
+            "files_count": [
+              3.0
+            ],
+            "raw_read_bytes": [
+              1342177280.0
+            ]
+          },
+          "all_equal_within_series": true
+        },
+        "exp4-random": {
+          "distinct_values": {
+            "compressed_payload_bytes": [
+              268442121.0
+            ],
+            "files_count": [
+              1.0
+            ],
+            "raw_read_bytes": [
+              268435456.0
+            ]
+          },
+          "all_equal_within_series": true
+        },
+        "exp4-random-confirm": {
+          "distinct_values": {
+            "compressed_payload_bytes": [
+              268442121.0
+            ],
+            "files_count": [
+              1.0
+            ],
+            "raw_read_bytes": [
+              268435456.0
+            ]
+          },
+          "all_equal_within_series": true
+        },
+        "exp5-big-control": {
+          "distinct_values": {
+            "compressed_payload_bytes": [
+              525610974.0
+            ],
+            "files_count": [
+              3.0
+            ],
+            "raw_read_bytes": [
+              1342177280.0
+            ]
+          },
+          "all_equal_within_series": true
+        },
+        "exp5-medium": {
+          "distinct_values": {
+            "compressed_payload_bytes": [
+              181710003.0
+            ],
+            "files_count": [
+              272.0
+            ],
+            "raw_read_bytes": [
+              508559360.0
+            ]
+          },
+          "all_equal_within_series": true
+        },
+        "exp5-medium-confirm": {
+          "distinct_values": {
+            "compressed_payload_bytes": [
+              181710003.0
+            ],
+            "files_count": [
+              272.0
+            ],
+            "raw_read_bytes": [
+              508559360.0
+            ]
+          },
+          "all_equal_within_series": true
+        },
+        "exp5-mixed-control": {
+          "distinct_values": {
+            "compressed_payload_bytes": [
+              388741825.0
+            ],
+            "files_count": [
+              10134.0
+            ],
+            "raw_read_bytes": [
+              916426752.0
+            ]
+          },
+          "all_equal_within_series": true
+        },
+        "exp5-small-control": {
+          "distinct_values": {
+            "compressed_payload_bytes": [
+              93317996.0
+            ],
+            "files_count": [
+              40000.0
+            ],
+            "raw_read_bytes": [
+              92160000.0
+            ]
+          },
+          "all_equal_within_series": true
+        }
+      },
+      "limits": "Equal counters are consistency checks, not standalone archive-content validation; per-run harness verification is retained in imported measurement records."
+    }
+  },
+  "limitations": [
+    "Windows localhost measurements are not physical-NIC or Linux performance measurements.",
+    "Source/output use the same E: volume; cache state and other applications are uncontrolled. Verification can warm later samples.",
+    "All first samples and outliers remain included. Bootstrap intervals are exploratory, with no multiple-comparison correction.",
+    "E2E CPU/cycles/RSS cover sender+receiver together. Isolated file-stage CPU is separate; stage RSS is lifetime highwater.",
+    "Time to first bundle measures BundlePlan readiness, not first network byte or acknowledgement.",
+    "Overlapping stage durations are not an additive decomposition. Compressed payload bytes are not exact archive size.",
+    "Passing Linux reruns do not erase the initial intermittent failure or establish its root cause.",
+    "The four patches are independent experiments against one baseline, not a combined or mainline implementation.",
+    "Known hardware provenance is 32 logical CPUs and E: capacity/free space recorded in experiment.json. CPU model and storage type were not obtained; CIM access was denied."
+  ]
+}

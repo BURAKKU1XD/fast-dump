@@ -1,0 +1,105 @@
+{
+  "candidate": "arc",
+  "status": "rejected_effect_unproven",
+  "accepted_head": "2a7c8eeeb70f9046a4629168d66d4fc0123f247e",
+  "metrics": {
+    "elapsed_ms": {
+      "paired_n": 10,
+      "missing_pairs": 0,
+      "before_mean": 278.69139,
+      "after_mean": 281.97786,
+      "before_median": 277.11220000000003,
+      "after_median": 277.13365,
+      "before_min": 271.3909,
+      "before_max": 291.6746,
+      "after_min": 268.5401,
+      "after_max": 300.3514,
+      "after_wins": 5,
+      "absolute_reduction": -3.2864700000000084,
+      "paired_reductions": [
+        2.1182999999999765,
+        17.562299999999993,
+        -21.428200000000004,
+        5.929100000000005,
+        -17.495600000000024,
+        -7.146999999999991,
+        -16.70889999999997,
+        -6.575500000000034,
+        6.27660000000003,
+        4.604199999999992
+      ],
+      "improvement_pct": -1.1792506399282754,
+      "ci95_improvement_pct": [
+        -3.858771728808826,
+        1.4736829666928495
+      ],
+      "aa_noise_floor_pct": 68.01030424250094
+    },
+    "cpu_ms": {
+      "paired_n": 10,
+      "missing_pairs": 0,
+      "before_mean": 2025.0,
+      "after_mean": 2067.1875,
+      "before_median": 2046.875,
+      "after_median": 2093.75,
+      "before_min": 1843.75,
+      "before_max": 2171.875,
+      "after_min": 1859.375,
+      "after_max": 2296.875,
+      "after_wins": 3,
+      "absolute_reduction": -42.1875,
+      "paired_reductions": [
+        -109.375,
+        0.0,
+        -187.5,
+        234.375,
+        -265.625,
+        31.25,
+        -171.875,
+        -46.875,
+        140.625,
+        -46.875
+      ],
+      "improvement_pct": -2.083333333333326,
+      "ci95_improvement_pct": [
+        -6.5034429992348874,
+        2.442841468823679
+      ],
+      "aa_noise_floor_pct": 44.16809605488851
+    },
+    "cpu_cycles": {
+      "paired_n": 10,
+      "missing_pairs": 0,
+      "before_mean": 4793665775.9,
+      "after_mean": 4879258977.6,
+      "before_median": 4759805784.0,
+      "after_median": 4781381796.0,
+      "before_min": 4670016504.0,
+      "before_max": 5044644696.0,
+      "after_min": 4636931064.0,
+      "after_max": 5269241256.0,
+      "after_wins": 5,
+      "absolute_reduction": -85593201.70000076,
+      "paired_reductions": [
+        29809128.0,
+        226083864.0,
+        -524546208.0,
+        118938935.0,
+        -308085072.0,
+        -71416752.0,
+        -360042432.0,
+        -111325968.0,
+        111567048.0,
+        33085440.0
+      ],
+      "improvement_pct": -1.78554796478132,
+      "ci95_improvement_pct": [
+        -4.885320169280353,
+        1.0833052086592707
+      ],
+      "aa_noise_floor_pct": 46.58382911930098
+    }
+  },
+  "targeted_tests_passed": true,
+  "reason": "No timing/CPU/cycle gain beyond matched AA noise; no allocation savings claimed. All samples retained including slow first AA sample. No additional tuning or retries."
+}

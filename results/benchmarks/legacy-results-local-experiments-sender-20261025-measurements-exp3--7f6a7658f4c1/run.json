@@ -1,0 +1,145 @@
+{
+  "schema_version": 1,
+  "id": "legacy-results-local-experiments-sender-20261025-measurements-exp3--7f6a7658f4c1",
+  "kind": "benchmark",
+  "label": "exp3-small-confirm",
+  "status": "imported",
+  "started_utc": "2026-10-25T12:44:16.108815+00:00",
+  "time_source": "original_file_mtime",
+  "imported_utc": "2026-10-25T12:47:09.771346+00:00",
+  "experiment_path": "results/local/experiments/sender-20261025/measurements/exp3-small-confirm",
+  "import_sha256": "7f6a7658f4c136871e2c2e193f77131424cb10bf1756707d9de1d88f28ae5003",
+  "origin": "results/local/experiments/sender-20261025/measurements",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "binary_sha256": {
+      "before": "6a7f3a02b327c98f814c1b8406411dde2b030931cd2b52d86d1f82403fe2d011",
+      "after": "3bbf9615280556de7cad5fc6bcc6b66ffc65029c2c094de03c6fb55ed2093659"
+    },
+    "comparison_kind": "A/B",
+    "requested_readers": {
+      "before": 8,
+      "after": 8
+    },
+    "common_arguments": [
+      "--repeats",
+      "1",
+      "--shuffle-scenarios",
+      "--shuffle-seed",
+      "91",
+      "--source",
+      "E:\\projects\\cool_project\\fast-dump\\results\\local\\experiments\\sender-20261025\\fixtures\\manySmallFiles",
+      "--network-profile",
+      "loopback-localhost",
+      "--threads",
+      "4",
+      "--frames",
+      "64",
+      "--buffers",
+      "1024",
+      "--executor",
+      "default"
+    ],
+    "repeats_per_side": 5,
+    "policy": "AB then BA alternating; all samples retained; no automatic warmup or trimming",
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "after",
+        "exit_code": 0
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "exp3-small-confirm/before/run.log",
+      "sha256": "68df1c9e03d583a0d081097f85a0f218707a2367f978d55e244055e35084be74",
+      "bytes": 17272,
+      "extracted_sha256": "50f6522788ca7f6780a3d82f515cdd50a8c6f1492883bd7c11254410b5d8a475",
+      "saved": "raw/before/resource_samples.csv"
+    },
+    {
+      "source": "exp3-small-confirm/before/results_raw.csv",
+      "sha256": "2936d512ef5628bdcf4db0377a1f9b8227a005eda672d94b46f08dd9377c1085",
+      "bytes": 4358,
+      "saved": "raw/before/results_raw.csv"
+    },
+    {
+      "source": "exp3-small-confirm/after/run.log",
+      "sha256": "db9b7347253551a23f458cb267349297cd58e8c5d972fc72eb9d0f6d7f3fbfb4",
+      "bytes": 17258,
+      "extracted_sha256": "b196982c84e0784e90b42c36c2674d951d6b1513c134e1d362fa27d31d5cc353",
+      "saved": "raw/after/resource_samples.csv"
+    },
+    {
+      "source": "exp3-small-confirm/after/results_raw.csv",
+      "sha256": "f02a536906f8c935dff5f9f8aeb4703dc437ccbdfe5647aeee3edebb04701647",
+      "bytes": 4358,
+      "saved": "raw/after/results_raw.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "exp3-small-confirm/paired-run.json",
+      "sha256": "0a330e837242a26946a1c63857b351a41c47c163977a36dfa27238eaba6d9d36",
+      "bytes": 10639
+    },
+    {
+      "source": "exp3-small-confirm/before/run.log",
+      "sha256": "68df1c9e03d583a0d081097f85a0f218707a2367f978d55e244055e35084be74",
+      "bytes": 17272
+    },
+    {
+      "source": "exp3-small-confirm/after/run.log",
+      "sha256": "db9b7347253551a23f458cb267349297cd58e8c5d972fc72eb9d0f6d7f3fbfb4",
+      "bytes": 17258
+    }
+  ]
+}

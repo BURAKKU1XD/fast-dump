@@ -1,0 +1,145 @@
+{
+  "schema_version": 1,
+  "id": "legacy-results-local-experiments-direct-chore-current-20261025-meas-16c5029f8f35",
+  "kind": "benchmark",
+  "label": "current-exact-e2e-mixed-aa",
+  "status": "imported",
+  "started_utc": "2026-10-25T20:39:45.323197+00:00",
+  "time_source": "original_file_mtime",
+  "imported_utc": "2026-10-25T20:42:59.798620+00:00",
+  "experiment_path": "results/local/experiments/direct-chore-current-20261025/measurements/current-exact-e2e-mixed-aa",
+  "import_sha256": "16c5029f8f3572ffcbe5ce016cabbcc054ba22d819da2e1365c9a7d78b7abe10",
+  "origin": "results/local/experiments/direct-chore-current-20261025/measurements",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "binary_sha256": {
+      "before": "71348e94daf639a6562399aba6f572c400cda65000da830cd0cda553a2d5e339",
+      "after": "71348e94daf639a6562399aba6f572c400cda65000da830cd0cda553a2d5e339"
+    },
+    "comparison_kind": "A/A",
+    "requested_readers": {
+      "before": 8,
+      "after": 8
+    },
+    "common_arguments": [
+      "--repeats",
+      "1",
+      "--shuffle-scenarios",
+      "--shuffle-seed",
+      "91",
+      "--source",
+      "E:\\projects\\cool_project\\fast-dump\\results\\local\\experiments\\sender-20261025\\fixtures\\mixed",
+      "--network-profile",
+      "loopback-localhost",
+      "--threads",
+      "4",
+      "--frames",
+      "64",
+      "--buffers",
+      "1024",
+      "--executor",
+      "default"
+    ],
+    "repeats_per_side": 5,
+    "policy": "AB then BA alternating; all samples retained; no automatic warmup or trimming",
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "after",
+        "exit_code": 0
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "current-exact-e2e-mixed-aa/before/run.log",
+      "sha256": "fea3577e683226ce77926cfe3d0fb641de70308c6e85f7f5ee491c8579fc3e42",
+      "bytes": 17585,
+      "extracted_sha256": "b069472395a2d3d2dab06436f040a06a9c77eed27f0f2517836d3a8e85a4591a",
+      "saved": "raw/before/resource_samples.csv"
+    },
+    {
+      "source": "current-exact-e2e-mixed-aa/before/results_raw.csv",
+      "sha256": "7e1c31f15f3ecee4b3e5211fa9679e01c692156b020cb5abeb099590afb9000a",
+      "bytes": 4394,
+      "saved": "raw/before/results_raw.csv"
+    },
+    {
+      "source": "current-exact-e2e-mixed-aa/after/run.log",
+      "sha256": "4cc5a6aef3b2beb0b25f5219e00b0da8b5d2fbd148f436ac0671e610cf5dcad2",
+      "bytes": 17570,
+      "extracted_sha256": "709ef07ebc74d39aa36e17642f1496ca1377059a4509e4b6687ddc527b078731",
+      "saved": "raw/after/resource_samples.csv"
+    },
+    {
+      "source": "current-exact-e2e-mixed-aa/after/results_raw.csv",
+      "sha256": "78c5bb05e26551965c9798ad5ff544b3424d2c77bf6376ee050e8b05293edb04",
+      "bytes": 4394,
+      "saved": "raw/after/results_raw.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "current-exact-e2e-mixed-aa/paired-run.json",
+      "sha256": "f71c9cf0363ea34b0f09f7cf88cafcd3b5c2543019203747b8347c8730b6bb5e",
+      "bytes": 10696
+    },
+    {
+      "source": "current-exact-e2e-mixed-aa/before/run.log",
+      "sha256": "fea3577e683226ce77926cfe3d0fb641de70308c6e85f7f5ee491c8579fc3e42",
+      "bytes": 17585
+    },
+    {
+      "source": "current-exact-e2e-mixed-aa/after/run.log",
+      "sha256": "4cc5a6aef3b2beb0b25f5219e00b0da8b5d2fbd148f436ac0671e610cf5dcad2",
+      "bytes": 17570
+    }
+  ]
+}

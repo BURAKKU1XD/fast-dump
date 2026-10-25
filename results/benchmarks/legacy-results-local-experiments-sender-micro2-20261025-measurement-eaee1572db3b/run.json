@@ -1,0 +1,102 @@
+{
+  "schema_version": 1,
+  "id": "legacy-results-local-experiments-sender-micro2-20261025-measurement-eaee1572db3b",
+  "kind": "benchmark",
+  "label": "commit-commit-1000000-alloc",
+  "status": "imported",
+  "started_utc": "2026-10-25T20:04:09.618154+00:00",
+  "time_source": "original_file_mtime",
+  "imported_utc": "2026-10-25T20:13:00.061487+00:00",
+  "experiment_path": "results/local/experiments/sender-micro2-20261025/measurements/commit-commit-1000000-alloc",
+  "import_sha256": "eaee1572db3b28947a6a1ddea9b69eecb696bd70c7838fbd69c1a8323cbffc2b",
+  "origin": "results/local/experiments/sender-micro2-20261025/measurements",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "binary_sha256": {
+      "before": "9123528ef1cb415e525c2e24901ffd1a4d7b1ddf66f59ce760954662e1078d40",
+      "after": "ab7fb84ef1596593fbc2654a9f3496c394f30aff9fe8b620c49281efc518f8a4"
+    },
+    "comparison_kind": "A/B",
+    "common_arguments": [
+      "--case",
+      "commit",
+      "--iterations",
+      "128",
+      "--repeats",
+      "1",
+      "--allocations"
+    ],
+    "allocations_diagnostic": true,
+    "repeats": 5,
+    "policy": "Alternating AB/BA; every observation retained; no dropped warmup or outliers.",
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "after",
+        "exit_code": 0
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "commit-commit-1000000-alloc/samples.csv",
+      "sha256": "4eab4809f56ef79e968fd634edc58a7c2f7f61e9387d8ece204e84749a33a422",
+      "bytes": 4164,
+      "saved": "raw/samples.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "commit-commit-1000000-alloc/paired-run.json",
+      "sha256": "b1b54262777d82b6d62f8feec6196046c356b8e24192a48dd81f5fbd388e2b7c",
+      "bytes": 19341
+    }
+  ]
+}

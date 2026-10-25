@@ -1,0 +1,145 @@
+{
+  "schema_version": 1,
+  "id": "legacy-results-local-experiments-sender-micro2-20261025-measurement-a288cfe18adf",
+  "kind": "benchmark",
+  "label": "commit-e2e-mixed-aa",
+  "status": "imported",
+  "started_utc": "2026-10-25T20:09:38.850483+00:00",
+  "time_source": "original_file_mtime",
+  "imported_utc": "2026-10-25T20:13:00.148331+00:00",
+  "experiment_path": "results/local/experiments/sender-micro2-20261025/measurements/commit-e2e-mixed-aa",
+  "import_sha256": "a288cfe18adfde78585407f6887b7d4fcacd4fa9cdac7102ab1c90a0264b6fca",
+  "origin": "results/local/experiments/sender-micro2-20261025/measurements",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "binary_sha256": {
+      "before": "76f7e37b24fdf7933d9af952d1544bffdcb89e0716e30a45eddb83e84d3627ba",
+      "after": "76f7e37b24fdf7933d9af952d1544bffdcb89e0716e30a45eddb83e84d3627ba"
+    },
+    "comparison_kind": "A/A",
+    "requested_readers": {
+      "before": 8,
+      "after": 8
+    },
+    "common_arguments": [
+      "--repeats",
+      "1",
+      "--shuffle-scenarios",
+      "--shuffle-seed",
+      "91",
+      "--source",
+      "E:\\projects\\cool_project\\fast-dump\\results\\local\\experiments\\sender-20261025\\fixtures\\mixed",
+      "--network-profile",
+      "loopback-localhost",
+      "--threads",
+      "4",
+      "--frames",
+      "64",
+      "--buffers",
+      "1024",
+      "--executor",
+      "default"
+    ],
+    "repeats_per_side": 5,
+    "policy": "AB then BA alternating; all samples retained; no automatic warmup or trimming",
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "after",
+        "exit_code": 0
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "commit-e2e-mixed-aa/before/run.log",
+      "sha256": "54489f0a5547c4caa7b76248b6cec193a3197cbcafed78b1860255b957ebb139",
+      "bytes": 17377,
+      "extracted_sha256": "405a0168275e3173f737c81c71913309f46aeb5a3db2e85ba0db3bbc345ec90a",
+      "saved": "raw/before/resource_samples.csv"
+    },
+    {
+      "source": "commit-e2e-mixed-aa/before/results_raw.csv",
+      "sha256": "bc2067b0ac563149b36c1ec72337b54438d1d3edffd9faaf2fc12898c7280c78",
+      "bytes": 4394,
+      "saved": "raw/before/results_raw.csv"
+    },
+    {
+      "source": "commit-e2e-mixed-aa/after/run.log",
+      "sha256": "ba563e31d295d961f7844acc3602437a65f6173e96f99c135644a37cafe5e27b",
+      "bytes": 17358,
+      "extracted_sha256": "de41edb2f0af5eed7b14d901a58e6fd8dfffe3b30f07147a7a01bec9639367df",
+      "saved": "raw/after/resource_samples.csv"
+    },
+    {
+      "source": "commit-e2e-mixed-aa/after/results_raw.csv",
+      "sha256": "046cef528208f63c7b595c8d3c8953f75b22707aab6306b85d36c55ae829b059",
+      "bytes": 4395,
+      "saved": "raw/after/results_raw.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "commit-e2e-mixed-aa/paired-run.json",
+      "sha256": "c30dd1b731b42881c17a9a75583fab21bc17aff28b8fae70388cf671678d2f7b",
+      "bytes": 10549
+    },
+    {
+      "source": "commit-e2e-mixed-aa/before/run.log",
+      "sha256": "54489f0a5547c4caa7b76248b6cec193a3197cbcafed78b1860255b957ebb139",
+      "bytes": 17377
+    },
+    {
+      "source": "commit-e2e-mixed-aa/after/run.log",
+      "sha256": "ba563e31d295d961f7844acc3602437a65f6173e96f99c135644a37cafe5e27b",
+      "bytes": 17358
+    }
+  ]
+}

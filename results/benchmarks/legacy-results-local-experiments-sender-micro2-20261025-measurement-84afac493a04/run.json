@@ -1,0 +1,145 @@
+{
+  "schema_version": 1,
+  "id": "legacy-results-local-experiments-sender-micro2-20261025-measurement-84afac493a04",
+  "kind": "benchmark",
+  "label": "commit-e2e-bigFiles-ab",
+  "status": "imported",
+  "started_utc": "2026-10-25T20:10:10.928950+00:00",
+  "time_source": "original_file_mtime",
+  "imported_utc": "2026-10-25T20:13:00.104661+00:00",
+  "experiment_path": "results/local/experiments/sender-micro2-20261025/measurements/commit-e2e-bigFiles-ab",
+  "import_sha256": "84afac493a04b8bf65197a34037fda4c4d149a3caa4f05c35c739ec181347857",
+  "origin": "results/local/experiments/sender-micro2-20261025/measurements",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "binary_sha256": {
+      "before": "76f7e37b24fdf7933d9af952d1544bffdcb89e0716e30a45eddb83e84d3627ba",
+      "after": "336f0aac57d89c19581caf63fc9bc0bcf1a48f8ca251aad7c619111df53a89f0"
+    },
+    "comparison_kind": "A/B",
+    "requested_readers": {
+      "before": 8,
+      "after": 8
+    },
+    "common_arguments": [
+      "--repeats",
+      "1",
+      "--shuffle-scenarios",
+      "--shuffle-seed",
+      "91",
+      "--source",
+      "E:\\projects\\cool_project\\fast-dump\\results\\local\\experiments\\sender-20261025\\fixtures\\bigFiles",
+      "--network-profile",
+      "loopback-localhost",
+      "--threads",
+      "4",
+      "--frames",
+      "64",
+      "--buffers",
+      "1024",
+      "--executor",
+      "default"
+    ],
+    "repeats_per_side": 5,
+    "policy": "AB then BA alternating; all samples retained; no automatic warmup or trimming",
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "after",
+        "exit_code": 0
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "commit-e2e-bigFiles-ab/before/run.log",
+      "sha256": "273ca1422f9a29df69af40797e1f8f3fd9613341bf7fbb5dd78cfa924c86ea24",
+      "bytes": 17321,
+      "extracted_sha256": "d65f1222e287a8c20297d203e5edcdec4c9188f1ae39d6e361f12370b6445dae",
+      "saved": "raw/before/resource_samples.csv"
+    },
+    {
+      "source": "commit-e2e-bigFiles-ab/before/results_raw.csv",
+      "sha256": "75388f9044e8d7de66140c53470b97b6679f541c0a45e3b2b1ac88e0b7a2da71",
+      "bytes": 4308,
+      "saved": "raw/before/results_raw.csv"
+    },
+    {
+      "source": "commit-e2e-bigFiles-ab/after/run.log",
+      "sha256": "e60bcceca0866cdaaf120ea49df9e48469196bda415af2b01c64802a11d168f1",
+      "bytes": 17306,
+      "extracted_sha256": "4c129b67d6d710d0fc7de2a4817173019f2ab866a17b96ee0fae66e9b972cf28",
+      "saved": "raw/after/resource_samples.csv"
+    },
+    {
+      "source": "commit-e2e-bigFiles-ab/after/results_raw.csv",
+      "sha256": "297f10f8e9249c19b175b6f87c6284f378b1713b9ff3791abbf99f4211f5ad60",
+      "bytes": 4307,
+      "saved": "raw/after/results_raw.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "commit-e2e-bigFiles-ab/paired-run.json",
+      "sha256": "bc32dee3f89c0ebb4a38a2ce3708c764893dbf8a2583f35f4b3ffd57a446a7cc",
+      "bytes": 10609
+    },
+    {
+      "source": "commit-e2e-bigFiles-ab/before/run.log",
+      "sha256": "273ca1422f9a29df69af40797e1f8f3fd9613341bf7fbb5dd78cfa924c86ea24",
+      "bytes": 17321
+    },
+    {
+      "source": "commit-e2e-bigFiles-ab/after/run.log",
+      "sha256": "e60bcceca0866cdaaf120ea49df9e48469196bda415af2b01c64802a11d168f1",
+      "bytes": 17306
+    }
+  ]
+}

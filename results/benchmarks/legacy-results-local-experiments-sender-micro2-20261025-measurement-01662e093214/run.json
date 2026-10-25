@@ -1,0 +1,145 @@
+{
+  "schema_version": 1,
+  "id": "legacy-results-local-experiments-sender-micro2-20261025-measurement-01662e093214",
+  "kind": "benchmark",
+  "label": "commit-e2e-manySmallFiles-aa",
+  "status": "imported",
+  "started_utc": "2026-10-25T20:08:54.528666+00:00",
+  "time_source": "original_file_mtime",
+  "imported_utc": "2026-10-25T20:13:00.119691+00:00",
+  "experiment_path": "results/local/experiments/sender-micro2-20261025/measurements/commit-e2e-manySmallFiles-aa",
+  "import_sha256": "01662e0932149c430012c9287084ce9f5780c3996906e83aee24a9484c4a2939",
+  "origin": "results/local/experiments/sender-micro2-20261025/measurements",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "binary_sha256": {
+      "before": "76f7e37b24fdf7933d9af952d1544bffdcb89e0716e30a45eddb83e84d3627ba",
+      "after": "76f7e37b24fdf7933d9af952d1544bffdcb89e0716e30a45eddb83e84d3627ba"
+    },
+    "comparison_kind": "A/A",
+    "requested_readers": {
+      "before": 8,
+      "after": 8
+    },
+    "common_arguments": [
+      "--repeats",
+      "1",
+      "--shuffle-scenarios",
+      "--shuffle-seed",
+      "91",
+      "--source",
+      "E:\\projects\\cool_project\\fast-dump\\results\\local\\experiments\\sender-20261025\\fixtures\\manySmallFiles",
+      "--network-profile",
+      "loopback-localhost",
+      "--threads",
+      "4",
+      "--frames",
+      "64",
+      "--buffers",
+      "1024",
+      "--executor",
+      "default"
+    ],
+    "repeats_per_side": 5,
+    "policy": "AB then BA alternating; all samples retained; no automatic warmup or trimming",
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "after",
+        "exit_code": 0
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "commit-e2e-manySmallFiles-aa/before/run.log",
+      "sha256": "e786e4e8f5bd0607c3b194e430f7a539aa0ed2ee60896dd615fd9897f470bf26",
+      "bytes": 17515,
+      "extracted_sha256": "436f7a2b13c0845e14bebe2ddbd3e14d1e2b06f9ffbd87cab1e6d77472f81e4b",
+      "saved": "raw/before/resource_samples.csv"
+    },
+    {
+      "source": "commit-e2e-manySmallFiles-aa/before/results_raw.csv",
+      "sha256": "3e2b771955339f6ba75e886cb77f1b67e63336829706729a7c13fbecf3db21c7",
+      "bytes": 4346,
+      "saved": "raw/before/results_raw.csv"
+    },
+    {
+      "source": "commit-e2e-manySmallFiles-aa/after/run.log",
+      "sha256": "50a5e60c25508d203d9b371fecf5d7e6e50588fa9c397b076c5181afacc27c0a",
+      "bytes": 17504,
+      "extracted_sha256": "31250d276de762a2e623fc4589cffa05da38e3cc368723902ac8b8c6c55092b3",
+      "saved": "raw/after/resource_samples.csv"
+    },
+    {
+      "source": "commit-e2e-manySmallFiles-aa/after/results_raw.csv",
+      "sha256": "f577d029938df42ab77c73379e87f7177eec81d9f8ebf9f74948390fe9f89bc5",
+      "bytes": 4349,
+      "saved": "raw/after/results_raw.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "commit-e2e-manySmallFiles-aa/paired-run.json",
+      "sha256": "c2115058d2a33996f5f9658163648f164ae7217e813ca470885ac5da609dd131",
+      "bytes": 10738
+    },
+    {
+      "source": "commit-e2e-manySmallFiles-aa/before/run.log",
+      "sha256": "e786e4e8f5bd0607c3b194e430f7a539aa0ed2ee60896dd615fd9897f470bf26",
+      "bytes": 17515
+    },
+    {
+      "source": "commit-e2e-manySmallFiles-aa/after/run.log",
+      "sha256": "50a5e60c25508d203d9b371fecf5d7e6e50588fa9c397b076c5181afacc27c0a",
+      "bytes": 17504
+    }
+  ]
+}

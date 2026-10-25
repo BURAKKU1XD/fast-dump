@@ -1,0 +1,279 @@
+--- /dev/null
++++ b/examples/file_ops_diagnostic.rs
+@@ -0,0 +1,276 @@
++//! Представительный probe файловых операций; не воспроизводит весь sender pipeline.
++//! Суммы длительностей worker перекрываются и не являются CPU time или его долями.
++
++use std::fs::{self, Metadata, OpenOptions};
++use std::hint::black_box;
++use std::io::Read;
++use std::path::{Path, PathBuf};
++use std::sync::Barrier;
++use std::thread;
++use std::time::Instant;
++
++use anyhow::{Context, Result, ensure};
++use clap::Parser;
++
++const WORKERS: usize = 8;
++const TIMER_SAMPLES: u64 = 100_000;
++const MAX_FILE_BYTES: u64 = 64 * 1024 * 1024;
++
++#[derive(Parser)]
++#[command(about = "Attribute representative regular-file operations to wall-time sums, not CPU")]
++struct Args {
++    #[arg(long)]
++    source: PathBuf,
++    #[arg(long, default_value_t = 1)]
++    repeats: usize,
++}
++
++struct SourceFile {
++    path: PathBuf,
++    size: u64,
++}
++
++#[derive(Default)]
++struct Operation {
++    calls: u64,
++    elapsed_ns_sum: u128,
++}
++
++impl Operation {
++    fn record(&mut self, started: Instant) {
++        self.elapsed_ns_sum += started.elapsed().as_nanos();
++        self.calls += 1;
++    }
++
++    fn merge(&mut self, other: Self) {
++        self.calls += other.calls;
++        self.elapsed_ns_sum += other.elapsed_ns_sum;
++    }
++
++    fn json(&self) -> String {
++        format!(
++            "{{\"calls\":{},\"elapsed_ns_sum\":{}}}",
++            self.calls, self.elapsed_ns_sum
++        )
++    }
++}
++
++#[derive(Default)]
++struct Measurement {
++    open: Operation,
++    metadata: Operation,
++    read: Operation,
++    close: Operation,
++    bytes: u64,
++}
++
++impl Measurement {
++    fn merge(&mut self, other: Self) {
++        self.open.merge(other.open);
++        self.metadata.merge(other.metadata);
++        self.read.merge(other.read);
++        self.close.merge(other.close);
++        self.bytes += other.bytes;
++    }
++}
++
++fn is_reparse_point(metadata: &Metadata) -> bool {
++    #[cfg(windows)]
++    {
++        use std::os::windows::fs::MetadataExt;
++        use windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT;
++        metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
++    }
++    #[cfg(not(windows))]
++    {
++        metadata.file_type().is_symlink()
++    }
++}
++
++fn collect_files(directory: &Path, files: &mut Vec<SourceFile>) -> Result<()> {
++    let mut entries = fs::read_dir(directory)?
++        .map(|entry| {
++            let entry = entry?;
++            let name = entry
++                .file_name()
++                .into_string()
++                .map_err(|_| anyhow::anyhow!("fixture contains a non-Unicode filename"))?;
++            ensure!(
++                !name.contains('\\'),
++                "fixture contains an ambiguous normalized filename"
++            );
++            Ok((name, entry.path()))
++        })
++        .collect::<Result<Vec<_>>>()?;
++    entries.sort_unstable_by(|left, right| left.0.cmp(&right.0));
++    for (_, path) in entries {
++        let metadata = fs::symlink_metadata(&path)?;
++        ensure!(
++            !is_reparse_point(&metadata),
++            "fixture contains a symlink/reparse point: {}",
++            path.display()
++        );
++        if metadata.is_dir() {
++            collect_files(&path, files)?;
++        } else {
++            ensure!(
++                metadata.is_file(),
++                "fixture contains an unsupported entry: {}",
++                path.display()
++            );
++            ensure!(
++                metadata.len() <= MAX_FILE_BYTES,
++                "probe accepts files up to 64 MiB"
++            );
++            files.push(SourceFile {
++                path,
++                size: metadata.len(),
++            });
++        }
++    }
++    Ok(())
++}
++
++fn open_options() -> OpenOptions {
++    let mut options = OpenOptions::new();
++    options.read(true);
++    #[cfg(windows)]
++    {
++        use std::os::windows::fs::OpenOptionsExt;
++        use windows_sys::Win32::Storage::FileSystem::FILE_FLAG_OPEN_REPARSE_POINT;
++        options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
++    }
++    #[cfg(unix)]
++    {
++        use std::os::unix::fs::OpenOptionsExt;
++        options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
++    }
++    options
++}
++
++fn read_worker(files: &[SourceFile], worker: usize, buffer: &mut Vec<u8>) -> Result<Measurement> {
++    let options = open_options();
++    let mut measured = Measurement::default();
++    for source in files.iter().skip(worker).step_by(WORKERS) {
++        let started = Instant::now();
++        let opened = options.open(&source.path);
++        measured.open.record(started);
++        let mut file = opened.with_context(|| format!("open {}", source.path.display()))?;
++
++        let started = Instant::now();
++        let metadata = file.metadata();
++        measured.metadata.record(started);
++        let metadata = metadata.with_context(|| format!("metadata {}", source.path.display()))?;
++        ensure!(
++            metadata.is_file() && !is_reparse_point(&metadata),
++            "opened fixture entry is not a regular file"
++        );
++        let size_at_open = metadata.len();
++        ensure!(
++            size_at_open == source.size,
++            "fixture size changed after preparation"
++        );
++
++        // Переиспользуем заранее выделенную память: allocator не относится к probe
++        // файловых вызовов. Runtime использует другие slab/budget/очереди и здесь не моделируется.
++        buffer.clear();
++        let started = Instant::now();
++        let result = (&mut file).take(size_at_open).read_to_end(buffer);
++        measured.read.record(started);
++
++        let started = Instant::now();
++        drop(file);
++        measured.close.record(started);
++
++        let bytes = result.with_context(|| format!("read {}", source.path.display()))?;
++        ensure!(
++            bytes as u64 == size_at_open,
++            "short read in immutable fixture"
++        );
++        black_box(buffer.as_slice());
++        measured.bytes += bytes as u64;
++    }
++    Ok(measured)
++}
++
++fn measure(files: &[SourceFile], max_size: usize) -> Result<(Measurement, u128)> {
++    let prepared = Barrier::new(WORKERS + 1);
++    let start = Barrier::new(WORKERS + 1);
++    thread::scope(|scope| {
++        let mut workers = Vec::with_capacity(WORKERS);
++        for index in 0..WORKERS {
++            let prepared = &prepared;
++            let start = &start;
++            workers.push(scope.spawn(move || {
++                let mut buffer = Vec::with_capacity(max_size);
++                prepared.wait();
++                start.wait();
++                let result = read_worker(files, index, &mut buffer);
++                // Возврат буфера исключает его освобождение из измеряемого интервала.
++                (result, buffer)
++            }));
++        }
++        prepared.wait();
++        let started = Instant::now();
++        start.wait();
++        let outcomes = workers
++            .into_iter()
++            .map(|worker| worker.join())
++            .collect::<Vec<_>>();
++        let elapsed_ns = started.elapsed().as_nanos();
++        let mut total = Measurement::default();
++        for outcome in outcomes {
++            let (measured, _buffer) =
++                outcome.map_err(|_| anyhow::anyhow!("file-operation worker panicked"))?;
++            total.merge(measured?);
++        }
++        Ok((total, elapsed_ns))
++    })
++}
++
++fn main() -> Result<()> {
++    let args = Args::parse();
++    ensure!(args.repeats > 0, "repeats must be positive");
++    let root_metadata = fs::symlink_metadata(&args.source)?;
++    ensure!(
++        root_metadata.is_dir() && !is_reparse_point(&root_metadata),
++        "source must be a real directory"
++    );
++    let mut files = Vec::new();
++    collect_files(&args.source, &mut files)?;
++    ensure!(!files.is_empty(), "fixture contains no regular files");
++    let max_size = files.iter().map(|file| file.size).max().unwrap() as usize;
++    let expected_bytes = files.iter().map(|file| file.size).sum::<u64>();
++
++    let mut empty_timer = Operation::default();
++    for _ in 0..TIMER_SAMPLES {
++        let started = Instant::now();
++        black_box(());
++        empty_timer.record(started);
++    }
++    println!(
++        "{{\"kind\":\"timer_calibration\",\"scope\":\"single_thread_empty_instant_interval\",\"subtracted\":false,\"measurement\":{}}}",
++        empty_timer.json()
++    );
++    for repeat in 1..=args.repeats {
++        let (measured, elapsed_ns) = measure(&files, max_size)?;
++        ensure!(
++            measured.bytes == expected_bytes,
++            "fixture byte total mismatch"
++        );
++        ensure!(
++            measured.close.calls == files.len() as u64,
++            "file-operation count mismatch"
++        );
++        println!(
++            "{{\"kind\":\"file_ops\",\"schema\":1,\"repeat\":{repeat},\"workers\":{WORKERS},\"files\":{},\"bytes\":{},\"elapsed_ns\":{elapsed_ns},\"scope\":\"representative_probe_not_runtime_sender\",\"elapsed_includes\":\"start_barrier_and_worker_join\",\"operation_units\":\"overlapping_wall_ns_sums_not_cpu\",\"calls_mean\":\"Rust_operation_invocations_not_kernel_syscalls\",\"buffer_policy\":\"one_reusable_buffer_per_worker_preallocated_before_timing\",\"buffer_capacity_per_worker\":{max_size},\"validation\":\"regular_type_and_opened_size_and_exact_read_length_not_content_hash\",\"open\":{},\"metadata\":{},\"read\":{},\"close\":{}}}",
++            files.len(),
++            measured.bytes,
++            measured.open.json(),
++            measured.metadata.json(),
++            measured.read.json(),
++            measured.close.json()
++        );
++    }
++    Ok(())
++}

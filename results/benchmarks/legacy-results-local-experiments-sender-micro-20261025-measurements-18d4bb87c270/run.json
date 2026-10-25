@@ -1,0 +1,145 @@
+{
+  "schema_version": 1,
+  "id": "legacy-results-local-experiments-sender-micro-20261025-measurements-18d4bb87c270",
+  "kind": "benchmark",
+  "label": "aa-e2e-manySmallFiles",
+  "status": "imported",
+  "started_utc": "2026-10-25T13:50:20.904629+00:00",
+  "time_source": "original_file_mtime",
+  "imported_utc": "2026-10-25T13:57:55.074725+00:00",
+  "experiment_path": "results/local/experiments/sender-micro-20261025/measurements/aa-e2e-manySmallFiles",
+  "import_sha256": "18d4bb87c270dc581482a400d7b57f6fcc207c002fb1bd26be4055bb3328de1e",
+  "origin": "results/local/experiments/sender-micro-20261025/measurements",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "binary_sha256": {
+      "before": "2ccde76544b70aa323099f8c073af1581c07cee147b2a56e9a16c2b6c1c8fd5f",
+      "after": "2ccde76544b70aa323099f8c073af1581c07cee147b2a56e9a16c2b6c1c8fd5f"
+    },
+    "comparison_kind": "A/A",
+    "requested_readers": {
+      "before": 8,
+      "after": 8
+    },
+    "common_arguments": [
+      "--repeats",
+      "1",
+      "--shuffle-scenarios",
+      "--shuffle-seed",
+      "91",
+      "--source",
+      "E:\\projects\\cool_project\\fast-dump\\results\\local\\experiments\\sender-20261025\\fixtures\\manySmallFiles",
+      "--network-profile",
+      "loopback-localhost",
+      "--threads",
+      "4",
+      "--frames",
+      "64",
+      "--buffers",
+      "1024",
+      "--executor",
+      "default"
+    ],
+    "repeats_per_side": 5,
+    "policy": "AB then BA alternating; all samples retained; no automatic warmup or trimming",
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "after",
+        "exit_code": 0
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "aa-e2e-manySmallFiles/before/run.log",
+      "sha256": "515b6ab2914a610abf2aec21e3cf852e0e480d9e9c5a78c71d72db0431e3bdfe",
+      "bytes": 17410,
+      "extracted_sha256": "c89a03d50227d9ed1b84c04a0293d76a8848630c4b966f1b762cf8d15be99fe9",
+      "saved": "raw/before/resource_samples.csv"
+    },
+    {
+      "source": "aa-e2e-manySmallFiles/before/results_raw.csv",
+      "sha256": "fb9e700059c244bd15fa3a2ccacda5dd81d0433ae5ed50c6d3cfddb59dff27b6",
+      "bytes": 4358,
+      "saved": "raw/before/results_raw.csv"
+    },
+    {
+      "source": "aa-e2e-manySmallFiles/after/run.log",
+      "sha256": "b2036e6c3abdfe36f4c4665fad60c87a32b182fe0d2513ed87af1786af6585ee",
+      "bytes": 17392,
+      "extracted_sha256": "e7d9fa6d1df1e866687b5f338edd42d5f96f0333ce8f49b6d956b4fc55dcd4dc",
+      "saved": "raw/after/resource_samples.csv"
+    },
+    {
+      "source": "aa-e2e-manySmallFiles/after/results_raw.csv",
+      "sha256": "3d264f179cb059d11003aaf5f84f763bb44c07fd3a16b84c6424390762645141",
+      "bytes": 4358,
+      "saved": "raw/after/results_raw.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "aa-e2e-manySmallFiles/paired-run.json",
+      "sha256": "f21ba2e2b8cbd972c6cb6293d1c2cf03c8e4badff4ff33b3b1fc84eab4670bad",
+      "bytes": 10597
+    },
+    {
+      "source": "aa-e2e-manySmallFiles/before/run.log",
+      "sha256": "515b6ab2914a610abf2aec21e3cf852e0e480d9e9c5a78c71d72db0431e3bdfe",
+      "bytes": 17410
+    },
+    {
+      "source": "aa-e2e-manySmallFiles/after/run.log",
+      "sha256": "b2036e6c3abdfe36f4c4665fad60c87a32b182fe0d2513ed87af1786af6585ee",
+      "bytes": 17392
+    }
+  ]
+}

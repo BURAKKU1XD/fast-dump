@@ -1,0 +1,47 @@
+{
+  "status": "prepared_not_started",
+  "authorization": "Parent explicitly starts measurements only after all concurrent builds/checks stop.",
+  "comparison_design": "Incremental adoption: M2 over accepted M1; M3 over the latest accepted head after the M2 decision. No pooling across comparison_id, accepted_head or source/binary hashes.",
+  "m2": {
+    "scan": {"fixtures": ["manySmallFiles", "wide-tree"], "aa_pairs_each": 5, "ab_pairs_each": 10, "allocation_ab_pairs_each": 5},
+    "e2e": {"fixtures": ["manySmallFiles", "mixed", "bigFiles"], "aa_pairs_each": 5, "ab_pairs_each": 5},
+    "series": 12,
+    "observations": 140
+  },
+  "m3_control_first": {
+    "case": "plan-short-4096",
+    "iterations": 1024,
+    "aa_pairs": 5,
+    "ab_pairs": 10,
+    "series": 2,
+    "observations": 30,
+    "decision": "Stop the unchanged original M3 patch on confirmed regression; broader cases require a separate root decision."
+  },
+  "fixed_knobs": {"threads": 4, "readers": 8, "level": 3, "frame_target_mib": 64, "read_buffer_kib": 1024, "network": "loopback-localhost"},
+  "order": "Sequential suites; within each fixture A/A then A/B then allocation diagnostics where specified. Pairs alternate AB/BA. No warmup dropping or outlier removal.",
+  "analysis": {
+    "bootstrap": "10000 deterministic whole-pair resamples; seed 20261025; percentile 95% interval for 100*(1-after_mean/before_mean)",
+    "aa_noise_floor": "max absolute matching A/A CI endpoint, independently per fixture/stage/case/config/baseline hash and comparison phase",
+    "strict_gain_gate": "gain CI lower > A/A noise floor",
+    "strict_regression_gate": "gain CI upper < negative A/A noise floor",
+    "gate_status": "Carried forward unchanged from the prior independently reviewed analyzer, chosen before these adoption measurements. Descriptive conservative gate, not a calibrated joint hypothesis test; no multiplicity adjustment.",
+    "allocation_acceptance": "Reproducible useful counts may justify a simple change without a proven E2E gain. Instrumented wall/CPU cannot establish speed or regression. Whole-scan allocation deltas need not equal theoretical removed allocations because runtime/channel allocation varies."
+  },
+  "scope_limits": [
+    "Windows performance only; Linux checks establish correctness, not performance.",
+    "E2E CPU/RSS combines sender and receiver in one process on localhost; source and output share a volume.",
+    "Cache/background activity uncontrolled; preparation and verification may warm subsequent observations.",
+    "Control wall and allocator intervals cover only the loop; CPU/cycle snapshots are slightly wider. No noop subtraction. Reference encode/decode occurs before timing.",
+    "Stage RSS is process lifetime highwater. Requested allocation bytes are not live memory or RSS.",
+    "A noisy inconclusive E2E comparison cannot prove absence of small regressions.",
+    "Prior M1 artifact reuse pins source/compiler/binary evidence. It does not imply a fresh rebuild from the final commit with documentation changes."
+  ],
+  "commands_after_root_signal": [
+    "python -B results/local/experiments/sender-adoption-20261025/run_measurements.py m2 --preflight-only",
+    "python -B results/local/experiments/sender-adoption-20261025/run_measurements.py m2",
+    "python -B results/local/experiments/sender-adoption-20261025/analyze_measurements.py",
+    "python -B results/local/experiments/sender-adoption-20261025/run_measurements.py m3-control --preflight-only",
+    "python -B results/local/experiments/sender-adoption-20261025/run_measurements.py m3-control",
+    "python -B results/local/experiments/sender-adoption-20261025/analyze_measurements.py"
+  ]
+}

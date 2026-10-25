@@ -1,0 +1,746 @@
+--- a/docs/benchmarks.md
++++ b/docs/benchmarks.md
+@@ -289,8 +289,11 @@
+ `read_duration_ms` measures the planner's time obtaining ordered results,
+ including planner-side materialization, rather than summed worker time.
+ All bundle compression runs in a producer while the main thread sends compressed
+-chunks. Compression duration excludes producer queue waits and, for streamed
+-files, source reads, while retaining tar work. Overlapping stage durations
++chunks. Streamed source reads run in a separate worker using two reusable buffers.
++Their read duration remains the sum of actual source-read calls. Compression
++duration excludes producer output-queue waits and waits for source chunks or
++source-reader shutdown, while retaining tar work; it does not subtract source
++read time that overlapped compression. Overlapping stage durations
+ are not an additive breakdown of total elapsed time.
+ Receiver frame-write duration includes periodic archive synchronization every
+ `64 MiB`; the separate frame-sync duration measures commit-group synchronization.
+--- a/docs/runtime.md
++++ b/docs/runtime.md
+@@ -135,12 +135,16 @@
+   chunks to the network. The queue holds at most two `4 MiB` chunks; four reusable
+   buffers, including producer and consumer, bound this stage's compressed payload
+   memory to `16 MiB`, excluding zstd's workspace. They are allocated on first use
+-  and reused across bundles and attempts. A separate `1 MiB` source-read buffer
+-  is allocated only when a streamed file first needs it and reused thereafter.
+-  A scoped producer is
+-  started for each attempt.
+-  Cancel and join the producer before abort, retry, or returning a network
+-  error; no producer is detached.
++  and reused across bundles and attempts. Streamed files additionally use two
++  reusable `1 MiB` source buffers, allocated only on the first streamed attempt.
++  A scoped source reader reads the same opened handle sequentially while the
++  compression producer consumes its slices directly. The source ready queue has
++  capacity one; a separate recycle queue returns consumed buffers without copying
++  their payload. The source reader preserves the opened size and attempt budget.
++  A scoped compression producer is started for each attempt. Close both source
++  queues and join the source reader before the compression producer returns.
++  Cancel and join both workers before abort, retry, or returning a network error;
++  no worker is detached. An in-progress filesystem read can delay shutdown.
+ - The receiver reuses up to ten `4 MiB` data buffers (`40 MiB` total payload
+   storage), allocated and grown only as needed. Only the current packet's payload
+   is written and hashed; retained buffer tails are never part of the archive.
+--- a/src/network/protocol.md
++++ b/src/network/protocol.md
+@@ -101,7 +101,9 @@
+ `attempt_no`. This lets the receiver ignore late data from the old attempt.
+ 
+ The sender overlaps streamed reading/compression with network writes through a
+-bounded two-chunk queue. Its producer is stopped and joined before `BundleAbort`
++bounded two-chunk queue. A source reader supplies compression through a one-chunk
++queue using two reusable `1 MiB` buffers and the same opened source handle. Both
++workers are stopped and joined before `BundleAbort`
+ or a retry. Completed chunks from a failed read are drained before abort; data
+ already buffered in TCP can still arrive late and is ignored by attempt number.
+ This scheduling does not change the message format or durable commit boundary.
+--- a/src/sender/stream.rs
++++ b/src/sender/stream.rs
+@@ -1,4 +1,6 @@
+-use std::io::{self, Read, Write};
++mod source;
++
++use std::io::{self, Write};
+ use std::ops::{Deref, DerefMut};
+ use std::sync::atomic::{AtomicBool, Ordering};
+ use std::sync::{Arc, Mutex};
+@@ -19,23 +21,23 @@
+ use super::plan::MaterializedPayload;
+ use super::read::StreamedRegularFile;
+ use super::tar::{
+-    BufferedBundleWriter, CountingWriter, ExactFileReader, STREAM_READ_BYTES,
+-    append_streamed_regular_entry_with_buffer,
++    BufferedBundleWriter, CountingWriter, ExactFileReader, append_streamed_regular_entry_with_body,
+ };
++use source::{SourceWorkspace, with_source_reader};
+ 
+ const QUEUED_CHUNKS: usize = 2;
+ const STREAM_BUFFERS: usize = QUEUED_CHUNKS + 2;
+ 
+ pub(crate) struct StreamWorkspace {
+     buffers: Arc<Mutex<Vec<Vec<u8>>>>,
+-    read_scratch: Vec<u8>,
++    source: SourceWorkspace,
+ }
+ 
+ impl StreamWorkspace {
+     pub(crate) fn new() -> Self {
+         Self {
+             buffers: Arc::new(Mutex::new(Vec::with_capacity(STREAM_BUFFERS))),
+-            read_scratch: Vec::new(),
++            source: SourceWorkspace::default(),
+         }
+     }
+ 
+@@ -210,10 +212,7 @@
+             .map_err(|_| consumer_disconnected())?;
+     }
+     let pending = workspace.take_buffer();
+-    if matches!(&input, BundleInput::Streamed(_)) {
+-        workspace.read_scratch.resize(STREAM_READ_BYTES, 0);
+-    }
+-    let scratch = &mut workspace.read_scratch;
++    let source = &workspace.source;
+     let cancelled = AtomicBool::new(false);
+ 
+     thread::scope(|scope| {
+@@ -232,7 +231,7 @@
+                         control,
+                     },
+                     pending,
+-                    scratch,
++                    source,
+                 );
+                 if result.is_err()
+                     && !cancelled.load(Ordering::Relaxed)
+@@ -317,7 +316,7 @@
+     buffers: Receiver<RecycledBuffer>,
+     cancelled: AttemptCancellation<'_>,
+     pending: RecycledBuffer,
+-    scratch: &mut [u8],
++    source_workspace: &SourceWorkspace,
+ ) -> Result<StreamAttempt> {
+     let _compressing = progress::stage(
+         cancelled.control,
+@@ -386,32 +385,26 @@
+         file.descriptor.size_at_open,
+         forced_short_limit,
+     );
+-    let (tar_bytes, appended) = {
+-        let encoder = compressor.direct_encoder(&mut sink)?;
+-        let mut writer = CountingWriter::new(encoder);
+-        let appended = append_streamed_regular_entry_with_buffer(
+-            &mut writer,
+-            &file.descriptor.relative_path,
+-            file.mode,
+-            file.descriptor.size_at_open,
+-            &mut CancellableReader {
+-                inner: &mut reader,
+-                cancelled,
+-            },
+-            scratch,
+-            source.as_ref(),
+-        );
+-        let tar_bytes = writer.bytes_written();
+-        if appended.is_ok() {
++    let (appended, source_wait) =
++        with_source_reader(&mut reader, source_workspace, cancelled, |chunks| {
++            let encoder = compressor.direct_encoder(&mut sink)?;
++            let mut writer = CountingWriter::new(encoder);
++            append_streamed_regular_entry_with_body(
++                &mut writer,
++                &file.descriptor.relative_path,
++                file.mode,
++                file.descriptor.size_at_open,
++                |writer| chunks.copy_into(writer, &file.descriptor.relative_path, source.as_ref()),
++            )?;
++            let tar_bytes = writer.bytes_written();
+             writer
+                 .into_inner()
+                 .finish()
+                 .context("failed to finalize v4 streamed compression")?;
+-        }
+-        (tar_bytes, appended)
+-    };
++            Ok(tar_bytes)
++        })?;
+     let result = match appended {
+-        Ok(()) => {
++        Ok(tar_bytes) => {
+             sink.emit(true)?;
+             Ok(StreamedPayload {
+                 tar_bytes,
+@@ -427,7 +420,7 @@
+         read_duration: reader.read_duration(),
+         compress_duration: started
+             .elapsed()
+-            .saturating_sub(reader.read_duration())
++            .saturating_sub(source_wait)
+             .saturating_sub(sink.queue_wait),
+         send_duration: Duration::ZERO,
+     })
+@@ -512,23 +505,6 @@
+     )
+ }
+ 
+-struct CancellableReader<'a, R> {
+-    inner: &'a mut R,
+-    cancelled: AttemptCancellation<'a>,
+-}
+-
+-impl<R: Read> Read for CancellableReader<'_, R> {
+-    fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+-        self.cancelled.check().map_err(io::Error::other)?;
+-        let _reading = progress::stage(
+-            self.cancelled.control,
+-            PipelineStage::Compress,
+-            PipelineState::Reading,
+-        );
+-        self.inner.read(bytes)
+-    }
+-}
+-
+ #[derive(Clone, Copy)]
+ struct AttemptCancellation<'a> {
+     local: &'a AtomicBool,
+@@ -556,7 +532,7 @@
+ #[cfg(test)]
+ mod tests {
+     use std::fs::{self, File};
+-    use std::io::Cursor;
++    use std::io::{Cursor, Read};
+     use std::panic::{AssertUnwindSafe, catch_unwind};
+ 
+     use super::*;
+@@ -687,6 +663,7 @@
+             assert_eq!(progress.retries.load(Ordering::Relaxed), 0);
+             assert_eq!(progress.skips.load(Ordering::Relaxed), 0);
+             assert_eq!(workspace.buffers.lock().unwrap().len(), STREAM_BUFFERS);
++            assert_eq!(workspace.source.pointers().len(), 2);
+         });
+     }
+ 
+@@ -729,6 +706,7 @@
+             PipelineState::Failed
+         );
+         assert_eq!(pool_pointers(&workspace).len(), STREAM_BUFFERS);
++        assert_eq!(workspace.source.pointers().len(), 2);
+     }
+ 
+     fn fixture(size: usize) -> (TestDir, Vec<u8>, StreamedRegularFile) {
+@@ -957,6 +935,7 @@
+             .err()
+             .unwrap();
+             assert_eq!(workspace.buffers.lock().unwrap().len(), STREAM_BUFFERS);
++            assert_eq!(workspace.source.pointers().len(), 2);
+             assert_eq!(writer.written, 2 * wire::MAX_DATA_CHUNK_BYTES);
+             assert_eq!(writer.flushes, 0);
+             assert!(crate::network::is_retryable_error(&error));
+@@ -995,6 +974,7 @@
+             assert_eq!(writer.written, wire::MAX_DATA_CHUNK_BYTES);
+             assert_eq!(writer.flushes, 0);
+             assert_eq!(workspace.buffers.lock().unwrap().len(), STREAM_BUFFERS);
++            assert_eq!(workspace.source.pointers().len(), 2);
+         });
+     }
+ 
+@@ -1244,7 +1224,7 @@
+             .unwrap();
+             assert_eq!(first.read_bytes, 0);
+             assert_eq!(first.read_duration, Duration::ZERO);
+-            assert!(workspace.read_scratch.is_empty());
++            assert!(workspace.source.pointers().is_empty());
+             let payload = first.result.unwrap();
+             assert!(payload.compressed_bytes > 4 * wire::MAX_DATA_CHUNK_BYTES as u64);
+             verify_materialized_payload(&first_wire, &payload, &reference, reference_tar_bytes);
+@@ -1267,7 +1247,8 @@
+                 &contents,
+             );
+             assert_eq!(pool_pointers(&workspace), original_pointers);
+-            let scratch_pointer = workspace.read_scratch.as_ptr();
++            let scratch_pointers = workspace.source.pointers();
++            assert_eq!(scratch_pointers.len(), 2);
+ 
+             let tail = vec![materialized_entry(
+                 "tail",
+@@ -1292,7 +1273,7 @@
+                 reference_tar_bytes,
+             );
+             assert_eq!(pool_pointers(&workspace), original_pointers);
+-            assert_eq!(workspace.read_scratch.as_ptr(), scratch_pointer);
++            assert_eq!(workspace.source.pointers(), scratch_pointers);
+         }
+     }
+ 
+@@ -1428,7 +1409,8 @@
+             pointers
+         };
+         let original_pointers = pointers(&workspace);
+-        let scratch_pointer = workspace.read_scratch.as_ptr();
++        let scratch_pointers = workspace.source.pointers();
++        assert_eq!(scratch_pointers.len(), 2);
+ 
+         file.reopen_for_retry().unwrap();
+         let mut second_wire = Vec::new();
+@@ -1444,11 +1426,44 @@
+         assert_eq!(second.read_bytes, first.read_bytes);
+         assert_eq!(second.result.unwrap().checksum, payload.checksum);
+         assert_eq!(pointers(&workspace), original_pointers);
+-        assert_eq!(workspace.read_scratch.as_ptr(), scratch_pointer);
++        assert_eq!(workspace.source.pointers(), scratch_pointers);
+         assert!(
+             second_wire == first_wire,
+             "reused compressor changed deterministic wire bytes"
+         );
++    }
++
++    #[test]
++    fn streamed_source_buffers_ignore_appended_tail_and_accept_empty_files() {
++        for size in [0, 2 * super::super::tar::STREAM_READ_BYTES + 73] {
++            let (_directory, contents, mut file) = fixture(size);
++            fs::OpenOptions::new()
++                .append(true)
++                .open(&file.abs_path)
++                .unwrap()
++                .write_all(b"tail appended after the source handle opened")
++                .unwrap();
++            let mut compressor = BundleCompressor::new(1, 1).unwrap();
++            let mut workspace = StreamWorkspace::new();
++            let mut wire = Vec::new();
++            let attempt = send_streamed_attempt_with_workspace(
++                &mut wire,
++                &mut file,
++                7,
++                1,
++                &mut compressor,
++                &mut workspace,
++            )
++            .unwrap();
++            assert_eq!(attempt.read_bytes, size as u64);
++            assert_eq!(file.open_attempts, 1);
++            verify_payload(
++                &decode_chunks(&wire, 7, 1),
++                &attempt.result.unwrap(),
++                &contents,
++            );
++            assert_eq!(workspace.source.pointers().len(), 2);
++        }
+     }
+ 
+     #[test]
+@@ -1469,6 +1484,8 @@
+         )
+         .unwrap();
+         assert_eq!(workspace.buffers.lock().unwrap().len(), STREAM_BUFFERS);
++        let source_pointers = workspace.source.pointers();
++        assert_eq!(source_pointers.len(), 2);
+         assert_eq!(aborted.read_bytes, forced_limit);
+         let error = aborted.result.err().unwrap();
+         assert!(format!("{error:#}").contains("short read"));
+@@ -1495,6 +1512,7 @@
+         )
+         .unwrap();
+         assert_eq!(workspace.buffers.lock().unwrap().len(), STREAM_BUFFERS);
++        assert_eq!(workspace.source.pointers(), source_pointers);
+         assert_eq!(retry.read_bytes, contents.len() as u64);
+         assert_eq!(file.open_attempts, 2);
+         verify_payload(
+--- /dev/null
++++ b/src/sender/stream/source.rs
+@@ -0,0 +1,348 @@
++use std::io::{self, Read, Write};
++use std::sync::{Arc, Mutex};
++use std::thread;
++use std::time::{Duration, Instant};
++
++use anyhow::{Context, Result};
++use crossbeam_channel::{Receiver, Sender, bounded};
++
++use super::{AttemptCancellation, consumer_disconnected};
++use crate::progress::{self, PipelineStage, PipelineState, SourceFileGuard};
++use crate::sender::tar::{STREAM_READ_BYTES, write_source_payload};
++
++const SOURCE_BUFFERS: usize = 2;
++
++#[derive(Default)]
++pub(super) struct SourceWorkspace {
++    buffers: Arc<Mutex<Vec<Vec<u8>>>>,
++}
++
++impl SourceWorkspace {
++    fn take_buffer(&self) -> SourceBuffer {
++        let bytes = self
++            .buffers
++            .lock()
++            .unwrap_or_else(|error| error.into_inner())
++            .pop()
++            .unwrap_or_else(|| vec![0; STREAM_READ_BYTES]);
++        SourceBuffer {
++            bytes,
++            pool: self.buffers.clone(),
++        }
++    }
++
++    #[cfg(test)]
++    pub(super) fn pointers(&self) -> Vec<usize> {
++        let buffers = self.buffers.lock().unwrap();
++        let mut pointers = buffers
++            .iter()
++            .map(|buffer| {
++                assert_eq!(buffer.len(), STREAM_READ_BYTES);
++                buffer.as_ptr() as usize
++            })
++            .collect::<Vec<_>>();
++        pointers.sort_unstable();
++        pointers
++    }
++}
++
++struct SourceBuffer {
++    bytes: Vec<u8>,
++    pool: Arc<Mutex<Vec<Vec<u8>>>>,
++}
++
++impl Drop for SourceBuffer {
++    fn drop(&mut self) {
++        // Длину сохраняем: следующая попытка не обнуляет уже готовые 1 MiB.
++        self.pool
++            .lock()
++            .unwrap_or_else(|error| error.into_inner())
++            .push(std::mem::take(&mut self.bytes));
++    }
++}
++
++struct SourceChunk {
++    buffer: SourceBuffer,
++    len: usize,
++}
++
++pub(super) struct SourceChunks<'a> {
++    ready: Receiver<io::Result<SourceChunk>>,
++    recycle: Sender<SourceBuffer>,
++    cancelled: AttemptCancellation<'a>,
++    wait_duration: Duration,
++}
++
++impl SourceChunks<'_> {
++    pub(super) fn copy_into(
++        &mut self,
++        writer: &mut impl Write,
++        relative_path: &str,
++        progress: Option<&SourceFileGuard<'_>>,
++    ) -> Result<()> {
++        loop {
++            self.cancelled.check()?;
++            let waiting = Instant::now();
++            let wait = progress::stage(
++                self.cancelled.control,
++                PipelineStage::Compress,
++                PipelineState::WaitingRead,
++            );
++            let next = self.ready.recv();
++            self.wait_duration += waiting.elapsed();
++            drop(wait);
++            let chunk = match next {
++                Ok(chunk) => chunk.with_context(|| {
++                    format!("failed to read streamed v4 tar payload for {relative_path}")
++                })?,
++                Err(_) => return Ok(()),
++            };
++            // Zstd потребляет owned slice до возврата буфера; промежуточной копии нет.
++            write_source_payload(writer, &chunk.buffer.bytes[..chunk.len], progress).with_context(
++                || format!("failed to write streamed v4 tar payload for {relative_path}"),
++            )?;
++            let _ = self.recycle.try_send(chunk.buffer);
++        }
++    }
++}
++
++pub(super) fn with_source_reader<R: Read + Send, T>(
++    reader: &mut R,
++    workspace: &SourceWorkspace,
++    cancelled: AttemptCancellation<'_>,
++    consume: impl FnOnce(&mut SourceChunks<'_>) -> Result<T>,
++) -> Result<(Result<T>, Duration)> {
++    thread::scope(|scope| {
++        let (ready_tx, ready_rx) = bounded(1);
++        let (recycle_tx, recycle_rx) = bounded(SOURCE_BUFFERS);
++        for _ in 0..SOURCE_BUFFERS {
++            recycle_tx
++                .send(workspace.take_buffer())
++                .map_err(|_| consumer_disconnected())?;
++        }
++        let worker = thread::Builder::new()
++            .name("dump-source-read".into())
++            .spawn_scoped(scope, move || {
++                read_source(reader, ready_tx, recycle_rx, cancelled);
++            })
++            .context("failed to start v4 streamed source reader")?;
++        let mut chunks = SourceChunks {
++            ready: ready_rx,
++            recycle: recycle_tx,
++            cancelled,
++            wait_duration: Duration::ZERO,
++        };
++        let result = consume(&mut chunks);
++        let mut wait_duration = chunks.wait_duration;
++        // Закрываем обе очереди до join, в том числе при ранней ошибке encoder.
++        // При panic Drop chunks происходит до автоматического scoped join.
++        drop(chunks);
++        let joining = Instant::now();
++        worker
++            .join()
++            .map_err(|_| anyhow::anyhow!("v4 streamed source reader panicked"))?;
++        wait_duration += joining.elapsed();
++        Ok((result, wait_duration))
++    })
++}
++
++fn read_source(
++    reader: &mut impl Read,
++    ready: Sender<io::Result<SourceChunk>>,
++    recycle: Receiver<SourceBuffer>,
++    cancelled: AttemptCancellation<'_>,
++) {
++    while let Ok(mut buffer) = recycle.recv() {
++        let read = loop {
++            if let Err(error) = cancelled.check() {
++                break Err(io::Error::other(error));
++            }
++            match reader.read(&mut buffer.bytes) {
++                Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
++                result => break result,
++            }
++        };
++        match read {
++            Ok(0) => return,
++            Ok(len) => {
++                if ready.send(Ok(SourceChunk { buffer, len })).is_err() {
++                    return;
++                }
++            }
++            Err(error) => {
++                // Ошибка следует за уже прочитанными slices: успешный префикс
++                // проходит тот же учёт, а незавершённый zstd frame не финализируется.
++                let _ = ready.send(Err(error));
++                return;
++            }
++        }
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use std::collections::HashSet;
++    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
++
++    use super::*;
++
++    const TIMEOUT: Duration = Duration::from_secs(10);
++
++    fn cancellation(local: &AtomicBool) -> AttemptCancellation<'_> {
++        AttemptCancellation {
++            local,
++            control: None,
++        }
++    }
++
++    #[test]
++    fn source_overlaps_consumer_with_exactly_two_buffers_and_no_slice_copy() {
++        struct Reader {
++            reads: Arc<AtomicUsize>,
++            pointers: Arc<Mutex<HashSet<usize>>>,
++            second: Sender<()>,
++        }
++        impl Read for Reader {
++            fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
++                let index = self.reads.load(Ordering::SeqCst);
++                if index == 3 {
++                    return Ok(0);
++                }
++                assert_eq!(bytes.len(), STREAM_READ_BYTES);
++                self.pointers
++                    .lock()
++                    .unwrap()
++                    .insert(bytes.as_ptr() as usize);
++                bytes.fill(index as u8);
++                self.reads.fetch_add(1, Ordering::SeqCst);
++                if index == 1 {
++                    self.second.send(()).unwrap();
++                }
++                Ok(bytes.len())
++            }
++        }
++        struct Writer {
++            reads: Arc<AtomicUsize>,
++            pointers: Arc<Mutex<HashSet<usize>>>,
++            second: Receiver<()>,
++            writes: usize,
++        }
++        impl Write for Writer {
++            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
++                if self.writes == 0 {
++                    self.second.recv_timeout(TIMEOUT).unwrap();
++                    // Пока первый slice у consumer, второй уже прочитан, но
++                    // третьему нет свободного буфера независимо от скорости CPU.
++                    assert_eq!(self.reads.load(Ordering::SeqCst), 2);
++                }
++                assert!(
++                    self.pointers
++                        .lock()
++                        .unwrap()
++                        .contains(&(bytes.as_ptr() as usize))
++                );
++                assert!(bytes.iter().all(|&byte| byte == self.writes as u8));
++                self.writes += 1;
++                Ok(bytes.len())
++            }
++            fn flush(&mut self) -> io::Result<()> {
++                Ok(())
++            }
++        }
++        let reads = Arc::new(AtomicUsize::new(0));
++        let pointers = Arc::new(Mutex::new(HashSet::new()));
++        let (second_tx, second_rx) = bounded(1);
++        let mut reader = Reader {
++            reads: reads.clone(),
++            pointers: pointers.clone(),
++            second: second_tx,
++        };
++        let mut writer = Writer {
++            reads,
++            pointers: pointers.clone(),
++            second: second_rx,
++            writes: 0,
++        };
++        let workspace = SourceWorkspace::default();
++        let cancelled = AtomicBool::new(false);
++        let (result, _) = with_source_reader(
++            &mut reader,
++            &workspace,
++            cancellation(&cancelled),
++            |chunks| chunks.copy_into(&mut writer, "fixture", None),
++        )
++        .unwrap();
++        result.unwrap();
++        assert_eq!(writer.writes, 3);
++        assert_eq!(pointers.lock().unwrap().len(), SOURCE_BUFFERS);
++        assert_eq!(workspace.pointers().len(), SOURCE_BUFFERS);
++    }
++
++    #[test]
++    fn consumer_error_and_panic_release_ready_and_recycle_waits() {
++        for panic in [false, true] {
++            let (done_tx, done_rx) = bounded(1);
++            let worker = thread::spawn(move || {
++                let workspace = SourceWorkspace::default();
++                let cancelled = AtomicBool::new(false);
++                let mut reader = io::repeat(7);
++                let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
++                    with_source_reader(
++                        &mut reader,
++                        &workspace,
++                        cancellation(&cancelled),
++                        |chunks| -> Result<()> {
++                            let first = chunks.ready.recv_timeout(TIMEOUT).unwrap().unwrap();
++                            let second = chunks.ready.recv_timeout(TIMEOUT).unwrap().unwrap();
++                            assert!(chunks.ready.is_empty());
++                            // Worker теперь ждёт recycle; оба буфера принадлежат
++                            // consumer и возвращаются в workspace при unwind.
++                            if panic {
++                                panic!("source consumer panic");
++                            }
++                            drop((first, second));
++                            anyhow::bail!("source consumer failure")
++                        },
++                    )
++                }));
++                if panic {
++                    assert!(outcome.is_err());
++                } else {
++                    assert!(outcome.unwrap().unwrap().0.is_err());
++                }
++                assert_eq!(workspace.pointers().len(), SOURCE_BUFFERS);
++                done_tx.send(()).unwrap();
++            });
++            done_rx.recv_timeout(TIMEOUT).unwrap();
++            worker.join().unwrap();
++        }
++    }
++
++    #[test]
++    fn source_error_follows_delivered_prefix_and_recovers_both_buffers() {
++        struct ShortReader(bool);
++        impl Read for ShortReader {
++            fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
++                if self.0 {
++                    return Err(io::ErrorKind::UnexpectedEof.into());
++                }
++                self.0 = true;
++                bytes[..3].copy_from_slice(b"abc");
++                Ok(3)
++            }
++        }
++        let workspace = SourceWorkspace::default();
++        let cancelled = AtomicBool::new(false);
++        let mut output = Vec::new();
++        let (result, _) = with_source_reader(
++            &mut ShortReader(false),
++            &workspace,
++            cancellation(&cancelled),
++            |chunks| chunks.copy_into(&mut output, "short", None),
++        )
++        .unwrap();
++        assert!(result.is_err());
++        assert_eq!(output, b"abc");
++        assert_eq!(workspace.pointers().len(), SOURCE_BUFFERS);
++    }
++}
+--- a/src/sender/tar.rs
++++ b/src/sender/tar.rs
+@@ -407,6 +407,7 @@
+ 
+ pub(crate) const STREAM_READ_BYTES: usize = 1024 * 1024;
+ 
++#[cfg(test)]
+ pub(crate) fn append_streamed_regular_entry_with_buffer<W: Write, R: Read>(
+     writer: &mut W,
+     relative_path: &str,
+@@ -420,9 +421,21 @@
+         !scratch.is_empty(),
+         "streamed read buffer must not be empty"
+     );
++    append_streamed_regular_entry_with_body(writer, relative_path, mode, size_at_open, |writer| {
++        copy_stream(reader, writer, relative_path, scratch, progress)
++    })
++}
++
++pub(crate) fn append_streamed_regular_entry_with_body<W: Write>(
++    writer: &mut W,
++    relative_path: &str,
++    mode: u32,
++    size_at_open: u64,
++    append_body: impl FnOnce(&mut W) -> Result<()>,
++) -> Result<()> {
+     let mut header = new_entry_header(mode, EntryType::Regular, size_at_open);
+     append_entry_header(writer, &mut header, relative_path, None)?;
+-    copy_stream(reader, writer, relative_path, scratch, progress)?;
++    append_body(writer)?;
+     pad_zeroes(writer, size_at_open)?;
+     Ok(())
+ }
+@@ -523,6 +536,7 @@
+     }
+ }
+ 
++#[cfg(test)]
+ fn copy_stream<R, W>(
+     reader: &mut R,
+     writer: &mut W,
+@@ -553,7 +567,7 @@
+     Ok(())
+ }
+ 
+-fn write_source_payload<W: Write>(
++pub(crate) fn write_source_payload<W: Write>(
+     writer: &mut W,
+     mut bytes: &[u8],
+     progress: Option<&SourceFileGuard<'_>>,

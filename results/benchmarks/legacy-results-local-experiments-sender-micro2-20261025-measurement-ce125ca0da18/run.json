@@ -1,0 +1,101 @@
+{
+  "schema_version": 1,
+  "id": "legacy-results-local-experiments-sender-micro2-20261025-measurement-ce125ca0da18",
+  "kind": "benchmark",
+  "label": "counter-planner-new-duplicate-aa",
+  "status": "imported",
+  "started_utc": "2026-10-25T19:58:35.071829+00:00",
+  "time_source": "original_file_mtime",
+  "imported_utc": "2026-10-25T20:13:00.280153+00:00",
+  "experiment_path": "results/local/experiments/sender-micro2-20261025/measurements/counter-planner-new-duplicate-aa",
+  "import_sha256": "ce125ca0da1893f67e828d2ed2e22bbb819f6e9704e2d99889401c5f3fd12e2d",
+  "origin": "results/local/experiments/sender-micro2-20261025/measurements",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "binary_sha256": {
+      "before": "5e7c8329acb63f999428a821bba42def071d3eb94259fed5d508106d27c9a88b",
+      "after": "5e7c8329acb63f999428a821bba42def071d3eb94259fed5d508106d27c9a88b"
+    },
+    "comparison_kind": "A/A",
+    "common_arguments": [
+      "--case",
+      "new-duplicate",
+      "--iterations",
+      "65536",
+      "--repeats",
+      "1"
+    ],
+    "allocations_diagnostic": false,
+    "repeats": 5,
+    "policy": "Alternating AB/BA; every observation retained; no dropped warmup or outliers.",
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "after",
+        "exit_code": 0
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "counter-planner-new-duplicate-aa/samples.csv",
+      "sha256": "efe974664015872ee6f6fa19659a735c734f66c1a2d3226c31c0a83f76ab16fd",
+      "bytes": 5744,
+      "saved": "raw/samples.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "counter-planner-new-duplicate-aa/paired-run.json",
+      "sha256": "13a70ee921cc26adf611a4b5da9c38104605291e6b2962c72263656d07ee1fce",
+      "bytes": 20757
+    }
+  ]
+}

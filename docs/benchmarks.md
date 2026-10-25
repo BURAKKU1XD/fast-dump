@@ -33,6 +33,31 @@ Missing counters or provenance remain unknown. Summary-only legacy reports are
 labelled explicitly. Failed, incomplete and invalid runs remain visible and
 cannot establish a speedup. Unknown formats retain their original evidence.
 
+For experiments with a detailed final report, import the measurement directories
+and a separate compact-summary directory, not the full report tree. A compact
+summary keeps reviewed decisions, configuration, aggregate statistics and their
+original decision method, limitations, source/compiler/binary/fixture hashes,
+and references to the canonical measurement and test run IDs. Do not copy raw
+observations or per-pair arrays into that summary; the canonical samples remain
+the source of truth. Keep small reproduction scripts, configurations and patches
+with their hashes. Full reports, logs and per-file fixture proofs stay local.
+Local import records, their attachments, and migration manifests preserve exact
+bytes through Git attributes, including line endings, so their SHA-256 hashes
+remain valid after cloning.
+
+Import compact summaries as report-only `comparison.json` files, without the
+top-level `runs` or `samples` fields used to import observations. Import their
+common parent directory so individual experiment labels remain meaningful.
+Generated `report.html` files and local redirects are ignored; a fresh clone uses
+the generated index and the tracked JSON evidence. Local full-report links are
+optional and must not be required to interpret a compact summary.
+
+When compacting previously imported evidence, archive the full original report
+tree under `results/local/` and verify its hashes before removing copies. Preserve
+historical run and verification manifests unchanged; create new compact report
+IDs and record old/new IDs, archive paths, and hashes in a separate manifest under
+`results/migrations/`. Never re-import the archived full report as new samples.
+
 Compare runs only with compatible workload, machine, measurement scope and
 instrumentation. Binary hashes identify executables; the current checkout does
 not identify the source of arbitrary saved binaries. Source digests exclude

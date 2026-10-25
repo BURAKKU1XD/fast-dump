@@ -1,0 +1,145 @@
+{
+  "schema_version": 1,
+  "id": "legacy-results-local-experiments-sender-20261025-measurements-aa-in-1c97b02392c9",
+  "kind": "benchmark",
+  "label": "aa-incompressible",
+  "status": "imported",
+  "started_utc": "2026-10-25T12:39:53.911471+00:00",
+  "time_source": "original_file_mtime",
+  "imported_utc": "2026-10-25T12:47:09.625971+00:00",
+  "experiment_path": "results/local/experiments/sender-20261025/measurements/aa-incompressible",
+  "import_sha256": "1c97b02392c932b911df8960bdaeea577e87ebda53f7ccf5df560befb7389782",
+  "origin": "results/local/experiments/sender-20261025/measurements",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "binary_sha256": {
+      "before": "6a7f3a02b327c98f814c1b8406411dde2b030931cd2b52d86d1f82403fe2d011",
+      "after": "6a7f3a02b327c98f814c1b8406411dde2b030931cd2b52d86d1f82403fe2d011"
+    },
+    "comparison_kind": "A/A",
+    "requested_readers": {
+      "before": 8,
+      "after": 8
+    },
+    "common_arguments": [
+      "--repeats",
+      "1",
+      "--shuffle-scenarios",
+      "--shuffle-seed",
+      "91",
+      "--source",
+      "E:\\projects\\cool_project\\fast-dump\\results\\local\\experiments\\sender-20261025\\fixtures\\incompressible",
+      "--network-profile",
+      "loopback-localhost",
+      "--threads",
+      "4",
+      "--frames",
+      "64",
+      "--buffers",
+      "1024",
+      "--executor",
+      "default"
+    ],
+    "repeats_per_side": 5,
+    "policy": "AB then BA alternating; all samples retained; no automatic warmup or trimming",
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "after",
+        "exit_code": 0
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "aa-incompressible/before/run.log",
+      "sha256": "9625a9d652fd8711e89547c6f9f7aaf16ddf6fa12e1f45c795ebbd9a77936145",
+      "bytes": 17164,
+      "extracted_sha256": "d7887f1b52318b3ad5fc68745ec7e1af5ac1fee93ff40b2f384f5aa5e1870b2b",
+      "saved": "raw/before/resource_samples.csv"
+    },
+    {
+      "source": "aa-incompressible/before/results_raw.csv",
+      "sha256": "7c2a69d466597c3ea3620e74630cc6517e94f83ce73e82afb67031ec6740967f",
+      "bytes": 4271,
+      "saved": "raw/before/results_raw.csv"
+    },
+    {
+      "source": "aa-incompressible/after/run.log",
+      "sha256": "2f72312245817de3e4c71fd07b7926ac15d5899a8570b053d344ec95db90efda",
+      "bytes": 17148,
+      "extracted_sha256": "b9412060ef2bf79773cc1fbbeca79c456422ff9f11f461640b21e948a1a0c716",
+      "saved": "raw/after/resource_samples.csv"
+    },
+    {
+      "source": "aa-incompressible/after/results_raw.csv",
+      "sha256": "6fa44bf76f4e353f817765d2441775707aaaedf5c31ea75292ab2f1c6654cc3a",
+      "bytes": 4275,
+      "saved": "raw/after/results_raw.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "aa-incompressible/paired-run.json",
+      "sha256": "589491bf32598993215f4376598bd43032bb372cdd6158b528de76666d53637a",
+      "bytes": 10612
+    },
+    {
+      "source": "aa-incompressible/before/run.log",
+      "sha256": "9625a9d652fd8711e89547c6f9f7aaf16ddf6fa12e1f45c795ebbd9a77936145",
+      "bytes": 17164
+    },
+    {
+      "source": "aa-incompressible/after/run.log",
+      "sha256": "2f72312245817de3e4c71fd07b7926ac15d5899a8570b053d344ec95db90efda",
+      "bytes": 17148
+    }
+  ]
+}

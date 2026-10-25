@@ -1,0 +1,101 @@
+{
+  "schema_version": 1,
+  "id": "legacy-results-local-experiments-sender-micro-20261025-measurements-cbe3d0695050",
+  "kind": "benchmark",
+  "label": "aa-control-noop",
+  "status": "imported",
+  "started_utc": "2026-10-25T13:49:52.928279+00:00",
+  "time_source": "original_file_mtime",
+  "imported_utc": "2026-10-25T13:57:55.019254+00:00",
+  "experiment_path": "results/local/experiments/sender-micro-20261025/measurements/aa-control-noop",
+  "import_sha256": "cbe3d0695050916c191d575dbc610e39f683c6ea7983c5998abe22e862688f87",
+  "origin": "results/local/experiments/sender-micro-20261025/measurements",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "binary_sha256": {
+      "before": "307016122ad4372f78bebfffa361262c2f2b9347b3f86c29c38d2427cd97503c",
+      "after": "307016122ad4372f78bebfffa361262c2f2b9347b3f86c29c38d2427cd97503c"
+    },
+    "comparison_kind": "A/A",
+    "common_arguments": [
+      "--case",
+      "noop",
+      "--iterations",
+      "1000000",
+      "--repeats",
+      "1"
+    ],
+    "allocations_diagnostic": false,
+    "repeats": 5,
+    "policy": "Alternating AB/BA; all samples retained; preparation and verification outside timing.",
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "after",
+        "exit_code": 0
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "aa-control-noop/samples.csv",
+      "sha256": "9fe4d9f599aed90517da93744a5c6c6fec10f69553633e50b5d65bf918e7c76c",
+      "bytes": 5045,
+      "saved": "raw/samples.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "aa-control-noop/paired-run.json",
+      "sha256": "cdb0ea843dcf971c9a18b47b0d6eaecf28eeefcfff1a871f58eac8416062fcfd",
+      "bytes": 20078
+    }
+  ]
+}

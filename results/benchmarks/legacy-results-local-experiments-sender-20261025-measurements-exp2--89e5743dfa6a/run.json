@@ -1,0 +1,155 @@
+{
+  "schema_version": 1,
+  "id": "legacy-results-local-experiments-sender-20261025-measurements-exp2--89e5743dfa6a",
+  "kind": "benchmark",
+  "label": "exp2-read-small-confirm",
+  "status": "imported",
+  "started_utc": "2026-10-25T12:43:28.277336+00:00",
+  "time_source": "manifest",
+  "imported_utc": "2026-10-25T12:47:09.722756+00:00",
+  "experiment_path": "results/local/experiments/sender-20261025/measurements/exp2-read-small-confirm",
+  "import_sha256": "89e5743dfa6a7eb90a09d0b99e172cfaac85f1d407db1969b74d31482c2aff9f",
+  "origin": "results/local/experiments/sender-20261025/measurements",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "created_utc": "2026-10-25T12:43:28.277336+00:00",
+    "binary_sha256": {
+      "before": "5bddf7a268b5cc6e7fc11fd5c73c693f11a1a1a61bc5e0adf75930775eba1cfe",
+      "after": "a1058295810c430ad93bcf36ac395e56f2af616241593d70a6701fbd505285ce"
+    },
+    "comparison_kind": "A/B",
+    "platform": "Windows-10-10.0.19045-SP0",
+    "logical_cpus": 32,
+    "allocations_diagnostic": false,
+    "measurement_contract": {
+      "counters_schema": 2,
+      "cycle_source": "windows-process-cycle-time",
+      "io_source": "windows-process-io"
+    },
+    "counter_scope": {
+      "cpu_cycles": "windows_process_cycle_time",
+      "io_read_ops": "windows_process_io_accounting",
+      "io_write_ops": "windows_process_io_accounting",
+      "io_other_ops": "windows_process_io_accounting",
+      "io_read_bytes": "windows_process_io_accounting",
+      "io_write_bytes": "windows_process_io_accounting",
+      "io_other_bytes": "windows_process_io_accounting",
+      "io_read_ops_raw": "windows_process_io_accounting",
+      "io_read_bytes_raw": "windows_process_io_accounting",
+      "io_observer_read_ops": "process_snapshot_observer_reads",
+      "io_observer_read_bytes": "process_snapshot_observer_reads",
+      "storage_read_bytes": "unmeasured",
+      "storage_write_bytes": "unmeasured",
+      "page_faults": "windows_process_combined_page_faults",
+      "minor_faults": "unmeasured",
+      "major_faults": "unmeasured",
+      "voluntary_switches": "unmeasured",
+      "involuntary_switches": "unmeasured",
+      "allocs": "diagnostic_allocator_requests",
+      "alloc_bytes": "diagnostic_allocator_requests",
+      "reallocs": "diagnostic_allocator_requests",
+      "deallocs": "diagnostic_allocator_outcomes",
+      "alloc_successes": "diagnostic_allocator_outcomes",
+      "alloc_success_bytes": "diagnostic_allocator_outcomes",
+      "realloc_successes": "diagnostic_allocator_outcomes",
+      "realloc_success_bytes": "diagnostic_allocator_outcomes",
+      "alloc_failures": "diagnostic_allocator_outcomes",
+      "realloc_failures": "diagnostic_allocator_outcomes",
+      "dealloc_bytes": "diagnostic_allocator_outcomes",
+      "zeroed_bytes": "diagnostic_allocator_outcomes",
+      "elapsed_ns": "phase_wall_time",
+      "work_ns": "phase_wall_time",
+      "drop_ns": "phase_wall_time",
+      "cpu_ns": "process_cpu_time_all_threads",
+      "user_ns": "process_cpu_time_all_threads",
+      "kernel_ns": "process_cpu_time_all_threads"
+    },
+    "repeats": 5,
+    "policy": "AB/BA alternating pairs; no trimming, implicit warmup, or dropped first samples",
+    "scenarios": [
+      [
+        "read",
+        8
+      ]
+    ],
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "stage": "read",
+        "readers": 8
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "stage": "read",
+        "readers": 8
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "stage": "read",
+        "readers": 8
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "stage": "read",
+        "readers": 8
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "stage": "read",
+        "readers": 8
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "stage": "read",
+        "readers": 8
+      },
+      {
+        "pair": 4,
+        "side": "after",
+        "stage": "read",
+        "readers": 8
+      },
+      {
+        "pair": 4,
+        "side": "before",
+        "stage": "read",
+        "readers": 8
+      },
+      {
+        "pair": 5,
+        "side": "before",
+        "stage": "read",
+        "readers": 8
+      },
+      {
+        "pair": 5,
+        "side": "after",
+        "stage": "read",
+        "readers": 8
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "exp2-read-small-confirm/samples.csv",
+      "sha256": "f99b6257d0d328ba3fa36c713a28dabd121fecc5b3165405f409e24700cf3456",
+      "bytes": 11080,
+      "saved": "raw/samples.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "exp2-read-small-confirm/paired-run.json",
+      "sha256": "1661a99cca3682d2cd8637684969c54e5ea195668fba744e1a406fef97f37468",
+      "bytes": 30747
+    }
+  ]
+}

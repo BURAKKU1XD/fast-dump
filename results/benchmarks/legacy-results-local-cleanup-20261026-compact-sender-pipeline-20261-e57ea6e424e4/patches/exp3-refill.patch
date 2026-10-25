@@ -1,0 +1,559 @@
+--- a/docs/runtime.md
++++ b/docs/runtime.md
+@@ -74,6 +74,12 @@
+   a batch fills. The scanner limit is independent of the physical-core file
+   reader count. The reader initially collects
+   up to `32 * requested readers` pending entries to preserve its worker cap.
++  Once readers are running, window refill polls the scanner without waiting
++  while submitted file work remains. A temporarily incomplete four-entry job
++  stays pending until more entries arrive; only confirmed EOF submits a shorter
++  final job. A completed ordered result returns before the next refill. Scanner
++  waits are allowed only when no submitted file work remains. Startup lookahead,
++  worker selection, entry ordering, and the payload budget are unchanged.
+   The committed resume prefix is checked before pending files are opened.
+   A native filename containing a backslash or requiring lossy Unicode conversion
+   can alias another normalized path. Its containing subtree is collected before
+--- a/src/sender/read_ahead.rs
++++ b/src/sender/read_ahead.rs
+@@ -12,7 +12,7 @@
+ use crate::progress::{self, PipelineStage, PipelineState};
+ use crate::runtime::SessionControl;
+ 
+-use super::scan::{ScanProgress, ScannedEntry, StreamingScan};
++use super::scan::{ScanPoll, ScanProgress, ScannedEntry, StreamingScan};
+ 
+ // Окно ограничивает handles; отдельный общий byte budget ограничивает payload
+ // независимо от числа readers. При нехватке памяти planner дочитает открытый handle.
+@@ -24,6 +24,9 @@
+ pub(crate) struct OrderedReader {
+     entries: EntrySource,
+     lookahead: VecDeque<ScannedEntry>,
++    pending_batch: [Option<ScannedEntry>; READ_BATCH_ENTRIES],
++    pending_count: usize,
++    source_finished: bool,
+     stream_threshold: u64,
+     parallel: Option<ParallelReader>,
+     control: Option<SessionControl>,
+@@ -39,6 +42,24 @@
+ }
+ 
+ impl EntrySource {
++    fn poll(&mut self) -> Result<ScanPoll> {
++        match self {
++            #[cfg(any(test, feature = "bench-internals"))]
++            Self::Buffered(entries) => {
++                Ok(entries.next().map_or(ScanPoll::Finished, ScanPoll::Entry))
++            }
++            Self::Streaming {
++                scan,
++                terminal_paths,
++            } => loop {
++                match scan.poll_pending_entry()? {
++                    ScanPoll::Entry(entry) if terminal_paths.contains(&entry.relative_path) => {}
++                    result => return Ok(result),
++                }
++            },
++        }
++    }
++
+     fn next(&mut self) -> Result<Option<ScannedEntry>> {
+         match self {
+             #[cfg(any(test, feature = "bench-internals"))]
+@@ -135,6 +156,9 @@
+         let mut reader = Self {
+             entries,
+             lookahead,
++            pending_batch: std::array::from_fn(|_| None),
++            pending_count: 0,
++            source_finished: false,
+             stream_threshold,
+             parallel: None,
+             control,
+@@ -193,11 +217,11 @@
+         drop(job_rx);
+         drop(result_tx);
+         reader.parallel = Some(parallel);
+-        reader.fill_window()?;
++        reader.fill_window(false)?;
+         Ok(reader)
+     }
+ 
+-    fn fill_window(&mut self) -> Result<()> {
++    fn fill_window(&mut self, wait: bool) -> Result<()> {
+         loop {
+             let Some(parallel) = &self.parallel else {
+                 return Ok(());
+@@ -208,31 +232,57 @@
+             if available < READ_BATCH_ENTRIES {
+                 break;
+             }
+-            let mut entries = std::array::from_fn(|_| None);
+-            let mut count = 0;
+-            for slot in &mut entries {
+-                let Some(entry) = self.next_entry()? else {
+-                    break;
++            let can_wait = wait && parallel.submitted == parallel.consumed;
++            while self.pending_count < READ_BATCH_ENTRIES && !self.source_finished {
++                super::check_control(self.control.as_ref())?;
++                let item = if let Some(entry) = self.lookahead.pop_front() {
++                    ScanPoll::Entry(entry)
++                } else if can_wait {
++                    let _waiting = progress::stage(
++                        self.control.as_ref(),
++                        PipelineStage::Read,
++                        PipelineState::WaitingScan,
++                    );
++                    self.entries
++                        .next()?
++                        .map_or(ScanPoll::Finished, ScanPoll::Entry)
++                } else {
++                    self.entries.poll()?
+                 };
+-                *slot = Some(entry);
+-                count += 1;
+-            }
+-            if count == 0 {
++                match item {
++                    ScanPoll::Entry(entry) => {
++                        self.pending_batch[self.pending_count] = Some(entry);
++                        self.pending_count += 1;
++                    }
++                    // Неполную четвёрку сохраняем до следующей порции scanner: временное
++                    // отсутствие записей не превращаем в EOF или одиночные reader jobs.
++                    ScanPoll::Pending => return Ok(()),
++                    ScanPoll::Finished => self.source_finished = true,
++                }
++            }
++            if self.pending_count == 0 {
+                 break;
+             }
++            let entries = std::mem::replace(&mut self.pending_batch, std::array::from_fn(|_| None));
+             let parallel = self.parallel.as_mut().unwrap();
+-            let _waiting = progress::stage(
+-                self.control.as_ref(),
+-                PipelineStage::Read,
+-                PipelineState::WaitingRead,
+-            );
+-            parallel
++            match parallel
+                 .jobs
+                 .as_ref()
+                 .unwrap()
+-                .send((parallel.submitted, entries))
+-                .context("file reader stopped before receiving work")?;
+-            parallel.submitted += count;
++                .try_send((parallel.submitted, entries))
++            {
++                Ok(()) => {
++                    parallel.submitted += self.pending_count;
++                    self.pending_count = 0;
++                }
++                Err(crossbeam_channel::TrySendError::Full((_, entries))) => {
++                    self.pending_batch = entries;
++                    return Ok(());
++                }
++                Err(crossbeam_channel::TrySendError::Disconnected(_)) => {
++                    anyhow::bail!("file reader stopped before receiving work");
++                }
++            }
+         }
+         Ok(())
+     }
+@@ -270,6 +320,15 @@
+ 
+     pub(crate) fn next(&mut self) -> Result<Option<ReadDecision>> {
+         super::check_control(self.control.as_ref())?;
++        if self.parallel.is_some() {
++            // Пополняем очередь перед ожиданием reader, не удерживая уже полученный
++            // результат ради следующей порции scanner. Блокируемся лишь без работы в пути.
++            self.fill_window(false)?;
++            let parallel = self.parallel.as_ref().unwrap();
++            if parallel.consumed == parallel.submitted {
++                self.fill_window(true)?;
++            }
++        }
+         let Some(parallel) = &mut self.parallel else {
+             let Some(entry) = self.next_entry()? else {
+                 progress::set_stage(
+@@ -336,7 +395,6 @@
+             entry.contents.delivered_from_prefetch();
+         }
+         parallel.consumed += 1;
+-        self.fill_window()?;
+         match decision {
+             ReadDecision::Streamed(file)
+                 if file.descriptor.size_at_open <= self.stream_threshold =>
+@@ -376,6 +434,164 @@
+     use std::fs;
+     use std::sync::Arc;
+     use std::time::{Duration, Instant};
++
++    fn feed_entries(dir: &TestDir, count: usize) -> Vec<ScannedEntry> {
++        for index in 0..count {
++            fs::write(dir.path().join(format!("{index:03}")), [index as u8; 17]).unwrap();
++        }
++        scan_source_tree(dir.path()).unwrap().entries
++    }
++
++    fn assert_accepted(reader: &mut OrderedReader, index: usize) {
++        let Some(ReadDecision::Accepted(entry)) = reader.next().unwrap() else {
++            panic!("ordered reader lost entry {index}");
++        };
++        assert_eq!(entry.descriptor.work_ordinal, index as u64 + 1);
++        assert_eq!(entry.contents, [index as u8; 17]);
++    }
++
++    #[test]
++    fn ready_result_does_not_wait_for_scanner_and_partial_batch_waits_for_eof() {
++        for tail in 1..=3 {
++            let dir = TestDir::new();
++            let mut entries = feed_entries(&dir, 64 + tail);
++            let remaining = entries.split_off(64);
++            let (scan, feed) = StreamingScan::test_channel(None);
++            feed.entries(entries);
++            let mut reader = OrderedReader::from_stream(scan, BTreeSet::new(), 2, 1024).unwrap();
++            assert_eq!(reader.parallel.as_ref().unwrap().workers.len(), 2);
++            for index in 0..59 {
++                assert_accepted(&mut reader, index);
++            }
++            feed.entries(remaining);
++            let (done, completed) = std::sync::mpsc::channel();
++            let task = thread::spawn(move || {
++                assert_accepted(&mut reader, 59);
++                assert_accepted(&mut reader, 60);
++                done.send(reader).unwrap();
++            });
++            // Producer остаётся открытым и не публикует EOF, пока готовый результат
++            // не дошёл до consumer. Таймаут только защищает тест от регрессии/зависания.
++            let returned = completed.recv_timeout(Duration::from_secs(5));
++            feed.finish(Ok(()));
++            task.join().unwrap();
++            let mut reader = returned.expect("ready result waited for the next scanner batch");
++            assert_eq!(reader.pending_count, tail);
++            assert_eq!(reader.parallel.as_ref().unwrap().submitted, 64);
++            for index in 61..64 + tail {
++                assert_accepted(&mut reader, index);
++            }
++            assert!(reader.next().unwrap().is_none());
++            assert_eq!(
++                reader.scan_progress().discovered_entries,
++                (64 + tail) as u64
++            );
++            drop(reader);
++            drop(feed);
++            fs::remove_dir_all(dir.path()).unwrap();
++        }
++    }
++
++    #[test]
++    fn pending_scanner_entries_complete_one_shared_batch_without_reordering() {
++        let dir = TestDir::new();
++        let mut entries = feed_entries(&dir, 68);
++        let mut remaining = entries.split_off(64);
++        let final_entry = remaining.split_off(3);
++        let (scan, feed) = StreamingScan::test_channel(None);
++        feed.entries(entries);
++        let mut reader = OrderedReader::from_stream(scan, BTreeSet::new(), 2, 1024).unwrap();
++        for index in 0..60 {
++            assert_accepted(&mut reader, index);
++        }
++        feed.entries(remaining);
++        assert_accepted(&mut reader, 60);
++        assert_eq!(reader.pending_count, 3);
++        feed.entries(final_entry);
++        feed.finish(Ok(()));
++        for index in 61..64 {
++            assert_accepted(&mut reader, index);
++        }
++        let mut owner = None;
++        for index in 64..68 {
++            let Some(ReadDecision::Accepted(entry)) = reader.next().unwrap() else {
++                panic!()
++            };
++            assert_eq!(entry.descriptor.work_ordinal, index + 1);
++            let EntryContents::Shared { bytes, .. } = &entry.contents else {
++                panic!()
++            };
++            assert_eq!(bytes.len(), 4 * 17);
++            if let Some(owner) = &owner {
++                assert!(Arc::ptr_eq(owner, bytes));
++            } else {
++                owner = Some(bytes.clone());
++            }
++        }
++        assert!(reader.next().unwrap().is_none());
++    }
++
++    #[test]
++    fn scanner_refill_error_is_not_mistaken_for_eof() {
++        let dir = TestDir::new();
++        let (scan, feed) = StreamingScan::test_channel(None);
++        feed.entries(feed_entries(&dir, 64));
++        let mut reader = OrderedReader::from_stream(scan, BTreeSet::new(), 2, 1024).unwrap();
++        for index in 0..64 {
++            assert_accepted(&mut reader, index);
++        }
++        feed.finish(Err(anyhow::anyhow!("injected scanner failure")));
++        assert!(
++            reader
++                .next()
++                .unwrap_err()
++                .to_string()
++                .contains("injected scanner failure")
++        );
++        assert!(
++            reader
++                .next()
++                .unwrap_err()
++                .to_string()
++                .contains("already failed")
++        );
++        drop(reader);
++        fs::remove_dir_all(dir.path()).unwrap();
++        drop(feed);
++    }
++
++    #[test]
++    fn cancellation_wakes_empty_refill_with_scanner_channel_still_open() {
++        let dir = TestDir::new();
++        let run =
++            crate::runtime::RunControl::new(Some(Arc::new(crate::progress::ProgressHub::new())));
++        let control = run.session(crate::role::Role::Sender, "dump", "peer");
++        let (scan, feed) = StreamingScan::test_channel(Some(control.clone()));
++        feed.entries(feed_entries(&dir, 64));
++        let mut reader = OrderedReader::from_stream(scan, BTreeSet::new(), 2, 1024).unwrap();
++        for index in 0..64 {
++            assert_accepted(&mut reader, index);
++        }
++        let (done, completed) = std::sync::mpsc::channel();
++        let task = thread::spawn(move || {
++            let error = reader.next().unwrap_err();
++            drop(reader);
++            done.send(error.downcast_ref::<crate::runtime::Cancelled>().is_some())
++                .unwrap();
++        });
++        let deadline = Instant::now() + Duration::from_secs(5);
++        while control.progress().unwrap().snapshot().pipelines[PipelineStage::Read as usize].state
++            != PipelineState::WaitingScan
++        {
++            assert!(Instant::now() < deadline, "reader never waited for scanner");
++            thread::yield_now();
++        }
++        control.cancel();
++        assert!(completed.recv_timeout(Duration::from_secs(5)).unwrap());
++        task.join().unwrap();
++        fs::remove_dir_all(dir.path()).unwrap();
++        drop(feed);
++    }
+ 
+     #[test]
+     fn streamed_source_keeps_worker_cap_and_filters_known_terminal_paths() {
+@@ -601,10 +817,10 @@
+             assert_eq!(bytes.capacity(), if index < 64 { 4 * 17 } else { 3 * 17 });
+             let parallel = reader.parallel.as_ref().unwrap();
+             assert!(parallel.submitted - parallel.consumed <= parallel.ready.len());
+-            if index < 3 {
++            if index < 4 {
+                 assert_eq!(parallel.submitted, 8);
+             }
+-            if index == 3 {
++            if index == 4 {
+                 assert_eq!(parallel.submitted, 12);
+             }
+         }
+--- a/src/sender/scan.rs
++++ b/src/sender/scan.rs
+@@ -85,6 +85,36 @@
+ pub(crate) struct ScanProgress {
+     pub(crate) duration: Duration,
+     pub(crate) discovered_entries: u64,
++}
++
++pub(crate) enum ScanPoll {
++    Entry(ScannedEntry),
++    Pending,
++    Finished,
++}
++
++#[cfg(test)]
++pub(crate) struct ScanTestFeed(crossbeam_channel::Sender<Result<ScanMessage>>);
++
++#[cfg(test)]
++impl ScanTestFeed {
++    pub(crate) fn entries(&self, entries: Vec<ScannedEntry>) {
++        self.0
++            .send(Ok(ScanMessage::Batch(
++                entries
++                    .into_iter()
++                    .map(|entry| ScanItem::Entry(entry, false))
++                    .collect(),
++                Duration::ZERO,
++            )))
++            .unwrap();
++    }
++
++    pub(crate) fn finish(&self, result: Result<()>) {
++        self.0
++            .send(result.map(|()| ScanMessage::Finished(Duration::ZERO)))
++            .unwrap();
++    }
+ }
+ 
+ enum ScanItem {
+@@ -115,6 +145,25 @@
+ }
+ 
+ impl StreamingScan {
++    #[cfg(test)]
++    pub(crate) fn test_channel(control: Option<SessionControl>) -> (Self, ScanTestFeed) {
++        let (sender, messages) = bounded(SCAN_QUEUE_BATCHES);
++        (
++            Self {
++                messages: Some(messages),
++                worker: None,
++                cancelled: Arc::new(AtomicBool::new(false)),
++                control,
++                batch: Vec::new().into_iter(),
++                skipped: Vec::new(),
++                progress: ScanProgress::default(),
++                finished: false,
++                failed: false,
++            },
++            ScanTestFeed(sender),
++        )
++    }
++
+     pub(crate) fn new(root: &Path) -> Result<Self> {
+         Self::with_workers(root, scan_worker_count())
+     }
+@@ -199,20 +248,32 @@
+         self.next_entry_filtered(true)
+     }
+ 
++    pub(crate) fn poll_pending_entry(&mut self) -> Result<ScanPoll> {
++        self.poll_entry_filtered(true, false)
++    }
++
+     pub(crate) fn cancellation_flag(&self) -> Arc<AtomicBool> {
+         Arc::clone(&self.cancelled)
+     }
+ 
+     fn next_entry_filtered(&mut self, pending_only: bool) -> Result<Option<ScannedEntry>> {
++        match self.poll_entry_filtered(pending_only, true)? {
++            ScanPoll::Entry(entry) => Ok(Some(entry)),
++            ScanPoll::Finished => Ok(None),
++            ScanPoll::Pending => unreachable!("blocking scanner returned pending"),
++        }
++    }
++
++    fn poll_entry_filtered(&mut self, pending_only: bool, wait: bool) -> Result<ScanPoll> {
+         anyhow::ensure!(!self.failed, "source scan has already failed");
+-        let result = self.next_entry_inner(pending_only);
++        let result = self.next_entry_inner(pending_only, wait);
+         if result.is_err() {
+             self.failed = true;
+         }
+         result
+     }
+ 
+-    fn next_entry_inner(&mut self, pending_only: bool) -> Result<Option<ScannedEntry>> {
++    fn next_entry_inner(&mut self, pending_only: bool, wait: bool) -> Result<ScanPoll> {
+         loop {
+             super::check_control(self.control.as_ref())?;
+             // Planner может ждать следующий pending entry среди длинного хвоста
+@@ -233,7 +294,7 @@
+                         if pending_only && suppressed {
+                             continue;
+                         }
+-                        return Ok(Some(entry));
++                        return Ok(ScanPoll::Entry(entry));
+                     }
+                     ScanItem::Skipped(skipped) => self.skipped.push(skipped),
+                     ScanItem::Excluded(skipped, filesystem) => {
+@@ -248,15 +309,26 @@
+                 continue;
+             }
+             if self.finished {
+-                return Ok(None);
++                return Ok(ScanPoll::Finished);
+             }
+             let messages = self.messages.as_ref().unwrap();
+-            let _waiting = progress::stage(
+-                self.control.as_ref(),
+-                PipelineStage::Plan,
+-                PipelineState::WaitingScan,
+-            );
+-            let message = if self.control.is_some() {
++            let _waiting = wait.then(|| {
++                progress::stage(
++                    self.control.as_ref(),
++                    PipelineStage::Plan,
++                    PipelineState::WaitingScan,
++                )
++            });
++            let message = if !wait {
++                match messages.try_recv() {
++                    Ok(message) => message?,
++                    Err(crossbeam_channel::TryRecvError::Empty) => return Ok(ScanPoll::Pending),
++                    Err(error) => {
++                        return Err(error)
++                            .context("source scanner stopped before completing the tree");
++                    }
++                }
++            } else if self.control.is_some() {
+                 loop {
+                     super::check_control(self.control.as_ref())?;
+                     anyhow::ensure!(
+@@ -404,6 +476,52 @@
+     use crate::tests::TestDir;
+ 
+     #[test]
++    fn nonblocking_scan_distinguishes_pending_and_preserves_filtered_ordinals() {
++        let (mut scan, feed) = StreamingScan::test_channel(None);
++        assert!(matches!(
++            scan.poll_pending_entry().unwrap(),
++            ScanPoll::Pending
++        ));
++        let make_entry = |name: &str| ScannedEntry {
++            work_ordinal: 0,
++            abs_path: PathBuf::from(name),
++            relative_path: name.to_owned(),
++            kind: ScannedEntryKind::Regular,
++        };
++        let skipped = excluded_directory_entry("ignored".into());
++        feed.0
++            .send(Ok(ScanMessage::Batch(
++                vec![
++                    ScanItem::Entry(make_entry("suppressed"), true),
++                    ScanItem::Skipped(skipped.clone()),
++                    ScanItem::Entry(make_entry("visible"), false),
++                ],
++                Duration::from_millis(3),
++            )))
++            .unwrap();
++        let ScanPoll::Entry(entry) = scan.poll_pending_entry().unwrap() else {
++            panic!()
++        };
++        assert_eq!(entry.relative_path, "visible");
++        assert_eq!(entry.work_ordinal, 2);
++        assert_eq!(scan.take_skips(), [skipped]);
++        assert_eq!(scan.progress().duration, Duration::from_millis(3));
++        assert!(matches!(
++            scan.poll_pending_entry().unwrap(),
++            ScanPoll::Pending
++        ));
++        feed.finish(Ok(()));
++        assert!(matches!(
++            scan.poll_pending_entry().unwrap(),
++            ScanPoll::Finished
++        ));
++        assert!(matches!(
++            scan.poll_pending_entry().unwrap(),
++            ScanPoll::Finished
++        ));
++    }
++
++    #[test]
+     fn excluded_subtree_is_pruned_once_in_every_scan_path() {
+         let source = TestDir::new();
+         fs::create_dir_all(source.path().join("a-data")).unwrap();

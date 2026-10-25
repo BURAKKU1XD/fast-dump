@@ -1,0 +1,101 @@
+{
+  "schema_version": 1,
+  "id": "legacy-results-local-experiments-sender-adoption-20261025-measureme-ae28ea3dfed1",
+  "kind": "benchmark",
+  "label": "m3-aa-control-plan-short-4096",
+  "status": "imported",
+  "started_utc": "2026-10-25T16:26:39.907080+00:00",
+  "time_source": "original_file_mtime",
+  "imported_utc": "2026-10-25T16:34:21.599591+00:00",
+  "experiment_path": "results/local/experiments/sender-adoption-20261025/measurements/m3-aa-control-plan-short-4096",
+  "import_sha256": "ae28ea3dfed1c3b3ff1482bf043a270520a4c5119057e0bd0ba61b84d9f6ca9b",
+  "origin": "results/local/experiments/sender-adoption-20261025/measurements",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "binary_sha256": {
+      "before": "44684f86f27212fd2af6149c302cee3ea988417c686441694873d1673c399c21",
+      "after": "44684f86f27212fd2af6149c302cee3ea988417c686441694873d1673c399c21"
+    },
+    "comparison_kind": "A/A",
+    "common_arguments": [
+      "--case",
+      "plan-short-4096",
+      "--iterations",
+      "1024",
+      "--repeats",
+      "1"
+    ],
+    "allocations_diagnostic": false,
+    "repeats": 5,
+    "policy": "Alternating AB/BA; all observations retained; preparation/verification outside timing.",
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "after",
+        "exit_code": 0
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "m3-aa-control-plan-short-4096/samples.csv",
+      "sha256": "ec5c69e208457e9f7469424254fd815aed16277c90ddcef27859c35588022aa2",
+      "bytes": 5795,
+      "saved": "raw/samples.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "m3-aa-control-plan-short-4096/paired-run.json",
+      "sha256": "53beffc1876830beaa4b5edb4a5f72119a48b7dd7cacd1a762d6f74656abe611",
+      "bytes": 20947
+    }
+  ]
+}

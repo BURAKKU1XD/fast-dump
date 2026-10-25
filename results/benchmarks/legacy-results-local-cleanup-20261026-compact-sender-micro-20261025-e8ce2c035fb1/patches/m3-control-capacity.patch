@@ -1,0 +1,377 @@
+--- a/docs/runtime.md
++++ b/docs/runtime.md
+@@ -105,7 +105,9 @@
+ - Bundle plans also obey the `4 MiB` control-body limit. If metadata would
+   exceed it, the next complete entry moves to the next bundle, including for
+   empty files or long paths. A single descriptor that cannot fit causes an
+-  explicit error.
++  explicit error. The planner and wire encoder share the encoded-size calculation.
++  The encoder reserves the exact `BundlePlan` body size after checking the limit,
++  and reserves `36` bytes for each `BundleCommit` body.
+ - Materialized bundles aggregate small tar writes in a `128 KiB` input buffer before
+   zstd; large file slices bypass that buffer. Streamed file bodies feed zstd
+   directly. After each successful entry append, the sender releases its source
+--- a/src/network/protocol/wire.rs
++++ b/src/network/protocol/wire.rs
+@@ -3,6 +3,7 @@
+ mod messages;
+ 
+ use crate::network::network_io;
++use crate::network::protocol::{BundleEntryDescriptor, BundleEntryKind};
+ use anyhow::{Context, Result, bail};
+ use codec::{BodyReader, decode_message, encode_message};
+ pub(crate) use handshake::{
+@@ -15,7 +16,27 @@
+ pub(crate) const VERSION: u16 = 4;
+ pub(crate) const MAX_DATA_CHUNK_BYTES: usize = 4 * 1024 * 1024;
+ pub(crate) const MAX_CONTROL_BODY_BYTES: usize = 4 * 1024 * 1024;
++pub(crate) const BUNDLE_PLAN_FIXED_BODY_BYTES: usize = 44;
+ const DATA_HEADER_BYTES: usize = 13;
++
++pub(crate) fn bundle_entry_wire_bytes(entry: &BundleEntryDescriptor) -> usize {
++    // ordinal + длина пути + kind + size_at_open + best_effort; строки считаем в байтах UTF-8.
++    let bytes = 22_usize.saturating_add(entry.relative_path.len());
++    match &entry.kind {
++        BundleEntryKind::Regular => bytes,
++        BundleEntryKind::Symlink { target } => bytes.saturating_add(4).saturating_add(target.len()),
++    }
++}
++
++pub(crate) fn bundle_plan_body_bytes(
++    entry_descriptor_bytes: usize,
++    last_path_bytes: usize,
++) -> usize {
++    // Общая формула для planner и encoder: attempt_no, поля bundle и повтор последнего пути.
++    BUNDLE_PLAN_FIXED_BODY_BYTES
++        .saturating_add(last_path_bytes)
++        .saturating_add(entry_descriptor_bytes)
++}
+ 
+ #[derive(Debug)]
+ struct Packet {
+--- a/src/network/protocol/wire/codec.rs
++++ b/src/network/protocol/wire/codec.rs
+@@ -1,5 +1,8 @@
+ use super::messages::*;
+-use super::{MAX_DATA_CHUNK_BYTES, Packet};
++use super::{
++    MAX_CONTROL_BODY_BYTES, MAX_DATA_CHUNK_BYTES, Packet, bundle_entry_wire_bytes,
++    bundle_plan_body_bytes,
++};
+ use crate::network::protocol::{
+     BundleCommitDescriptor, BundleEntryDescriptor, BundleEntryKind, BundlePlanDescriptor,
+     ResumeState, SkipReason, SkippedEntry,
+@@ -10,6 +13,7 @@
+ 
+ const MIN_SKIPPED_ENTRY_BYTES: usize = 8 + 1 + 4;
+ const MIN_BUNDLE_ENTRY_BYTES: usize = 8 + 4 + 1 + 8 + 1;
++const BUNDLE_COMMIT_BODY_BYTES: usize = 4 + 4 * 8;
+ 
+ pub(super) struct BodyWriter {
+     pub(super) bytes: Vec<u8>,
+@@ -18,6 +22,12 @@
+ impl BodyWriter {
+     pub(super) fn new() -> Self {
+         Self { bytes: Vec::new() }
++    }
++
++    fn with_capacity(capacity: usize) -> Self {
++        Self {
++            bytes: Vec::with_capacity(capacity),
++        }
+     }
+ 
+     pub(super) fn write_u8(&mut self, value: u8) {
+@@ -284,11 +294,11 @@
+     })
+ }
+ 
+-pub(super) fn write_bundle_plan_descriptor(
++fn write_bundle_plan_descriptor(
+     writer: &mut BodyWriter,
+     descriptor: &BundlePlanDescriptor,
+ ) -> Result<()> {
+-    validate_bundle_plan_descriptor(descriptor)?;
++    // Дескриптор уже проверен в encode_message до резервирования body.
+     writer.write_u64(descriptor.bundle_no);
+     writer.write_u64(descriptor.first_work_ordinal);
+     writer.write_u64(descriptor.last_work_ordinal);
+@@ -404,7 +414,26 @@
+             writer.finish()
+         }
+         Message::BundlePlan(plan) => {
+-            let mut writer = BodyWriter::new();
++            validate_bundle_plan_descriptor(&plan.descriptor)?;
++            let entry_bytes = plan
++                .descriptor
++                .entries
++                .iter()
++                .fold(0_usize, |bytes, entry| {
++                    bytes.saturating_add(bundle_entry_wire_bytes(entry))
++                });
++            let body_bytes =
++                bundle_plan_body_bytes(entry_bytes, plan.descriptor.last_relative_path.len());
++            // Проверяем лимит до allocation: переполнение saturating-суммы также превышает лимит.
++            if body_bytes > MAX_CONTROL_BODY_BYTES {
++                bail!(
++                    "v4 packet body is too large for {:?}: {} > {} bytes",
++                    MessageKind::BundlePlan,
++                    body_bytes,
++                    MAX_CONTROL_BODY_BYTES
++                );
++            }
++            let mut writer = BodyWriter::with_capacity(body_bytes);
+             writer.write_u32(plan.attempt_no);
+             write_bundle_plan_descriptor(&mut writer, &plan.descriptor)?;
+             writer.finish()
+@@ -425,7 +454,7 @@
+             writer.finish()
+         }
+         Message::BundleCommit(commit) => {
+-            let mut writer = BodyWriter::new();
++            let mut writer = BodyWriter::with_capacity(BUNDLE_COMMIT_BODY_BYTES);
+             writer.write_u32(commit.attempt_no);
+             write_bundle_commit_descriptor(&mut writer, commit.descriptor)?;
+             writer.finish()
+@@ -624,3 +653,189 @@
+         }
+     }
+ }
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    fn one_entry_plan(entry: BundleEntryDescriptor) -> BundlePlan {
++        BundlePlan {
++            attempt_no: 3,
++            descriptor: BundlePlanDescriptor {
++                bundle_no: 17,
++                first_work_ordinal: entry.work_ordinal,
++                last_work_ordinal: entry.work_ordinal,
++                last_relative_path: entry.relative_path.clone(),
++                raw_payload_bytes: entry.size_at_open,
++                entries: vec![entry],
++            },
++        }
++    }
++
++    fn unicode_plan() -> BundlePlan {
++        let mut plan = one_entry_plan(BundleEntryDescriptor {
++            work_ordinal: 7,
++            relative_path: "данные/🙂.bin".into(),
++            kind: BundleEntryKind::Regular,
++            size_at_open: 0x0102_0304_0506_0708,
++            best_effort: true,
++        });
++        plan.descriptor.last_work_ordinal = 9;
++        plan.descriptor.last_relative_path = "link/ёж".into();
++        plan.descriptor.entries.push(BundleEntryDescriptor {
++            work_ordinal: 9,
++            relative_path: "link/ёж".into(),
++            kind: BundleEntryKind::Symlink {
++                target: "../цель/🙂".into(),
++            },
++            size_at_open: 0,
++            best_effort: false,
++        });
++        plan
++    }
++
++    #[test]
++    fn reserved_plan_preserves_golden_v4_bytes_for_unicode_and_symlink() {
++        // Фиксированный v4 body проверяет UTF-8 длины, порядок полей и оба вида entry.
++        let expected = b"\x03\x00\x00\x00\x11\x00\x00\x00\x00\x00\x00\x00\x07\x00\x00\x00\
++            \x00\x00\x00\x00\x09\x00\x00\x00\x00\x00\x00\x00\x09\x00\x00\x00\
++            \x6c\x69\x6e\x6b\x2f\xd1\x91\xd0\xb6\x08\x07\x06\x05\x04\x03\x02\
++            \x01\x02\x00\x00\x00\x07\x00\x00\x00\x00\x00\x00\x00\x15\x00\x00\
++            \x00\xd0\xb4\xd0\xb0\xd0\xbd\xd0\xbd\xd1\x8b\xd0\xb5\x2f\xf0\x9f\
++            \x99\x82\x2e\x62\x69\x6e\x01\x08\x07\x06\x05\x04\x03\x02\x01\x01\
++            \x09\x00\x00\x00\x00\x00\x00\x00\x09\x00\x00\x00\x6c\x69\x6e\x6b\
++            \x2f\xd1\x91\xd0\xb6\x02\x10\x00\x00\x00\x2e\x2e\x2f\xd1\x86\xd0\
++            \xb5\xd0\xbb\xd1\x8c\x2f\xf0\x9f\x99\x82\x00\x00\x00\x00\x00\x00\
++            \x00\x00\x00";
++        let message = Message::BundlePlan(unicode_plan());
++        let (kind, body) = encode_message(&message).unwrap();
++        assert_eq!(kind, MessageKind::BundlePlan);
++        assert_eq!(body.as_slice(), expected.as_slice());
++        assert_eq!(body.capacity(), expected.len());
++        assert_eq!(decode_message(Packet { kind, body }).unwrap(), message);
++    }
++
++    #[test]
++    fn reserved_commit_preserves_golden_v4_bytes_and_36_byte_capacity() {
++        let message = Message::BundleCommit(BundleCommit {
++            attempt_no: 3,
++            descriptor: BundleCommitDescriptor {
++                bundle_no: 17,
++                tar_payload_bytes: 0x0102_0304_0506_0708,
++                compressed_payload_bytes: 9,
++                compressed_xxh3_64: 0xf1e2_d3c4_b5a6_9788,
++            },
++        });
++        let expected = b"\x03\x00\x00\x00\x11\x00\x00\x00\x00\x00\x00\x00\
++            \x08\x07\x06\x05\x04\x03\x02\x01\x09\x00\x00\x00\x00\x00\x00\x00\
++            \x88\x97\xa6\xb5\xc4\xd3\xe2\xf1";
++        let (kind, body) = encode_message(&message).unwrap();
++        assert_eq!(kind, MessageKind::BundleCommit);
++        assert_eq!(body.as_slice(), expected.as_slice());
++        assert_eq!(body.capacity(), 36);
++        assert_eq!(decode_message(Packet { kind, body }).unwrap(), message);
++    }
++
++    #[test]
++    fn reserved_plan_accepts_exact_limit_and_rejects_one_byte_larger_symlink() {
++        let path = "link/🙂";
++        let target_bytes = MAX_CONTROL_BODY_BYTES - 44 - 22 - 4 - 2 * path.len();
++        let target = "я".repeat(target_bytes / 2);
++        let mut plan = one_entry_plan(BundleEntryDescriptor {
++            work_ordinal: 1,
++            relative_path: path.into(),
++            kind: BundleEntryKind::Symlink { target },
++            size_at_open: 0,
++            best_effort: false,
++        });
++        let message = Message::BundlePlan(plan.clone());
++        let (kind, body) = encode_message(&message).unwrap();
++        assert_eq!(body.len(), MAX_CONTROL_BODY_BYTES);
++        assert_eq!(body.capacity(), MAX_CONTROL_BODY_BYTES);
++        assert_eq!(decode_message(Packet { kind, body }).unwrap(), message);
++
++        let BundleEntryKind::Symlink { target } = &mut plan.descriptor.entries[0].kind else {
++            unreachable!();
++        };
++        target.push('x');
++        let mut packet = Vec::new();
++        let error =
++            super::super::write_message(&mut packet, &Message::BundlePlan(plan)).unwrap_err();
++        assert!(packet.is_empty());
++        assert_eq!(
++            error.to_string(),
++            format!(
++                "v4 packet body is too large for BundlePlan: {} > {} bytes",
++                MAX_CONTROL_BODY_BYTES + 1,
++                MAX_CONTROL_BODY_BYTES
++            )
++        );
++    }
++
++    #[test]
++    fn reserved_plan_preserves_descriptor_validation() {
++        for invalid_field in 0..5 {
++            let mut plan = unicode_plan();
++            let expected = match invalid_field {
++                0 => {
++                    plan.descriptor.bundle_no = 0;
++                    "bundle_no must be at least 1"
++                }
++                1 => {
++                    plan.descriptor.entries.clear();
++                    "must contain at least one entry"
++                }
++                2 => {
++                    plan.descriptor.first_work_ordinal += 1;
++                    "first_work_ordinal does not match"
++                }
++                3 => {
++                    plan.descriptor.last_work_ordinal += 1;
++                    "last_work_ordinal does not match"
++                }
++                _ => {
++                    plan.descriptor.last_relative_path.push('x');
++                    "last_relative_path does not match"
++                }
++            };
++            let error = encode_message(&Message::BundlePlan(plan)).unwrap_err();
++            assert!(error.to_string().contains(expected), "{error:#}");
++        }
++    }
++
++    #[test]
++    fn reserved_commit_preserves_descriptor_validation() {
++        for descriptor in [
++            BundleCommitDescriptor {
++                bundle_no: 0,
++                tar_payload_bytes: 1024,
++                compressed_payload_bytes: 1,
++                compressed_xxh3_64: 0,
++            },
++            BundleCommitDescriptor {
++                bundle_no: 1,
++                tar_payload_bytes: 1024,
++                compressed_payload_bytes: 0,
++                compressed_xxh3_64: 0,
++            },
++        ] {
++            let expected = validate_bundle_commit_descriptor(&descriptor)
++                .unwrap_err()
++                .to_string();
++            let error = encode_message(&Message::BundleCommit(BundleCommit {
++                attempt_no: 3,
++                descriptor,
++            }))
++            .unwrap_err();
++            assert_eq!(error.to_string(), expected);
++        }
++    }
++
++    #[test]
++    fn body_size_overflow_cannot_wrap_below_control_limit() {
++        assert_eq!(bundle_plan_body_bytes(usize::MAX, 0), usize::MAX);
++        assert_eq!(bundle_plan_body_bytes(0, usize::MAX), usize::MAX);
++        assert_eq!(bundle_plan_body_bytes(usize::MAX, usize::MAX), usize::MAX);
++        assert!(bundle_plan_body_bytes(usize::MAX, 0) > MAX_CONTROL_BODY_BYTES);
++    }
++}
+--- a/src/sender/plan.rs
++++ b/src/sender/plan.rs
+@@ -8,11 +8,15 @@
+ #[cfg(test)]
+ use xxhash_rust::xxh3::xxh3_64;
+ 
+-use crate::network::protocol::wire::MAX_CONTROL_BODY_BYTES;
+ #[cfg(test)]
+-use crate::network::protocol::{BundleDescriptor, PreparedBundle};
++use crate::network::protocol::wire::BUNDLE_PLAN_FIXED_BODY_BYTES;
++use crate::network::protocol::wire::{
++    MAX_CONTROL_BODY_BYTES, bundle_entry_wire_bytes, bundle_plan_body_bytes,
++};
++#[cfg(test)]
++use crate::network::protocol::{BundleDescriptor, BundleEntryKind, PreparedBundle};
+ use crate::network::protocol::{
+-    BundleEntryDescriptor, BundleEntryKind, BundlePlanDescriptor, ResumeState, SkippedEntry,
++    BundleEntryDescriptor, BundlePlanDescriptor, ResumeState, SkippedEntry,
+ };
+ use crate::profile::StageProfile;
+ 
+@@ -158,7 +162,6 @@
+ }
+ 
+ const FIRST_BUNDLE_TARGET_BYTES: usize = 4 * 1024 * 1024;
+-const BUNDLE_PLAN_FIXED_BODY_BYTES: usize = 44;
+ 
+ #[derive(Default)]
+ struct BundleBudget {
+@@ -184,22 +187,6 @@
+         self.entry_descriptor_bytes = descriptor_bytes;
+         Ok(true)
+     }
+-}
+-
+-fn bundle_entry_wire_bytes(entry: &BundleEntryDescriptor) -> usize {
+-    // ordinal + длина пути + kind + size_at_open + best_effort; строки считаем в байтах UTF-8.
+-    let bytes = 22_usize.saturating_add(entry.relative_path.len());
+-    match &entry.kind {
+-        BundleEntryKind::Regular => bytes,
+-        BundleEntryKind::Symlink { target } => bytes.saturating_add(4).saturating_add(target.len()),
+-    }
+-}
+-
+-fn bundle_plan_body_bytes(entry_descriptor_bytes: usize, last_path_bytes: usize) -> usize {
+-    // В body входят attempt_no, поля bundle и повтор последнего пути; packet header сюда не входит.
+-    BUNDLE_PLAN_FIXED_BODY_BYTES
+-        .saturating_add(last_path_bytes)
+-        .saturating_add(entry_descriptor_bytes)
+ }
+ 
+ fn validate_single_entry_control_size(entry: &BundleEntryDescriptor) -> Result<()> {

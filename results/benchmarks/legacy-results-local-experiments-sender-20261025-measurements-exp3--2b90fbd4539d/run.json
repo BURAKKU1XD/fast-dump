@@ -1,0 +1,145 @@
+{
+  "schema_version": 1,
+  "id": "legacy-results-local-experiments-sender-20261025-measurements-exp3--2b90fbd4539d",
+  "kind": "benchmark",
+  "label": "exp3-startup-confirm",
+  "status": "imported",
+  "started_utc": "2026-10-25T12:44:24.359541+00:00",
+  "time_source": "original_file_mtime",
+  "imported_utc": "2026-10-25T12:47:09.797552+00:00",
+  "experiment_path": "results/local/experiments/sender-20261025/measurements/exp3-startup-confirm",
+  "import_sha256": "2b90fbd4539dc6e81438282c7c7f61b5507978398e1dbb24b9d8486aeda08b73",
+  "origin": "results/local/experiments/sender-20261025/measurements",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "binary_sha256": {
+      "before": "6a7f3a02b327c98f814c1b8406411dde2b030931cd2b52d86d1f82403fe2d011",
+      "after": "3bbf9615280556de7cad5fc6bcc6b66ffc65029c2c094de03c6fb55ed2093659"
+    },
+    "comparison_kind": "A/B",
+    "requested_readers": {
+      "before": 8,
+      "after": 8
+    },
+    "common_arguments": [
+      "--repeats",
+      "1",
+      "--shuffle-scenarios",
+      "--shuffle-seed",
+      "91",
+      "--source",
+      "E:\\projects\\cool_project\\fast-dump\\results\\local\\experiments\\sender-20261025\\fixtures\\startup-tree",
+      "--network-profile",
+      "loopback-localhost",
+      "--threads",
+      "4",
+      "--frames",
+      "64",
+      "--buffers",
+      "1024",
+      "--executor",
+      "default"
+    ],
+    "repeats_per_side": 5,
+    "policy": "AB then BA alternating; all samples retained; no automatic warmup or trimming",
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "after",
+        "exit_code": 0
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "exp3-startup-confirm/before/run.log",
+      "sha256": "21ef50e25f87a61818a1958f68b234375f79131d6efc4ce2ff52ae4627c34e70",
+      "bytes": 17189,
+      "extracted_sha256": "fd60de4f37dfd020a54839606d9ba842f7c006947c37561a29d5f2176ed52ef9",
+      "saved": "raw/before/resource_samples.csv"
+    },
+    {
+      "source": "exp3-startup-confirm/before/results_raw.csv",
+      "sha256": "5e559758eff94649f4c205b515c6319dffc949b66bb6b44f2e2d49255e4f64fc",
+      "bytes": 4297,
+      "saved": "raw/before/results_raw.csv"
+    },
+    {
+      "source": "exp3-startup-confirm/after/run.log",
+      "sha256": "7085f21801eaf4ce9bb53bc25a0e09d8c0d7227c3a9f935d3dd87d8351e57a31",
+      "bytes": 17175,
+      "extracted_sha256": "0c96a4fa8d3130b2576faa52288cc0beebbc60784c74c2eedbe13057d46baf28",
+      "saved": "raw/after/resource_samples.csv"
+    },
+    {
+      "source": "exp3-startup-confirm/after/results_raw.csv",
+      "sha256": "5322ec54facfdbe8fff81b46f5e2b9f02d199fb9961c5bdb0f3c317f9f50f7bb",
+      "bytes": 4302,
+      "saved": "raw/after/results_raw.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "exp3-startup-confirm/paired-run.json",
+      "sha256": "b262aafcc30ccac6720bd9a02165ae158b2fc2ea69f12f65a952c3b7464c04c1",
+      "bytes": 10637
+    },
+    {
+      "source": "exp3-startup-confirm/before/run.log",
+      "sha256": "21ef50e25f87a61818a1958f68b234375f79131d6efc4ce2ff52ae4627c34e70",
+      "bytes": 17189
+    },
+    {
+      "source": "exp3-startup-confirm/after/run.log",
+      "sha256": "7085f21801eaf4ce9bb53bc25a0e09d8c0d7227c3a9f935d3dd87d8351e57a31",
+      "bytes": 17175
+    }
+  ]
+}

@@ -1,0 +1,145 @@
+{
+  "schema_version": 1,
+  "id": "legacy-results-local-experiments-sender-adoption-20261025-measureme-0339b5925e06",
+  "kind": "benchmark",
+  "label": "m2-ab-e2e-manySmallFiles",
+  "status": "imported",
+  "started_utc": "2026-10-25T16:23:05.260415+00:00",
+  "time_source": "original_file_mtime",
+  "imported_utc": "2026-10-25T16:34:21.556825+00:00",
+  "experiment_path": "results/local/experiments/sender-adoption-20261025/measurements/m2-ab-e2e-manySmallFiles",
+  "import_sha256": "0339b5925e0664408b06e5c23c17579a3d693badf5a2f34839f1a21f57d28de1",
+  "origin": "results/local/experiments/sender-adoption-20261025/measurements",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "binary_sha256": {
+      "before": "13ef6769cc479141308fca41ffedd78bcca8cb6ea8f450a85018b965a1f1f963",
+      "after": "fa2b6ed72135d7e9260c670103c90dea91028d255ed8cad9c663bb15eb00822f"
+    },
+    "comparison_kind": "A/B",
+    "requested_readers": {
+      "before": 8,
+      "after": 8
+    },
+    "common_arguments": [
+      "--repeats",
+      "1",
+      "--shuffle-scenarios",
+      "--shuffle-seed",
+      "91",
+      "--source",
+      "E:\\projects\\cool_project\\fast-dump\\results\\local\\experiments\\sender-20261025\\fixtures\\manySmallFiles",
+      "--network-profile",
+      "loopback-localhost",
+      "--threads",
+      "4",
+      "--frames",
+      "64",
+      "--buffers",
+      "1024",
+      "--executor",
+      "default"
+    ],
+    "repeats_per_side": 5,
+    "policy": "AB then BA alternating; all samples retained; no automatic warmup or trimming",
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "after",
+        "exit_code": 0
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "m2-ab-e2e-manySmallFiles/before/run.log",
+      "sha256": "3c4b6db97ef60270c788ce99721268d44258a05d5e8160ce693e171dfa4a807c",
+      "bytes": 17496,
+      "extracted_sha256": "a051909211338050cf885477abe8884ccb537ded218ecf60d2d95ccd25d995c9",
+      "saved": "raw/before/resource_samples.csv"
+    },
+    {
+      "source": "m2-ab-e2e-manySmallFiles/before/results_raw.csv",
+      "sha256": "e2f28fc9a6ad78bc60a56caf3b34811c05de53da8722059f8e23c26db01e8424",
+      "bytes": 4361,
+      "saved": "raw/before/results_raw.csv"
+    },
+    {
+      "source": "m2-ab-e2e-manySmallFiles/after/run.log",
+      "sha256": "ba02dd011eeeedbf95ddbb1f3e57a01545185815e0519a515cbd34a67d3e021c",
+      "bytes": 17482,
+      "extracted_sha256": "d156a6c49c7fe45dbff6699ca0cd795efc72e6eee8473912b1500d7b0f4c1cc9",
+      "saved": "raw/after/resource_samples.csv"
+    },
+    {
+      "source": "m2-ab-e2e-manySmallFiles/after/results_raw.csv",
+      "sha256": "8a72862ec3a51298b27211db380b6565afd68f1eecba63df5f6860e89bbf20ff",
+      "bytes": 4358,
+      "saved": "raw/after/results_raw.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "m2-ab-e2e-manySmallFiles/paired-run.json",
+      "sha256": "a49304e91a6e137fa4b469b81a48ccf1fec0d3b5eb7074649ef1c9e29b27b6e3",
+      "bytes": 10697
+    },
+    {
+      "source": "m2-ab-e2e-manySmallFiles/before/run.log",
+      "sha256": "3c4b6db97ef60270c788ce99721268d44258a05d5e8160ce693e171dfa4a807c",
+      "bytes": 17496
+    },
+    {
+      "source": "m2-ab-e2e-manySmallFiles/after/run.log",
+      "sha256": "ba02dd011eeeedbf95ddbb1f3e57a01545185815e0519a515cbd34a67d3e021c",
+      "bytes": 17482
+    }
+  ]
+}

@@ -1,0 +1,102 @@
+{
+  "schema_version": 1,
+  "id": "legacy-results-local-experiments-sender-micro-20261025-measurements-51ffa3608f19",
+  "kind": "benchmark",
+  "label": "m3-alloc-plan-long-256",
+  "status": "imported",
+  "started_utc": "2026-10-25T13:49:38.592472+00:00",
+  "time_source": "original_file_mtime",
+  "imported_utc": "2026-10-25T13:57:55.247645+00:00",
+  "experiment_path": "results/local/experiments/sender-micro-20261025/measurements/m3-alloc-plan-long-256",
+  "import_sha256": "51ffa3608f19b87b811389b80eb418fc74ef5ca5d4747aab623ecd038024afd2",
+  "origin": "results/local/experiments/sender-micro-20261025/measurements",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "binary_sha256": {
+      "before": "1ff3d3d38cef144ef69b55c05d3f2657307500efc6e19ccfcb924b3fe64c0d28",
+      "after": "61419853e110b924f56cdd8c0f9fbbf2f4344ed302ef84e23065588b99d4147a"
+    },
+    "comparison_kind": "A/B",
+    "common_arguments": [
+      "--case",
+      "plan-long-256",
+      "--iterations",
+      "128",
+      "--repeats",
+      "1",
+      "--allocations"
+    ],
+    "allocations_diagnostic": true,
+    "repeats": 5,
+    "policy": "Alternating AB/BA; all samples retained; preparation and verification outside timing.",
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "after",
+        "exit_code": 0
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "m3-alloc-plan-long-256/samples.csv",
+      "sha256": "8cbbc8c04c95daeda6db464ab298e60fdcef91fa4a0bb702ac25d04a7571d4d6",
+      "bytes": 4607,
+      "saved": "raw/samples.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "m3-alloc-plan-long-256/paired-run.json",
+      "sha256": "d7dd094b1a320dd4a6127f0b35e107647e67e3c4a0a1bc45d6009edb7a1fc151",
+      "bytes": 20091
+    }
+  ]
+}

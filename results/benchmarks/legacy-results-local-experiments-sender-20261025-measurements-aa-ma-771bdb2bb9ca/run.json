@@ -1,0 +1,145 @@
+{
+  "schema_version": 1,
+  "id": "legacy-results-local-experiments-sender-20261025-measurements-aa-ma-771bdb2bb9ca",
+  "kind": "benchmark",
+  "label": "aa-manySmallFiles",
+  "status": "imported",
+  "started_utc": "2026-10-25T12:39:33.567662+00:00",
+  "time_source": "original_file_mtime",
+  "imported_utc": "2026-10-25T12:47:09.638109+00:00",
+  "experiment_path": "results/local/experiments/sender-20261025/measurements/aa-manySmallFiles",
+  "import_sha256": "771bdb2bb9ca3e9073478a19a4971bb05f13684e6da625825ccb7f42d66c3c11",
+  "origin": "results/local/experiments/sender-20261025/measurements",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "binary_sha256": {
+      "before": "6a7f3a02b327c98f814c1b8406411dde2b030931cd2b52d86d1f82403fe2d011",
+      "after": "6a7f3a02b327c98f814c1b8406411dde2b030931cd2b52d86d1f82403fe2d011"
+    },
+    "comparison_kind": "A/A",
+    "requested_readers": {
+      "before": 8,
+      "after": 8
+    },
+    "common_arguments": [
+      "--repeats",
+      "1",
+      "--shuffle-scenarios",
+      "--shuffle-seed",
+      "91",
+      "--source",
+      "E:\\projects\\cool_project\\fast-dump\\results\\local\\experiments\\sender-20261025\\fixtures\\manySmallFiles",
+      "--network-profile",
+      "loopback-localhost",
+      "--threads",
+      "4",
+      "--frames",
+      "64",
+      "--buffers",
+      "1024",
+      "--executor",
+      "default"
+    ],
+    "repeats_per_side": 5,
+    "policy": "AB then BA alternating; all samples retained; no automatic warmup or trimming",
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "after",
+        "exit_code": 0
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "aa-manySmallFiles/before/run.log",
+      "sha256": "f3e8c52dfcb8d9d48fa3ac4f211e0f950edee4107e091555c615641e7e757816",
+      "bytes": 17257,
+      "extracted_sha256": "c9abfa47635995c07addc34dc1a89495dc9dcc12c6de0bfe5ea9f99ece7a1af2",
+      "saved": "raw/before/resource_samples.csv"
+    },
+    {
+      "source": "aa-manySmallFiles/before/results_raw.csv",
+      "sha256": "1356d74d804512b8d2fe5dbbe2a7c6317fe79fc52d008e3e98715c0e53855e9f",
+      "bytes": 4361,
+      "saved": "raw/before/results_raw.csv"
+    },
+    {
+      "source": "aa-manySmallFiles/after/run.log",
+      "sha256": "85f4736dec2154a26e1aebc3cece0cd5004e01c9221f41edb13b518b0495c8e2",
+      "bytes": 17242,
+      "extracted_sha256": "8507418478ff789ae7750ff2a917b12e037cf0692ae2f6bd5d06b170dd9c667c",
+      "saved": "raw/after/resource_samples.csv"
+    },
+    {
+      "source": "aa-manySmallFiles/after/results_raw.csv",
+      "sha256": "cffa501fec24a2170b1fd5a01c2e4a7b4044d4df7028d114d7786a377789b9e5",
+      "bytes": 4363,
+      "saved": "raw/after/results_raw.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "aa-manySmallFiles/paired-run.json",
+      "sha256": "a98f80fd7ef1a2c80aca17b9382fbb66146314208a121448c996065ca5aebeb2",
+      "bytes": 10612
+    },
+    {
+      "source": "aa-manySmallFiles/before/run.log",
+      "sha256": "f3e8c52dfcb8d9d48fa3ac4f211e0f950edee4107e091555c615641e7e757816",
+      "bytes": 17257
+    },
+    {
+      "source": "aa-manySmallFiles/after/run.log",
+      "sha256": "85f4736dec2154a26e1aebc3cece0cd5004e01c9221f41edb13b518b0495c8e2",
+      "bytes": 17242
+    }
+  ]
+}

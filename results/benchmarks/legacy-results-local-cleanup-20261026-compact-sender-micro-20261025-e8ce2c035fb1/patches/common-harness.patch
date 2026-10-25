@@ -1,0 +1,434 @@
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -45,6 +45,11 @@
+ harness = false
+ required-features = ["bench-internals"]
+ 
++[[bench]]
++name = "control_messages"
++harness = false
++required-features = ["bench-internals"]
++
+ [profile.release]
+ lto = "thin"
+ codegen-units = 1
+--- /dev/null
++++ b/benches/control_messages.rs
+@@ -0,0 +1,119 @@
++use std::io::Write;
++
++use anyhow::{Context, Result, ensure};
++use clap::Parser;
++use fast_dump::network::control_bench::{CASES, measure};
++use fast_dump::sender::file_bench::AllocationHooks;
++
++#[path = "support/run_output.rs"]
++mod run_output;
++
++#[cfg(feature = "bench-allocations")]
++#[path = "support/allocation_counter.rs"]
++mod allocation_counter;
++
++#[cfg(feature = "bench-allocations")]
++#[global_allocator]
++static ALLOCATOR: allocation_counter::CountingAllocator =
++    allocation_counter::CountingAllocator::new(std::alloc::System);
++
++#[cfg(feature = "bench-allocations")]
++fn allocation_hooks() -> AllocationHooks {
++    fn start() {
++        ALLOCATOR.start();
++    }
++    fn stop() -> fast_dump::sender::file_bench::AllocationCounts {
++        ALLOCATOR.stop()
++    }
++    AllocationHooks { start, stop }
++}
++
++#[derive(Parser)]
++#[command(about = "Measure production control encoding with prepared messages and a reusable sink")]
++struct Args {
++    #[arg(long, value_parser = CASES)]
++    case: String,
++    #[arg(long, default_value_t = 1)]
++    iterations: u64,
++    #[arg(long, default_value_t = 1)]
++    repeats: usize,
++    #[arg(long)]
++    allocations: bool,
++    #[arg(long = "bench", hide = true)]
++    _bench: bool,
++}
++
++fn optional(value: Option<u64>) -> String {
++    value.map_or_else(|| "unmeasured".to_owned(), |value| value.to_string())
++}
++
++fn main() -> Result<()> {
++    let args = Args::parse();
++    ensure!(args.repeats > 0, "repeats must be positive");
++    ensure!(args.iterations > 0, "iterations must be positive");
++    let hooks: Option<AllocationHooks> = if args.allocations {
++        #[cfg(feature = "bench-allocations")]
++        {
++            Some(allocation_hooks())
++        }
++        #[cfg(not(feature = "bench-allocations"))]
++        {
++            anyhow::bail!("--allocations requires a separate --features bench-allocations build")
++        }
++    } else {
++        None
++    };
++    let output = run_output::create_run_dir("control-messages")?;
++    let mut log = std::fs::File::create(output.join("run.log"))?;
++    for repeat in 1..=args.repeats {
++        let result = measure(&args.case, args.iterations, hooks)?;
++        let counters = result.counters;
++        let entries = (result.entries as u64)
++            .checked_mul(args.iterations)
++            .context("entry count overflow")?;
++        let bytes = (result.packet_bytes as u64)
++            .checked_mul(args.iterations)
++            .context("packet byte count overflow")?;
++        let line = format!(
++            "[control-perf] stage=control case={} repeat={} iterations={} entries={} bytes={} entries_per_message={} symlinks_per_message={} packet_bytes={} body_bytes={} fingerprint={:016x} elapsed_ns={} cpu_ns={} user_ns={} kernel_ns={} cpu_cycles={} cycle_source={} io_source=unmeasured process_peak_rss_bytes={} allocs={} alloc_bytes={} reallocs={} deallocs={} alloc_successes={} alloc_success_bytes={} realloc_successes={} realloc_success_bytes={} alloc_failures={} realloc_failures={} dealloc_bytes={} zeroed_bytes={} counters_schema=2 scope=control_encode_process interval=iterations_only allocator_instrumented={} allocations_enabled={} verified=true",
++            args.case,
++            repeat,
++            args.iterations,
++            entries,
++            bytes,
++            result.entries,
++            result.symlinks,
++            result.packet_bytes,
++            result.body_bytes,
++            result.fingerprint,
++            counters.elapsed_ns,
++            counters.user_ns + counters.kernel_ns,
++            counters.user_ns,
++            counters.kernel_ns,
++            optional(counters.cpu_cycles),
++            counters.cycle_source,
++            counters.process_peak_rss_bytes,
++            optional(counters.allocations.map(|value| value.allocs)),
++            optional(counters.allocations.map(|value| value.alloc_bytes)),
++            optional(counters.allocations.map(|value| value.reallocs)),
++            optional(counters.allocations.map(|value| value.deallocs)),
++            optional(counters.allocations.map(|value| value.alloc_successes)),
++            optional(counters.allocations.map(|value| value.alloc_success_bytes)),
++            optional(counters.allocations.map(|value| value.realloc_successes)),
++            optional(
++                counters
++                    .allocations
++                    .map(|value| value.realloc_success_bytes)
++            ),
++            optional(counters.allocations.map(|value| value.alloc_failures)),
++            optional(counters.allocations.map(|value| value.realloc_failures)),
++            optional(counters.allocations.map(|value| value.dealloc_bytes)),
++            optional(counters.allocations.map(|value| value.zeroed_bytes)),
++            cfg!(feature = "bench-allocations"),
++            args.allocations,
++        );
++        println!("{line}");
++        writeln!(log, "{line}")?;
++    }
++    Ok(())
++}
+--- a/docs/benchmarks.md
++++ b/docs/benchmarks.md
+@@ -141,6 +141,27 @@
+ overhead are reported without automatic subtraction. Noop has zero entries and
+ bytes, so its normalized values stay unmeasured. Retired instructions, cache
+ events, and branch events are not measured by this harness.
++
++The opt-in `control_messages` microbenchmark measures the production
++`wire::write_message` path into a preallocated, reused memory sink:
++
++```powershell
++cargo bench --bench control_messages --features bench-internals -- --case plan-short-256 --iterations 10000 --repeats 5
++```
++
++Cases are `plan-short-1`, `plan-short-256`, `plan-short-4096`, their `plan-long-*`
++counterparts with long UTF-8 paths, `commit` (36-byte body), and `noop`.
++Every plan includes symlink descriptors. Descriptors and sink capacity are prepared
++before timing; packet length, roundtrip, and final bytes are checked outside it.
++The `[control-perf]` rows report whole-loop wall/CPU/cycle counts and `iterations`;
++divide counts by iterations for per-message values. `entries` and `bytes` are
++totals across the loop; `entries_per_message`, `symlinks_per_message`, packet/body
++sizes, and fingerprint describe one message. CPU covers the process during the
++loop; RSS is lifetime peak. This is serialization plus memory-sink writes, not
++network latency. The no-op loop reports overhead without automatic subtraction.
++Use a separate `bench-allocations` binary with `--allocations` to count allocations;
++uninstrumented `bench-internals` binaries provide timing comparisons. Match case,
++iterations, fingerprint, instrumentation and source/compiler/binary provenance.
+ 
+ Run only the loopback matrix runner:
+ 
+--- /dev/null
++++ b/src/network/control_bench.rs
+@@ -0,0 +1,212 @@
++//! Измерение production control encoding без сокетов и подготовки descriptor в таймере.
++
++use std::hint::black_box;
++use std::io::Cursor;
++
++use anyhow::{Context, Result, bail, ensure};
++use xxhash_rust::xxh3::xxh3_64;
++
++use super::protocol::{
++    BundleCommitDescriptor, BundleEntryDescriptor, BundleEntryKind, BundlePlanDescriptor, wire,
++};
++use crate::sender::file_bench::{AllocationHooks, Measurement, measure_cpu_work};
++
++pub const CASES: [&str; 8] = [
++    "plan-short-1",
++    "plan-short-256",
++    "plan-short-4096",
++    "plan-long-1",
++    "plan-long-256",
++    "plan-long-4096",
++    "commit",
++    "noop",
++];
++
++pub struct ControlMeasurement {
++    pub counters: Measurement,
++    pub entries: usize,
++    pub symlinks: usize,
++    pub packet_bytes: usize,
++    pub body_bytes: usize,
++    pub fingerprint: u64,
++}
++
++fn fixture(case: &str) -> Result<Option<wire::Message>> {
++    if case == "noop" {
++        return Ok(None);
++    }
++    if case == "commit" {
++        return Ok(Some(wire::Message::BundleCommit(wire::BundleCommit {
++            attempt_no: 3,
++            descriptor: BundleCommitDescriptor {
++                bundle_no: 7,
++                tar_payload_bytes: 64 * 1024 * 1024,
++                compressed_payload_bytes: 123_456,
++                compressed_xxh3_64: 0x1234_5678_9abc_def0,
++            },
++        })));
++    }
++    ensure!(
++        CASES.contains(&case),
++        "unknown control benchmark case: {case}"
++    );
++    let (_, count) = case.rsplit_once('-').context("case has no entry count")?;
++    let count = count.parse::<usize>()?;
++    let long = case.starts_with("plan-long-");
++    let prefix = "длинный-каталог/".repeat(8);
++    let mut entries = Vec::with_capacity(count);
++    let mut raw_payload_bytes = 0;
++    for index in 0..count {
++        let relative_path = if long {
++            format!("{prefix}файл-{index:04}-😀.bin")
++        } else {
++            format!("dir/file-{index:04}.bin")
++        };
++        let symlink = index.is_multiple_of(8);
++        let size_at_open = if symlink { 0 } else { 1024 + index as u64 };
++        raw_payload_bytes += size_at_open;
++        entries.push(BundleEntryDescriptor {
++            work_ordinal: index as u64 + 1,
++            relative_path,
++            kind: if symlink {
++                BundleEntryKind::Symlink {
++                    target: if long {
++                        format!("../{prefix}цель-{index:04}-😀.bin")
++                    } else {
++                        format!("../target-{index:04}.bin")
++                    },
++                }
++            } else {
++                BundleEntryKind::Regular
++            },
++            size_at_open,
++            best_effort: false,
++        });
++    }
++    Ok(Some(wire::Message::BundlePlan(wire::BundlePlan {
++        attempt_no: 3,
++        descriptor: BundlePlanDescriptor {
++            bundle_no: 7,
++            first_work_ordinal: 1,
++            last_work_ordinal: count as u64,
++            last_relative_path: entries.last().unwrap().relative_path.clone(),
++            entries,
++            raw_payload_bytes,
++        },
++    })))
++}
++
++fn expected_layout(message: &wire::Message) -> Result<(usize, usize, usize)> {
++    match message {
++        wire::Message::BundleCommit(_) => Ok((0, 0, 36)),
++        wire::Message::BundlePlan(plan) => {
++            let descriptor = &plan.descriptor;
++            let mut body_bytes = 44 + descriptor.last_relative_path.len();
++            let mut symlinks = 0;
++            for entry in &descriptor.entries {
++                body_bytes += 22 + entry.relative_path.len();
++                if let BundleEntryKind::Symlink { target } = &entry.kind {
++                    body_bytes += 4 + target.len();
++                    symlinks += 1;
++                }
++            }
++            Ok((descriptor.entries.len(), symlinks, body_bytes))
++        }
++        _ => bail!("unexpected benchmark message"),
++    }
++}
++
++pub fn measure(
++    case: &str,
++    iterations: u64,
++    hooks: Option<AllocationHooks>,
++) -> Result<ControlMeasurement> {
++    ensure!(iterations > 0, "iterations must be positive");
++    let message = fixture(case)?;
++    let mut expected = Vec::new();
++    let (entries, symlinks, body_bytes) = if let Some(message) = &message {
++        wire::write_message(&mut expected, message)?;
++        let layout = expected_layout(message)?;
++        ensure!(
++            layout.2 <= wire::MAX_CONTROL_BODY_BYTES,
++            "fixture exceeds control body limit"
++        );
++        ensure!(
++            expected.len() == 12 + layout.2,
++            "unexpected encoded packet length"
++        );
++        let mut input = Cursor::new(expected.as_slice());
++        ensure!(
++            wire::read_message(&mut input)? == *message,
++            "control fixture roundtrip differs"
++        );
++        ensure!(
++            input.position() as usize == expected.len(),
++            "unconsumed control bytes"
++        );
++        layout
++    } else {
++        (0, 0, 0)
++    };
++    // Sink выделяется один раз до таймера. Его clear не освобождает capacity;
++    // black_box на каждом пакете не даёт удалить записи промежуточных итераций.
++    let mut sink = Vec::with_capacity(expected.len());
++    let capacity = sink.capacity();
++    let (_, counters) = measure_cpu_work(hooks, || {
++        if let Some(message) = &message {
++            for _ in 0..iterations {
++                sink.clear();
++                wire::write_message(&mut sink, black_box(message))?;
++                black_box(sink.as_slice());
++            }
++        } else {
++            for _ in 0..iterations {
++                sink.clear();
++                black_box(sink.as_slice());
++            }
++        }
++        Ok(())
++    })?;
++    ensure!(
++        sink == expected,
++        "measured control bytes differ from validated fixture"
++    );
++    ensure!(
++        sink.capacity() == capacity,
++        "benchmark sink grew during measurement"
++    );
++    Ok(ControlMeasurement {
++        counters,
++        entries,
++        symlinks,
++        packet_bytes: expected.len(),
++        body_bytes,
++        fingerprint: xxh3_64(&expected),
++    })
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn every_control_fixture_roundtrips_and_preserves_reused_sink() {
++        for case in CASES {
++            let result = measure(case, 3, None).unwrap();
++            if case == "commit" {
++                assert_eq!((result.body_bytes, result.packet_bytes), (36, 48));
++            } else if case == "noop" {
++                assert_eq!(result.packet_bytes, 0);
++            } else {
++                assert!(result.symlinks > 0);
++                assert!(result.body_bytes <= wire::MAX_CONTROL_BODY_BYTES);
++            }
++        }
++    }
++
++    #[test]
++    fn control_measurement_rejects_invalid_case_and_zero_iterations() {
++        assert!(measure("unknown", 1, None).is_err());
++        assert!(measure("commit", 0, None).is_err());
++    }
++}
+--- a/src/network/mod.rs
++++ b/src/network/mod.rs
+@@ -1,3 +1,6 @@
++#[cfg(feature = "bench-internals")]
++#[doc(hidden)]
++pub mod control_bench;
+ pub mod protocol;
+ pub mod transport;
+ 
+--- a/src/sender/file_bench.rs
++++ b/src/sender/file_bench.rs
+@@ -151,6 +151,41 @@
+             allocations,
+         },
+     ))
++}
++
++pub(crate) fn measure_cpu_work<T>(
++    hooks: Option<AllocationHooks>,
++    work: impl FnOnce() -> Result<T>,
++) -> Result<(T, Measurement)> {
++    // Микробенч control использует те же OS snapshots, но не включает подготовку
++    // и освобождение fixture. Счётчики I/O этой обёрткой не публикуются.
++    let (result, interval) = timed(hooks, work)?;
++    let measurement = Measurement {
++        elapsed_ns: interval.wall_ns,
++        work_ns: interval.wall_ns,
++        user_ns: interval
++            .after
++            .user_ns
++            .saturating_sub(interval.before.user_ns),
++        kernel_ns: interval
++            .after
++            .kernel_ns
++            .saturating_sub(interval.before.kernel_ns),
++        cpu_cycles: interval
++            .after
++            .cpu_cycles
++            .zip(interval.before.cpu_cycles)
++            .and_then(|(after, before)| after.checked_sub(before)),
++        cycle_source: if cfg!(windows) {
++            "windows-process-cycle-time"
++        } else {
++            "unavailable"
++        },
++        process_peak_rss_bytes: interval.after.peak_rss_bytes,
++        allocations: interval.allocations,
++        ..Measurement::default()
++    };
++    Ok((result, measurement))
+ }
+ 
+ fn sum_delta(

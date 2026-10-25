@@ -1,0 +1,145 @@
+{
+  "schema_version": 1,
+  "id": "legacy-results-local-experiments-sender-20261025-measurements-aa-mi-f3c77bee2d30",
+  "kind": "benchmark",
+  "label": "aa-mixed",
+  "status": "imported",
+  "started_utc": "2026-10-25T12:44:56.952453+00:00",
+  "time_source": "original_file_mtime",
+  "imported_utc": "2026-10-25T12:47:09.663139+00:00",
+  "experiment_path": "results/local/experiments/sender-20261025/measurements/aa-mixed",
+  "import_sha256": "f3c77bee2d30386e9019d04812ce1f147340497b094823823fee099cea70ba5d",
+  "origin": "results/local/experiments/sender-20261025/measurements",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "binary_sha256": {
+      "before": "6a7f3a02b327c98f814c1b8406411dde2b030931cd2b52d86d1f82403fe2d011",
+      "after": "6a7f3a02b327c98f814c1b8406411dde2b030931cd2b52d86d1f82403fe2d011"
+    },
+    "comparison_kind": "A/A",
+    "requested_readers": {
+      "before": 8,
+      "after": 8
+    },
+    "common_arguments": [
+      "--repeats",
+      "1",
+      "--shuffle-scenarios",
+      "--shuffle-seed",
+      "91",
+      "--source",
+      "E:\\projects\\cool_project\\fast-dump\\results\\local\\experiments\\sender-20261025\\fixtures\\mixed",
+      "--network-profile",
+      "loopback-localhost",
+      "--threads",
+      "4",
+      "--frames",
+      "64",
+      "--buffers",
+      "1024",
+      "--executor",
+      "default"
+    ],
+    "repeats_per_side": 5,
+    "policy": "AB then BA alternating; all samples retained; no automatic warmup or trimming",
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "after",
+        "exit_code": 0
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "aa-mixed/before/run.log",
+      "sha256": "2402778ef96535ab1a418496a19c23744fb7e62f7c55d0da7302568903a128ed",
+      "bytes": 17099,
+      "extracted_sha256": "627104c22b8f1f11608e9045925b06a1105a41e93efdf89082074e55b55994dd",
+      "saved": "raw/before/resource_samples.csv"
+    },
+    {
+      "source": "aa-mixed/before/results_raw.csv",
+      "sha256": "a8975cdbcab98099852f5f50311b0599fc633fc0a2375eb3530b9324be98f1c5",
+      "bytes": 4393,
+      "saved": "raw/before/results_raw.csv"
+    },
+    {
+      "source": "aa-mixed/after/run.log",
+      "sha256": "42fa2ede642fa1ec9317f98320f47eb07adae34b50c25dd7baed3b8688bbf600",
+      "bytes": 17085,
+      "extracted_sha256": "a024cda8263d93be5b4baf71b08e37827dfb6d6d84758b11b0ad9de76d53ab1c",
+      "saved": "raw/after/resource_samples.csv"
+    },
+    {
+      "source": "aa-mixed/after/results_raw.csv",
+      "sha256": "e35683065120f66c5f0bd10e23abf4002d4462e99ce4ee487448192c8ecbbfad",
+      "bytes": 4395,
+      "saved": "raw/after/results_raw.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "aa-mixed/paired-run.json",
+      "sha256": "b4a4b4667d14bc6a46049b1237b6788467880b33f138c187ee76f662ba0cb9ed",
+      "bytes": 10423
+    },
+    {
+      "source": "aa-mixed/before/run.log",
+      "sha256": "2402778ef96535ab1a418496a19c23744fb7e62f7c55d0da7302568903a128ed",
+      "bytes": 17099
+    },
+    {
+      "source": "aa-mixed/after/run.log",
+      "sha256": "42fa2ede642fa1ec9317f98320f47eb07adae34b50c25dd7baed3b8688bbf600",
+      "bytes": 17085
+    }
+  ]
+}

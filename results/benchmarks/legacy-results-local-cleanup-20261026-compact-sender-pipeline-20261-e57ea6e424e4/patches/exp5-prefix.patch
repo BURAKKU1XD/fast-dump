@@ -1,0 +1,842 @@
+--- a/docs/runtime.md
++++ b/docs/runtime.md
+@@ -83,18 +83,29 @@
+   actual reader (`64` entries for `16` readers, `704` for `176`). A shared
+   `8 MiB` byte budget bounds prefetched payload pending delivery, independently
+   of the reader count. Workers open up to four adjacent entries per job and
+-  reserve space using their opened-handle sizes. Regular files up to the
+-  configured materialization threshold can be prefetched when their entire
+-  payload fits the remaining budget; a single payload or shared batch buffer
+-  cannot exceed `8 MiB`. Entries retain immutable slices without copying bytes.
++  reserve space using their opened-handle sizes. Regular files up to `8 MiB`
++  and within the configured materialization threshold can be prefetched when
++  their entire payload fits the remaining budget. For files larger than
++  `8 MiB` but still within that threshold, workers prefetch only a `1 MiB`
++  prefix when its reservation fits. The same opened handle stays positioned
++  after the prefix; the planner reads exactly the remaining opened size into
++  a separate suffix allocation. Tar writes the shared prefix and owned suffix
++  as two slices under one entry header, without concatenating or copying them.
++  A shared batch buffer cannot exceed `8 MiB`. Files above the materialization
++  threshold retain their existing streamed path. Entries retain immutable
++  slices without copying bytes.
+   A batch's reservation is released after its last successful prefetched entry
+   is delivered to the planner, or when cancellation drops its buffer. Until
+   delivery completes, already-delivered slices remain charged to that budget.
+   The planner's current materialized bundle is separate from the pending budget;
+   one shared buffer crossing a bundle boundary can additionally retain up to
+   `8 MiB` of already-consumed payload until its remaining entries are released.
+-  When the budget is unavailable, workers return bounded open handles without
+-  waiting. The planner reads those same handles up to the configured bundle-size
++  Prefixes participate in the same batch reservation and ordered delivery;
++  the file's prefix plus suffix counts once toward its materialized size.
++  A short read in either part discards both parts before reopening at byte zero,
++  without resetting the shared three-attempt limit. Appended bytes after open
++  remain ignored. When the budget is unavailable, workers return bounded open
++  handles without waiting. The planner reads those same handles up to the configured bundle-size
+   target and streams larger files. The smaller first-bundle aggregation target
+   does not change this materialization threshold.
+ - Bundle `1` aggregates up to `min(configured target, 4 MiB)`; later bundles
+--- a/src/sender/file_bench.rs
++++ b/src/sender/file_bench.rs
+@@ -416,15 +416,17 @@
+                     "reader size mismatch"
+                 );
+                 let mut source = File::open(&expected.abs_path)?;
+-                for chunk in actual.contents.chunks(buffer.len()) {
+-                    source.read_exact(&mut buffer[..chunk.len()])?;
+-                    ensure!(chunk == &buffer[..chunk.len()], "reader content mismatch");
++                for segment in actual.contents.segments() {
++                    for chunk in segment.chunks(buffer.len()) {
++                        source.read_exact(&mut buffer[..chunk.len()])?;
++                        ensure!(chunk == &buffer[..chunk.len()], "reader content mismatch");
++                    }
++                    hash.update(segment);
+                 }
+                 ensure!(
+                     source.read(&mut buffer[..1])? == 0,
+                     "source grew after reading"
+                 );
+-                hash.update(&actual.contents);
+             }
+             (ScannedEntryKind::Symlink, BundleEntryKind::Symlink { target }) => {
+                 ensure!(
+--- a/src/sender/read.rs
++++ b/src/sender/read.rs
+@@ -6,7 +6,7 @@
+ #[cfg(test)]
+ pub(crate) use prefetch::materialize_batch;
+ pub(crate) use prefetch::{
+-    EntryContents, PrefetchBudget, READ_BATCH_ENTRIES, ReadBatch,
++    EntryContents, PrefetchBudget, PrefetchedPrefix, READ_BATCH_ENTRIES, ReadBatch,
+     materialize_budgeted_batch_controlled,
+ };
+ 
+@@ -42,6 +42,7 @@
+     pub(crate) file: File,
+     pub(crate) forced_short_read_limit: Option<u64>,
+     pub(crate) open_attempts: u32,
++    pub(crate) prefetched_prefix: Option<PrefetchedPrefix>,
+ }
+ 
+ #[derive(Debug)]
+@@ -65,6 +66,9 @@
+     }
+ 
+     pub(crate) fn reopen_for_retry(&mut self) -> Result<ReopenDecision> {
++        // Новый attempt всегда начинается с нуля; prefix принадлежит старому
++        // открытому handle и не должен пережить даже неудачный reopen.
++        self.prefetched_prefix = None;
+         anyhow::ensure!(
+             self.open_attempts < MAX_IMMEDIATE_ATTEMPTS,
+             "file attempt limit exhausted"
+@@ -198,6 +202,7 @@
+                 file,
+                 forced_short_read_limit,
+                 open_attempts: attempt,
++                prefetched_prefix: None,
+             }),
+         });
+     }
+@@ -227,18 +232,33 @@
+     loop {
+         super::check_control(control)?;
+         if entry.descriptor.size_at_open > stream_threshold_bytes {
++            anyhow::ensure!(
++                entry.prefetched_prefix.is_none(),
++                "prefetched prefix cannot enter the streamed path"
++            );
+             return Ok(ReadDecision::Streamed(entry));
+         }
++        let prefix = entry.prefetched_prefix.take();
++        let prefix_bytes = prefix.as_ref().map_or(0, |prefix| prefix.len() as u64);
++        let suffix_bytes = entry
++            .descriptor
++            .size_at_open
++            .checked_sub(prefix_bytes)
++            .context("prefetched prefix exceeds opened file size")?;
+         let forced_limit = entry.take_forced_short_read_limit();
+-        if let Ok(contents) =
+-            read_contents(&mut entry.file, entry.descriptor.size_at_open, forced_limit)
+-        {
++        if let Ok(suffix) = read_contents(&mut entry.file, suffix_bytes, forced_limit) {
++            let contents = match prefix {
++                Some(prefix) => EntryContents::Prefixed { prefix, suffix },
++                None => suffix.into(),
++            };
+             return Ok(ReadDecision::Accepted(MaterializedEntry {
+                 descriptor: entry.descriptor,
+                 mode: entry.mode,
+-                contents: contents.into(),
++                contents,
+             }));
+         }
++        // Хвост и prefix неудачной попытки освобождаем до выделений retry.
++        drop(prefix);
+         if let Some(reason) = reopen_after_short_read(&mut entry, control)? {
+             return Ok(skipped_regular(entry, reason));
+         }
+--- a/src/sender/read/prefetch.rs
++++ b/src/sender/read/prefetch.rs
+@@ -14,6 +14,7 @@
+ 
+ pub(crate) const READ_BATCH_ENTRIES: usize = 4;
+ pub(crate) const PREFETCH_PAYLOAD_BYTES: usize = 8 * 1024 * 1024;
++const PREFETCH_PREFIX_BYTES: usize = 1024 * 1024;
+ 
+ #[derive(Debug)]
+ pub(crate) struct PrefetchBudget {
+@@ -118,19 +119,79 @@
+ }
+ 
+ #[derive(Debug, Clone)]
++pub(crate) struct PrefetchedPrefix {
++    bytes: Arc<SharedContents>,
++    range: Range<usize>,
++}
++
++impl PrefetchedPrefix {
++    pub(crate) fn as_slice(&self) -> &[u8] {
++        &self.bytes[self.range.clone()]
++    }
++
++    pub(crate) fn len(&self) -> usize {
++        self.range.len()
++    }
++
++    pub(crate) fn delivered_from_prefetch(&self) {
++        deliver_shared_slice(&self.bytes, &self.range);
++    }
++}
++
++fn deliver_shared_slice(bytes: &SharedContents, range: &Range<usize>) {
++    if range.end == bytes.len()
++        && let Some(reservation) = &bytes._reservation
++    {
++        reservation.deliver_slab();
++    }
++}
++
++#[derive(Debug, Clone)]
+ pub(crate) enum EntryContents {
+     Owned(Vec<u8>),
+     Shared {
+         bytes: Arc<SharedContents>,
+         range: Range<usize>,
+     },
++    Prefixed {
++        prefix: PrefetchedPrefix,
++        suffix: Vec<u8>,
++    },
+ }
+ 
+ impl EntryContents {
++    pub(crate) fn len(&self) -> usize {
++        match self {
++            Self::Owned(bytes) => bytes.len(),
++            Self::Shared { range, .. } => range.len(),
++            Self::Prefixed { prefix, suffix } => prefix.len() + suffix.len(),
++        }
++    }
++
++    // Два среза сохраняют prefetched bytes в slab: planner выделяет только хвост,
++    // а tar передаёт обе части в zstd без склейки и дополнительного memcpy.
++    pub(crate) fn segments(&self) -> impl Iterator<Item = &[u8]> {
++        let segments = match self {
++            Self::Owned(bytes) => [Some(bytes.as_slice()), None],
++            Self::Shared { bytes, range } => [Some(&bytes[range.clone()]), None],
++            Self::Prefixed { prefix, suffix } => [Some(prefix.as_slice()), Some(suffix.as_slice())],
++        };
++        segments.into_iter().flatten()
++    }
++
++    #[cfg(test)]
++    pub(crate) fn is_empty(&self) -> bool {
++        self.len() == 0
++    }
++
++    // Старые test-oracle работают с заведомо непрерывными fixture. Runtime
++    // получает только segments(), поэтому не может случайно склеить prefix.
++    #[cfg(test)]
+     pub(crate) fn as_slice(&self) -> &[u8] {
+         match self {
+             Self::Owned(bytes) => bytes,
+             Self::Shared { bytes, range } => &bytes[range.clone()],
++            Self::Prefixed { .. } => panic!("segmented payload has no contiguous slice"),
+         }
+     }
+ 
+@@ -138,11 +199,10 @@
+         // Slab заполняется в порядке обхода и выдаётся в том же порядке.
+         // Последний непустой slice освобождает budget одной атомарной операцией
+         // на batch; предыдущим slices не нужен отдельный atomic counter.
+-        if let Self::Shared { bytes, range } = self
+-            && range.end == bytes.len()
+-            && let Some(reservation) = &bytes._reservation
+-        {
+-            reservation.deliver_slab();
++        match self {
++            Self::Shared { bytes, range } => deliver_shared_slice(bytes, range),
++            Self::Prefixed { prefix, .. } => prefix.delivered_from_prefetch(),
++            Self::Owned(_) => {}
+         }
+     }
+ }
+@@ -153,6 +213,7 @@
+     }
+ }
+ 
++#[cfg(test)]
+ impl Deref for EntryContents {
+     type Target = [u8];
+ 
+@@ -161,18 +222,28 @@
+     }
+ }
+ 
++#[cfg(test)]
+ impl AsRef<[u8]> for EntryContents {
+     fn as_ref(&self) -> &[u8] {
+         self.as_slice()
+     }
+ }
+ 
++#[cfg(test)]
+ impl<T: AsRef<[u8]> + ?Sized> PartialEq<T> for EntryContents {
+     fn eq(&self, other: &T) -> bool {
+-        self.as_slice() == other.as_ref()
+-    }
+-}
+-
++        let mut remaining = other.as_ref();
++        for segment in self.segments() {
++            if !remaining.starts_with(segment) {
++                return false;
++            }
++            remaining = &remaining[segment.len()..];
++        }
++        remaining.is_empty()
++    }
++}
++
++#[cfg(test)]
+ impl Eq for EntryContents {}
+ 
+ pub(crate) type ReadBatch = [Option<Result<ReadDecision>>; READ_BATCH_ENTRIES];
+@@ -233,17 +304,27 @@
+     budget: Option<&Arc<PrefetchBudget>>,
+     control: Option<&SessionControl>,
+ ) -> ReadBatch {
+-    struct SharedEntry {
+-        descriptor: BundleEntryDescriptor,
+-        mode: u32,
+-        range: Range<usize>,
++    enum SharedEntry {
++        Whole {
++            descriptor: BundleEntryDescriptor,
++            mode: u32,
++            range: Range<usize>,
++        },
++        Prefix {
++            file: super::StreamedRegularFile,
++            range: Range<usize>,
++        },
+     }
+ 
+     let sizes = std::array::from_fn(|index| match &outcomes[index] {
+         Some(Ok(ReadDecision::Streamed(file)))
+             if file.descriptor.size_at_open <= stream_threshold_bytes =>
+         {
+-            usize::try_from(file.descriptor.size_at_open).unwrap_or(usize::MAX)
++            if budget.is_some() && file.descriptor.size_at_open > PREFETCH_PAYLOAD_BYTES as u64 {
++                PREFETCH_PREFIX_BYTES
++            } else {
++                usize::try_from(file.descriptor.size_at_open).unwrap_or(usize::MAX)
++            }
+         }
+         _ => 0,
+     });
+@@ -279,27 +360,31 @@
+         };
+         let start = bytes.len();
+         let forced_limit = file.take_forced_short_read_limit();
+-        match append_contents(
+-            &mut file.file,
+-            file.descriptor.size_at_open,
+-            forced_limit,
+-            &mut bytes,
+-        ) {
++        let read_bytes = sizes[index] as u64;
++        match append_contents(&mut file.file, read_bytes, forced_limit, &mut bytes) {
+             Ok(range) => {
+-                shared_entries[index] = Some(SharedEntry {
+-                    descriptor: file.descriptor,
+-                    mode: file.mode,
+-                    range,
++                shared_entries[index] = Some(if read_bytes < file.descriptor.size_at_open {
++                    // Handle уже стоит после prefix; test fault limit остаётся
++                    // общим для обеих частей одного attempt, а не начинается заново.
++                    file.forced_short_read_limit =
++                        forced_limit.map(|limit| limit.saturating_sub(read_bytes));
++                    SharedEntry::Prefix { file, range }
++                } else {
++                    SharedEntry::Whole {
++                        descriptor: file.descriptor,
++                        mode: file.mode,
++                        range,
++                    }
+                 });
+             }
+             Err(_) => {
+                 bytes.truncate(start);
+-                reserved -= file.descriptor.size_at_open as usize;
++                reserved -= sizes[index];
+                 // Освобождаем reservation до Owned retry, чтобы оба payload
+                 // одновременно не удваивали ограниченное окно prefetch.
+                 bytes.shrink_to(reserved);
+                 if let Some(reservation) = &mut reservation {
+-                    reservation.release(file.descriptor.size_at_open as usize);
++                    reservation.release(sizes[index]);
+                 }
+                 // Retry не меняет уже заполненный slab. Его новый size_at_open
+                 // может вырасти; редкий повтор читает в отдельный Owned payload.
+@@ -330,14 +415,27 @@
+         });
+         for (outcome, entry) in outcomes.iter_mut().zip(shared_entries) {
+             if let Some(entry) = entry {
+-                *outcome = Some(Ok(ReadDecision::Accepted(MaterializedEntry {
+-                    descriptor: entry.descriptor,
+-                    mode: entry.mode,
+-                    contents: EntryContents::Shared {
+-                        bytes: bytes.clone(),
+-                        range: entry.range,
+-                    },
+-                })));
++                *outcome = Some(Ok(match entry {
++                    SharedEntry::Whole {
++                        descriptor,
++                        mode,
++                        range,
++                    } => ReadDecision::Accepted(MaterializedEntry {
++                        descriptor,
++                        mode,
++                        contents: EntryContents::Shared {
++                            bytes: bytes.clone(),
++                            range,
++                        },
++                    }),
++                    SharedEntry::Prefix { mut file, range } => {
++                        file.prefetched_prefix = Some(PrefetchedPrefix {
++                            bytes: bytes.clone(),
++                            range,
++                        });
++                        ReadDecision::Streamed(file)
++                    }
++                }));
+             }
+         }
+     }
+@@ -358,6 +456,327 @@
+             panic!("batch omitted a readable file");
+         };
+         entry
++    }
++
++    const PREFIX_TEST_BYTES: usize = PREFETCH_PAYLOAD_BYTES + 17;
++    const PREFIX_TEST_TARGET: u64 = 16 * 1024 * 1024;
++
++    fn deferred(outcome: Option<Result<ReadDecision>>) -> super::super::StreamedRegularFile {
++        let ReadDecision::Streamed(file) = outcome.unwrap().unwrap() else {
++            panic!("expected an open file with deferred payload");
++        };
++        file
++    }
++
++    #[test]
++    fn prefix_prefetch_keeps_same_handle_segments_and_archive_across_bundles() {
++        use crate::sender::compress::{BundleCompressor, compress_tar_termination_frame};
++        use crate::sender::tar::build_compressed_bundle_with;
++        use std::io::Read;
++
++        let dir = TestDir::new();
++        for (name, byte) in [("a", 0x31), ("b", 0x52)] {
++            fs::write(dir.path().join(name), vec![byte; PREFIX_TEST_BYTES]).unwrap();
++        }
++        let budget = PrefetchBudget::new();
++        let [first, second, _, _] =
++            materialize_budgeted_batch(scanned_batch(dir.path()), PREFIX_TEST_TARGET, &budget);
++        let first = deferred(first);
++        let second = deferred(second);
++        let prefix = first.prefetched_prefix.as_ref().unwrap();
++        let prefix_pointer = prefix.as_slice().as_ptr();
++        let slab = Arc::downgrade(&prefix.bytes);
++        assert_eq!(prefix.len(), PREFETCH_PREFIX_BYTES);
++        assert_eq!(prefix.bytes.len(), 2 * PREFETCH_PREFIX_BYTES);
++        prefix.delivered_from_prefetch();
++        assert_eq!(
++            budget.available.load(Ordering::Relaxed),
++            PREFETCH_PAYLOAD_BYTES - 2 * PREFETCH_PREFIX_BYTES
++        );
++        fs::OpenOptions::new()
++            .append(true)
++            .open(dir.path().join("a"))
++            .unwrap()
++            .write_all(b"ignored appended tail")
++            .unwrap();
++        let ReadDecision::Accepted(first) =
++            finish_materializing(first, PREFIX_TEST_TARGET).unwrap()
++        else {
++            panic!("prefix was not materialized");
++        };
++        assert_eq!(first.contents.len(), PREFIX_TEST_BYTES);
++        assert_eq!(first.contents.segments().count(), 2);
++        assert_eq!(
++            first.contents.segments().next().unwrap().as_ptr(),
++            prefix_pointer
++        );
++        let mut compressor = BundleCompressor::new(1, 4).unwrap();
++        let (mut frames, _) =
++            build_compressed_bundle_with(std::slice::from_ref(&first), &mut compressor).unwrap();
++        drop(first);
++        assert!(slab.upgrade().is_some());
++        second
++            .prefetched_prefix
++            .as_ref()
++            .unwrap()
++            .delivered_from_prefetch();
++        assert_eq!(
++            budget.available.load(Ordering::Relaxed),
++            PREFETCH_PAYLOAD_BYTES
++        );
++        let ReadDecision::Accepted(second) =
++            finish_materializing(second, PREFIX_TEST_TARGET).unwrap()
++        else {
++            panic!("second prefix was not materialized");
++        };
++        let (tail, _) =
++            build_compressed_bundle_with(std::slice::from_ref(&second), &mut compressor).unwrap();
++        frames.extend_from_slice(&tail);
++        frames.extend_from_slice(&compress_tar_termination_frame(1).unwrap());
++        drop(second);
++        assert!(slab.upgrade().is_none());
++        let decoded = zstd::stream::decode_all(frames.as_slice()).unwrap();
++        let mut archive = tar::Archive::new(decoded.as_slice());
++        let mut entries = archive.entries().unwrap();
++        for (name, byte) in [("a", 0x31), ("b", 0x52)] {
++            let mut entry = entries.next().unwrap().unwrap();
++            assert_eq!(entry.path().unwrap().to_str().unwrap(), name);
++            assert_eq!(entry.size(), PREFIX_TEST_BYTES as u64);
++            let mut restored = Vec::new();
++            entry.read_to_end(&mut restored).unwrap();
++            assert_eq!(restored.len(), PREFIX_TEST_BYTES);
++            assert!(restored.iter().all(|&value| value == byte));
++        }
++        assert!(entries.next().is_none());
++    }
++
++    #[test]
++    fn prefix_prefetch_budget_exhaustion_keeps_untouched_handles_and_reclaims_slabs() {
++        use std::io::Seek;
++
++        let dir = TestDir::new();
++        for index in 0..4 {
++            fs::File::create(dir.path().join(index.to_string()))
++                .unwrap()
++                .set_len(PREFIX_TEST_BYTES as u64)
++                .unwrap();
++        }
++        let budget = PrefetchBudget::new();
++        let first =
++            materialize_budgeted_batch(scanned_batch(dir.path()), PREFIX_TEST_TARGET, &budget);
++        let second =
++            materialize_budgeted_batch(scanned_batch(dir.path()), PREFIX_TEST_TARGET, &budget);
++        assert_eq!(budget.available.load(Ordering::Relaxed), 0);
++        for batch in [&first, &second] {
++            for outcome in batch {
++                let Some(Ok(ReadDecision::Streamed(file))) = outcome else {
++                    panic!()
++                };
++                let prefix = file.prefetched_prefix.as_ref().unwrap();
++                assert_eq!(prefix.len(), PREFETCH_PREFIX_BYTES);
++                assert_eq!(prefix.bytes.len(), 4 * PREFETCH_PREFIX_BYTES);
++            }
++        }
++        let fallback =
++            materialize_budgeted_batch(scanned_batch(dir.path()), PREFIX_TEST_TARGET, &budget);
++        for outcome in fallback {
++            let mut file = deferred(outcome);
++            assert!(file.prefetched_prefix.is_none());
++            assert_eq!(file.open_attempts, 1);
++            assert_eq!(file.file.stream_position().unwrap(), 0);
++        }
++        drop(first);
++        assert_eq!(
++            budget.available.load(Ordering::Relaxed),
++            4 * PREFETCH_PREFIX_BYTES
++        );
++        drop(second);
++        assert_eq!(
++            budget.available.load(Ordering::Relaxed),
++            PREFETCH_PAYLOAD_BYTES
++        );
++    }
++
++    #[test]
++    fn prefix_prefetch_prefix_and_suffix_failures_share_three_attempts() {
++        let _guard = test_hooks::lock();
++        test_hooks::clear();
++        let dir = TestDir::new();
++        let path = dir.path().join("file");
++        fs::File::create(&path)
++            .unwrap()
++            .set_len(PREFIX_TEST_BYTES as u64)
++            .unwrap();
++        for limit in [
++            7,
++            PREFETCH_PREFIX_BYTES as u64,
++            PREFETCH_PREFIX_BYTES as u64 + 7,
++        ] {
++            test_hooks::clear();
++            for limit in [limit, 0, 0, 99] {
++                test_hooks::force_short_read_after_next_open(&path, limit);
++            }
++            let budget = PrefetchBudget::new();
++            let [file, _, _, _] =
++                materialize_budgeted_batch(scanned_batch(dir.path()), PREFIX_TEST_TARGET, &budget);
++            let file = deferred(file);
++            if limit < PREFETCH_PREFIX_BYTES as u64 {
++                assert_eq!(file.open_attempts, 2);
++                assert!(file.prefetched_prefix.is_none());
++            } else {
++                assert_eq!(file.open_attempts, 1);
++                assert_eq!(
++                    file.forced_short_read_limit,
++                    Some(limit - PREFETCH_PREFIX_BYTES as u64)
++                );
++            }
++            let ReadDecision::Skipped(skipped) =
++                finish_materializing(file, PREFIX_TEST_TARGET).unwrap()
++            else {
++                panic!("prefix or suffix restarted the attempt budget");
++            };
++            assert_eq!(skipped.reason, SkipReason::UnstableAfterRetries);
++            assert_eq!(test_hooks::forced_short_read_after_open(&path), Some(99));
++            assert_eq!(
++                budget.available.load(Ordering::Relaxed),
++                PREFETCH_PAYLOAD_BYTES
++            );
++        }
++        test_hooks::clear();
++    }
++
++    #[test]
++    fn prefix_prefetch_short_suffix_discards_old_bytes_before_retry_growth() {
++        use std::io::{Read, Seek};
++
++        let _guard = test_hooks::lock();
++        test_hooks::clear();
++        let dir = TestDir::new();
++        let path = dir.path().join("file");
++        fs::write(&path, vec![0x31; PREFIX_TEST_BYTES]).unwrap();
++        test_hooks::force_short_read_after_next_open(&path, PREFETCH_PREFIX_BYTES as u64 + 3);
++        let budget = PrefetchBudget::new();
++        let [file, _, _, _] =
++            materialize_budgeted_batch(scanned_batch(dir.path()), PREFIX_TEST_TARGET, &budget);
++        let file = deferred(file);
++        let slab = Arc::downgrade(&file.prefetched_prefix.as_ref().unwrap().bytes);
++        fs::write(&path, vec![0x52; PREFIX_TEST_TARGET as usize + 1]).unwrap();
++        let ReadDecision::Streamed(mut file) =
++            finish_materializing(file, PREFIX_TEST_TARGET).unwrap()
++        else {
++            panic!("grown retry must return the streamed file");
++        };
++        assert_eq!(file.open_attempts, 2);
++        assert_eq!(file.descriptor.size_at_open, PREFIX_TEST_TARGET + 1);
++        assert!(file.descriptor.best_effort);
++        assert!(file.prefetched_prefix.is_none());
++        assert!(slab.upgrade().is_none());
++        assert_eq!(file.file.stream_position().unwrap(), 0);
++        let mut byte = [0];
++        file.file.read_exact(&mut byte).unwrap();
++        assert_eq!(byte, [0x52]);
++        assert_eq!(
++            budget.available.load(Ordering::Relaxed),
++            PREFETCH_PAYLOAD_BYTES
++        );
++        test_hooks::clear();
++    }
++
++    #[test]
++    fn prefix_prefetch_cancel_before_suffix_releases_reservation_without_skip() {
++        let dir = TestDir::new();
++        fs::File::create(dir.path().join("file"))
++            .unwrap()
++            .set_len(PREFIX_TEST_BYTES as u64)
++            .unwrap();
++        let budget = PrefetchBudget::new();
++        let [file, _, _, _] =
++            materialize_budgeted_batch(scanned_batch(dir.path()), PREFIX_TEST_TARGET, &budget);
++        let file = deferred(file);
++        let slab = Arc::downgrade(&file.prefetched_prefix.as_ref().unwrap().bytes);
++        let run =
++            crate::runtime::RunControl::new(Some(Arc::new(crate::progress::ProgressHub::new())));
++        let control = run.session(crate::role::Role::Sender, "dump", "peer");
++        control.cancel();
++        let error =
++            finish_materializing_controlled(file, PREFIX_TEST_TARGET, Some(&control)).unwrap_err();
++        assert!(error.downcast_ref::<crate::runtime::Cancelled>().is_some());
++        assert!(slab.upgrade().is_none());
++        assert_eq!(
++            budget.available.load(Ordering::Relaxed),
++            PREFETCH_PAYLOAD_BYTES
++        );
++        assert_eq!(
++            control.progress().unwrap().retries.load(Ordering::Relaxed),
++            0
++        );
++        assert_eq!(control.progress().unwrap().skips.load(Ordering::Relaxed), 0);
++    }
++
++    #[test]
++    fn prefix_prefetch_shrink_discards_prefix_and_restarts_at_zero() {
++        let dir = TestDir::new();
++        let path = dir.path().join("file");
++        fs::write(&path, vec![0x31; PREFIX_TEST_BYTES]).unwrap();
++        let budget = PrefetchBudget::new();
++        let [file, _, _, _] =
++            materialize_budgeted_batch(scanned_batch(dir.path()), PREFIX_TEST_TARGET, &budget);
++        let file = deferred(file);
++        let slab = Arc::downgrade(&file.prefetched_prefix.as_ref().unwrap().bytes);
++        fs::write(&path, b"replacement").unwrap();
++        let ReadDecision::Accepted(entry) = finish_materializing(file, PREFIX_TEST_TARGET).unwrap()
++        else {
++            panic!("shrunk file must restart as a complete small file");
++        };
++        assert_eq!(entry.contents, b"replacement");
++        assert!(matches!(entry.contents, EntryContents::Owned(_)));
++        assert!(entry.descriptor.best_effort);
++        assert_eq!(entry.descriptor.size_at_open, 11);
++        assert!(slab.upgrade().is_none());
++        assert_eq!(
++            budget.available.load(Ordering::Relaxed),
++            PREFETCH_PAYLOAD_BYTES
++        );
++    }
++
++    #[test]
++    fn prefix_prefetch_respects_whole_file_and_streaming_boundaries() {
++        let dir = TestDir::new();
++        let path = dir.path().join("file");
++        for (size, target, prefix) in [
++            (PREFETCH_PAYLOAD_BYTES as u64, PREFIX_TEST_TARGET, false),
++            (
++                PREFETCH_PAYLOAD_BYTES as u64 + 1,
++                PREFETCH_PAYLOAD_BYTES as u64 + 1,
++                true,
++            ),
++            (PREFIX_TEST_TARGET + 1, PREFIX_TEST_TARGET, false),
++        ] {
++            fs::File::create(&path).unwrap().set_len(size).unwrap();
++            let budget = PrefetchBudget::new();
++            let [file, _, _, _] =
++                materialize_budgeted_batch(scanned_batch(dir.path()), target, &budget);
++            match file.unwrap().unwrap() {
++                ReadDecision::Accepted(entry) => {
++                    assert_eq!(size, PREFETCH_PAYLOAD_BYTES as u64);
++                    assert_eq!(entry.contents.len(), size as usize);
++                    assert_eq!(budget.available.load(Ordering::Relaxed), 0);
++                }
++                ReadDecision::Streamed(file) => {
++                    assert_eq!(file.prefetched_prefix.is_some(), prefix);
++                    let reserved = if prefix { PREFETCH_PREFIX_BYTES } else { 0 };
++                    assert_eq!(
++                        budget.available.load(Ordering::Relaxed),
++                        PREFETCH_PAYLOAD_BYTES - reserved
++                    );
++                }
++                ReadDecision::Skipped(_) => panic!("readable boundary fixture was skipped"),
++            }
++            assert_eq!(
++                budget.available.load(Ordering::Relaxed),
++                PREFETCH_PAYLOAD_BYTES
++            );
++        }
+     }
+ 
+     #[test]
+--- a/src/sender/read_ahead.rs
++++ b/src/sender/read_ahead.rs
+@@ -332,8 +332,14 @@
+             }
+         };
+         drop(waiting);
+-        if let ReadDecision::Accepted(entry) = &decision {
+-            entry.contents.delivered_from_prefetch();
++        match &decision {
++            ReadDecision::Accepted(entry) => entry.contents.delivered_from_prefetch(),
++            ReadDecision::Streamed(file) => {
++                if let Some(prefix) = &file.prefetched_prefix {
++                    prefix.delivered_from_prefetch();
++                }
++            }
++            ReadDecision::Skipped(_) => {}
+         }
+         parallel.consumed += 1;
+         self.fill_window()?;
+@@ -654,4 +660,44 @@
+         assert!(matches!(entry.contents, EntryContents::Owned(bytes) if bytes == b"owned"));
+         assert!(reader.next().unwrap().is_none());
+     }
++
++    #[test]
++    fn prefix_prefetch_ordered_reader_materializes_segments_and_keeps_entry_order() {
++        let dir = TestDir::new();
++        const MEDIUM_BYTES: usize = 8 * 1024 * 1024 + 17;
++        for index in 0..65 {
++            let size = if index == 0 || index == 32 {
++                MEDIUM_BYTES
++            } else {
++                17
++            };
++            fs::write(
++                dir.path().join(format!("{index:03}")),
++                vec![index as u8; size],
++            )
++            .unwrap();
++        }
++        let scan = scan_source_tree(dir.path()).unwrap();
++        let mut reader = OrderedReader::new(scan.entries, 2, 16 * 1024 * 1024).unwrap();
++        for index in 0..65 {
++            let Some(ReadDecision::Accepted(entry)) = reader.next().unwrap() else {
++                panic!("ordered prefix result was not materialized");
++            };
++            assert_eq!(entry.descriptor.work_ordinal, index + 1);
++            assert_eq!(entry.descriptor.relative_path, format!("{index:03}"));
++            let prefixed = index == 0 || index == 32;
++            assert_eq!(
++                entry.contents.len(),
++                if prefixed { MEDIUM_BYTES } else { 17 }
++            );
++            assert_eq!(
++                entry.contents.segments().count(),
++                if prefixed { 2 } else { 1 }
++            );
++            for segment in entry.contents.segments() {
++                assert!(segment.iter().all(|&byte| byte == index as u8));
++            }
++        }
++        assert!(reader.next().unwrap().is_none());
++    }
+ }
+--- a/src/sender/stream.rs
++++ b/src/sender/stream.rs
+@@ -765,6 +765,7 @@
+             file,
+             forced_short_read_limit: None,
+             open_attempts: 1,
++            prefetched_prefix: None,
+         };
+         (directory, bytes, streamed)
+     }
+--- a/src/sender/tar.rs
++++ b/src/sender/tar.rs
+@@ -9,6 +9,7 @@
+ use crate::progress::SourceFileGuard;
+ 
+ use super::compress::{BundleCompressor, CompressionOutput, DirectEncoder};
++use super::read::EntryContents;
+ #[cfg(test)]
+ use super::read::MaterializedEntry;
+ 
+@@ -214,7 +215,7 @@
+         &mut self,
+         descriptor: &BundleEntryDescriptor,
+         mode: u32,
+-        contents: &[u8],
++        contents: &EntryContents,
+         progress: Option<&SourceFileGuard<'_>>,
+     ) -> Result<()> {
+         append_materialized_entry(&mut self.writer, descriptor, mode, contents, progress)
+@@ -353,7 +354,7 @@
+     writer: &mut W,
+     descriptor: &BundleEntryDescriptor,
+     mode: u32,
+-    contents: &[u8],
++    contents: &EntryContents,
+     progress: Option<&SourceFileGuard<'_>>,
+ ) -> Result<()> {
+     match &descriptor.kind {
+@@ -367,9 +368,11 @@
+             append_entry_header(writer, &mut header, &descriptor.relative_path, None)?;
+             // Данные уже в памяти: передаём срез кодировщику без промежуточного
+             // буфера io::copy и динамических вызовов Read на каждом блоке.
+-            write_source_payload(writer, contents, progress).with_context(|| {
+-                format!("failed to encode v4 tar entry {}", descriptor.relative_path)
+-            })?;
++            for segment in contents.segments() {
++                write_source_payload(writer, segment, progress).with_context(|| {
++                    format!("failed to encode v4 tar entry {}", descriptor.relative_path)
++                })?;
++            }
+             pad_zeroes(writer, descriptor.size_at_open)?;
+         }
+         BundleEntryKind::Symlink { target } => {

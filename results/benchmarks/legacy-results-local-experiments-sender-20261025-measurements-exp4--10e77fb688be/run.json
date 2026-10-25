@@ -1,0 +1,145 @@
+{
+  "schema_version": 1,
+  "id": "legacy-results-local-experiments-sender-20261025-measurements-exp4--10e77fb688be",
+  "kind": "benchmark",
+  "label": "exp4-big-confirm",
+  "status": "imported",
+  "started_utc": "2026-10-25T12:44:32.573040+00:00",
+  "time_source": "original_file_mtime",
+  "imported_utc": "2026-10-25T12:47:09.828958+00:00",
+  "experiment_path": "results/local/experiments/sender-20261025/measurements/exp4-big-confirm",
+  "import_sha256": "10e77fb688bef3972863d31dbd69223c246a7b5605dbcba028eaceafee4adca2",
+  "origin": "results/local/experiments/sender-20261025/measurements",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "binary_sha256": {
+      "before": "6a7f3a02b327c98f814c1b8406411dde2b030931cd2b52d86d1f82403fe2d011",
+      "after": "b4497b1095a9a21ad500ba0d9c6d7c3d8929e7c06c2531583d0c32d6d805d623"
+    },
+    "comparison_kind": "A/B",
+    "requested_readers": {
+      "before": 8,
+      "after": 8
+    },
+    "common_arguments": [
+      "--repeats",
+      "1",
+      "--shuffle-scenarios",
+      "--shuffle-seed",
+      "91",
+      "--source",
+      "E:\\projects\\cool_project\\fast-dump\\results\\local\\experiments\\sender-20261025\\fixtures\\bigFiles",
+      "--network-profile",
+      "loopback-localhost",
+      "--threads",
+      "4",
+      "--frames",
+      "64",
+      "--buffers",
+      "1024",
+      "--executor",
+      "default"
+    ],
+    "repeats_per_side": 5,
+    "policy": "AB then BA alternating; all samples retained; no automatic warmup or trimming",
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "after",
+        "exit_code": 0
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "exp4-big-confirm/before/run.log",
+      "sha256": "2baee2412ab58cc47efc29d9b8f7b03d903b6946f986cb476c78b8f83808d07e",
+      "bytes": 17129,
+      "extracted_sha256": "dc3c4ea8e96b3e7b8ae600f94171ed0cd4f568a70002df206b316e89197caa38",
+      "saved": "raw/before/resource_samples.csv"
+    },
+    {
+      "source": "exp4-big-confirm/before/results_raw.csv",
+      "sha256": "c1b625e8f69fd7e8815135df583df30c65a30c956c15fb487e5a6df1a57eca62",
+      "bytes": 4307,
+      "saved": "raw/before/results_raw.csv"
+    },
+    {
+      "source": "exp4-big-confirm/after/run.log",
+      "sha256": "744c94ef04556983c6440a856ef06f23ef2da07e641d71bc36b8037563a0f49e",
+      "bytes": 17114,
+      "extracted_sha256": "97439137b1b8f877e57e1b38f969fcc7a4afd571715a039ab1f09752c3bf86cc",
+      "saved": "raw/after/resource_samples.csv"
+    },
+    {
+      "source": "exp4-big-confirm/after/results_raw.csv",
+      "sha256": "789979b1df61657b8212200769a5e94c5078129c57ae828632daf008b38d96e3",
+      "bytes": 4308,
+      "saved": "raw/after/results_raw.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "exp4-big-confirm/paired-run.json",
+      "sha256": "cdfd21802979e2c56a588b8c99b1e9c627e7737edbcf68a07d916878ce16cffb",
+      "bytes": 10588
+    },
+    {
+      "source": "exp4-big-confirm/before/run.log",
+      "sha256": "2baee2412ab58cc47efc29d9b8f7b03d903b6946f986cb476c78b8f83808d07e",
+      "bytes": 17129
+    },
+    {
+      "source": "exp4-big-confirm/after/run.log",
+      "sha256": "744c94ef04556983c6440a856ef06f23ef2da07e641d71bc36b8037563a0f49e",
+      "bytes": 17114
+    }
+  ]
+}

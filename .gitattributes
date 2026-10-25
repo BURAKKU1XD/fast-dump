@@ -1,6 +1,9 @@
 * text=auto eol=lf
 # Сырые измерения сохраняют исходные пробелы и переводы строк для проверки SHA-256.
 /results/**/raw/** -text -whitespace
+# Манифесты и приложения локальных импортов также проверяются по исходному SHA-256.
+/results/*/legacy-results-local-*/** -text -whitespace
+/results/migrations/** -text -whitespace
 *.png binary
 *.jpg binary
 *.gif binary

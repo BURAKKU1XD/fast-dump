@@ -1,0 +1,145 @@
+{
+  "schema_version": 1,
+  "id": "legacy-results-local-experiments-sender-micro2-20261025-measurement-05f1df74d22c",
+  "kind": "benchmark",
+  "label": "counter-e2e-mixed-ab",
+  "status": "imported",
+  "started_utc": "2026-10-25T20:02:05.225129+00:00",
+  "time_source": "original_file_mtime",
+  "imported_utc": "2026-10-25T20:13:00.273138+00:00",
+  "experiment_path": "results/local/experiments/sender-micro2-20261025/measurements/counter-e2e-mixed-ab",
+  "import_sha256": "05f1df74d22c1954f10f9266518d32999880c6ab425e4d9ccb48ac1d100b9094",
+  "origin": "results/local/experiments/sender-micro2-20261025/measurements",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "binary_sha256": {
+      "before": "3ea9a94cde4aa93d5de4573d43746440d192af9ed8a022246ebd9f89f0cbf0a3",
+      "after": "0b7493d2d6e520a3af2253dc13815f0e1f0b25a3cb15c5d3996bbfa8f2ec9bd4"
+    },
+    "comparison_kind": "A/B",
+    "requested_readers": {
+      "before": 8,
+      "after": 8
+    },
+    "common_arguments": [
+      "--repeats",
+      "1",
+      "--shuffle-scenarios",
+      "--shuffle-seed",
+      "91",
+      "--source",
+      "E:\\projects\\cool_project\\fast-dump\\results\\local\\experiments\\sender-20261025\\fixtures\\mixed",
+      "--network-profile",
+      "loopback-localhost",
+      "--threads",
+      "4",
+      "--frames",
+      "64",
+      "--buffers",
+      "1024",
+      "--executor",
+      "default"
+    ],
+    "repeats_per_side": 5,
+    "policy": "AB then BA alternating; all samples retained; no automatic warmup or trimming",
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "after",
+        "exit_code": 0
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "counter-e2e-mixed-ab/before/run.log",
+      "sha256": "16e6d7ec0d8155460cd3dec7127f46312aa0d743b4f75b0c617dfc68e5ac6283",
+      "bytes": 17384,
+      "extracted_sha256": "a81cc083ebbf2bb51932ac290f30e1a75af74d8c1b652d4cdf08b59ac6d91192",
+      "saved": "raw/before/resource_samples.csv"
+    },
+    {
+      "source": "counter-e2e-mixed-ab/before/results_raw.csv",
+      "sha256": "5ace9e44162a4ca8a4cbfcb1eeef201276b9aed034caa1b7a42fde548ade3e85",
+      "bytes": 4393,
+      "saved": "raw/before/results_raw.csv"
+    },
+    {
+      "source": "counter-e2e-mixed-ab/after/run.log",
+      "sha256": "d29176e0192c814e29e2632e6592654b1d6a00b7e7fad1df7667b6d2077e7648",
+      "bytes": 17372,
+      "extracted_sha256": "85377fa2f3dae19f83e58f52d8eedbc7190a289eb23725b3f6e409816200b56e",
+      "saved": "raw/after/resource_samples.csv"
+    },
+    {
+      "source": "counter-e2e-mixed-ab/after/results_raw.csv",
+      "sha256": "1f7514de99b6688ed9fb0b26abb72e18a371519d6bad0b6f1818e2723a857989",
+      "bytes": 4396,
+      "saved": "raw/after/results_raw.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "counter-e2e-mixed-ab/paired-run.json",
+      "sha256": "edee1337a25557618f34a4e66807f90c30aac25f2f75247b72dfaac75b0ac608",
+      "bytes": 10581
+    },
+    {
+      "source": "counter-e2e-mixed-ab/before/run.log",
+      "sha256": "16e6d7ec0d8155460cd3dec7127f46312aa0d743b4f75b0c617dfc68e5ac6283",
+      "bytes": 17384
+    },
+    {
+      "source": "counter-e2e-mixed-ab/after/run.log",
+      "sha256": "d29176e0192c814e29e2632e6592654b1d6a00b7e7fad1df7667b6d2077e7648",
+      "bytes": 17372
+    }
+  ]
+}

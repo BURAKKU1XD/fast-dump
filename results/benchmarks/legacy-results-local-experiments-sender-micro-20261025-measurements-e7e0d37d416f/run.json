@@ -1,0 +1,145 @@
+{
+  "schema_version": 1,
+  "id": "legacy-results-local-experiments-sender-micro-20261025-measurements-e7e0d37d416f",
+  "kind": "benchmark",
+  "label": "m2-subtree-move-e2e-bigFiles",
+  "status": "imported",
+  "started_utc": "2026-10-25T13:53:00.585927+00:00",
+  "time_source": "original_file_mtime",
+  "imported_utc": "2026-10-25T13:57:55.194424+00:00",
+  "experiment_path": "results/local/experiments/sender-micro-20261025/measurements/m2-subtree-move-e2e-bigFiles",
+  "import_sha256": "e7e0d37d416fd825c506413cc23fb701209371942cdc6cdb8d75441ed591456f",
+  "origin": "results/local/experiments/sender-micro-20261025/measurements",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "binary_sha256": {
+      "before": "2ccde76544b70aa323099f8c073af1581c07cee147b2a56e9a16c2b6c1c8fd5f",
+      "after": "ce35312b0ebf5a109690dafd4d5698915fd7ab4c90443e7805c3e559cea294fb"
+    },
+    "comparison_kind": "A/B",
+    "requested_readers": {
+      "before": 8,
+      "after": 8
+    },
+    "common_arguments": [
+      "--repeats",
+      "1",
+      "--shuffle-scenarios",
+      "--shuffle-seed",
+      "91",
+      "--source",
+      "E:\\projects\\cool_project\\fast-dump\\results\\local\\experiments\\sender-20261025\\fixtures\\bigFiles",
+      "--network-profile",
+      "loopback-localhost",
+      "--threads",
+      "4",
+      "--frames",
+      "64",
+      "--buffers",
+      "1024",
+      "--executor",
+      "default"
+    ],
+    "repeats_per_side": 5,
+    "policy": "AB then BA alternating; all samples retained; no automatic warmup or trimming",
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "after",
+        "exit_code": 0
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "m2-subtree-move-e2e-bigFiles/before/run.log",
+      "sha256": "77b254fc49bfcb3cb0bf52f8b031ac103f1580cd5bb8ef6bbf4d0e766cdca3d4",
+      "bytes": 17399,
+      "extracted_sha256": "58b68a3aac0ae1b09d9c6fd1d71bc7bdab63fa4baecb3f43ab9b1f536f0225db",
+      "saved": "raw/before/resource_samples.csv"
+    },
+    {
+      "source": "m2-subtree-move-e2e-bigFiles/before/results_raw.csv",
+      "sha256": "f5db27c02b0ea6603ba6ca052e9f818b8985180fc19d4638fa74bb828ba38125",
+      "bytes": 4306,
+      "saved": "raw/before/results_raw.csv"
+    },
+    {
+      "source": "m2-subtree-move-e2e-bigFiles/after/run.log",
+      "sha256": "6820f29e348fc4fb9841a96c6552b2d01108ef9ee633309d87658718a3663a1e",
+      "bytes": 17383,
+      "extracted_sha256": "17b38794f6521a8c61e0073e0c2403131a34168d6923ce35982ff983fa104a03",
+      "saved": "raw/after/resource_samples.csv"
+    },
+    {
+      "source": "m2-subtree-move-e2e-bigFiles/after/results_raw.csv",
+      "sha256": "a17fc7bd88a75d08b043fb7d4ba90cee3b277b5e80b6f4a9dca9441a99867ec7",
+      "bytes": 4307,
+      "saved": "raw/after/results_raw.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "m2-subtree-move-e2e-bigFiles/paired-run.json",
+      "sha256": "dbb21c5e3f1375264e40ca82da06b4a6129da81df2606c7a2efbd23273e7fb8e",
+      "bytes": 10638
+    },
+    {
+      "source": "m2-subtree-move-e2e-bigFiles/before/run.log",
+      "sha256": "77b254fc49bfcb3cb0bf52f8b031ac103f1580cd5bb8ef6bbf4d0e766cdca3d4",
+      "bytes": 17399
+    },
+    {
+      "source": "m2-subtree-move-e2e-bigFiles/after/run.log",
+      "sha256": "6820f29e348fc4fb9841a96c6552b2d01108ef9ee633309d87658718a3663a1e",
+      "bytes": 17383
+    }
+  ]
+}

@@ -1,0 +1,145 @@
+{
+  "schema_version": 1,
+  "id": "legacy-results-local-experiments-sender-adoption-20261025-measureme-8d94b69857df",
+  "kind": "benchmark",
+  "label": "m2-aa-e2e-mixed",
+  "status": "imported",
+  "started_utc": "2026-10-25T16:23:18.546918+00:00",
+  "time_source": "original_file_mtime",
+  "imported_utc": "2026-10-25T16:34:21.520149+00:00",
+  "experiment_path": "results/local/experiments/sender-adoption-20261025/measurements/m2-aa-e2e-mixed",
+  "import_sha256": "8d94b69857dfa091bdbf71d07af03b0ad78f61db7350877a787b9bc67c77d153",
+  "origin": "results/local/experiments/sender-adoption-20261025/measurements",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "binary_sha256": {
+      "before": "13ef6769cc479141308fca41ffedd78bcca8cb6ea8f450a85018b965a1f1f963",
+      "after": "13ef6769cc479141308fca41ffedd78bcca8cb6ea8f450a85018b965a1f1f963"
+    },
+    "comparison_kind": "A/A",
+    "requested_readers": {
+      "before": 8,
+      "after": 8
+    },
+    "common_arguments": [
+      "--repeats",
+      "1",
+      "--shuffle-scenarios",
+      "--shuffle-seed",
+      "91",
+      "--source",
+      "E:\\projects\\cool_project\\fast-dump\\results\\local\\experiments\\sender-20261025\\fixtures\\mixed",
+      "--network-profile",
+      "loopback-localhost",
+      "--threads",
+      "4",
+      "--frames",
+      "64",
+      "--buffers",
+      "1024",
+      "--executor",
+      "default"
+    ],
+    "repeats_per_side": 5,
+    "policy": "AB then BA alternating; all samples retained; no automatic warmup or trimming",
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "after",
+        "exit_code": 0
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "m2-aa-e2e-mixed/before/run.log",
+      "sha256": "ee17b9981857308ba1ce932d5ca43bb26eb61a7e630e20302c7c7a8d0d7fc5f2",
+      "bytes": 17344,
+      "extracted_sha256": "b023a5f6fb55cedfac3496074691a0d9cadb57f2e541fc55093095cc45c8997b",
+      "saved": "raw/before/resource_samples.csv"
+    },
+    {
+      "source": "m2-aa-e2e-mixed/before/results_raw.csv",
+      "sha256": "67d280f55614404cdef90edd61369603d32ef9cdacae2e82dcf17225a928c733",
+      "bytes": 4394,
+      "saved": "raw/before/results_raw.csv"
+    },
+    {
+      "source": "m2-aa-e2e-mixed/after/run.log",
+      "sha256": "30d9e407831b87bec840843c47fa5b195bb552e4f85c8f83ee00e836e0f52fee",
+      "bytes": 17324,
+      "extracted_sha256": "79ee6b771a86b78f15c16157d16d2c087f8a8e1638996a682a9c655910fbc222",
+      "saved": "raw/after/resource_samples.csv"
+    },
+    {
+      "source": "m2-aa-e2e-mixed/after/results_raw.csv",
+      "sha256": "c1823960a3eacb253cff1184a31cb79ef582c97b1d8d70217ea70ff998b30b81",
+      "bytes": 4394,
+      "saved": "raw/after/results_raw.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "m2-aa-e2e-mixed/paired-run.json",
+      "sha256": "65605359476b62b7f2a0258d9ba0503a48d612ef44c7006563a9d69874350304",
+      "bytes": 10511
+    },
+    {
+      "source": "m2-aa-e2e-mixed/before/run.log",
+      "sha256": "ee17b9981857308ba1ce932d5ca43bb26eb61a7e630e20302c7c7a8d0d7fc5f2",
+      "bytes": 17344
+    },
+    {
+      "source": "m2-aa-e2e-mixed/after/run.log",
+      "sha256": "30d9e407831b87bec840843c47fa5b195bb552e4f85c8f83ee00e836e0f52fee",
+      "bytes": 17324
+    }
+  ]
+}

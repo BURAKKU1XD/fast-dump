@@ -1,0 +1,736 @@
+{
+  "arc": {
+    "enabled": true,
+    "accepted_head": "2a7c8eeeb70f9046a4629168d66d4fc0123f247e",
+    "baseline_name": "accepted-m1-m2",
+    "candidate": "arc",
+    "before": {
+      "source": "../sender-adoption-20261025/sources/m2-bench",
+      "manifest": "../sender-adoption-20261025/m2-bench-source.json",
+      "artifacts": "../sender-adoption-20261025/artifacts/m2-bench",
+      "compiler_manifest": "../sender-adoption-20261025/experiment.json",
+      "reuse_note": "Exact previously measured M1+M2 build inputs with common harness; verified snapshot reused."
+    },
+    "after": {
+      "source": "sources/arc-bench",
+      "manifest": "arc-bench-source.json",
+      "artifacts": "artifacts/arc-bench",
+      "compiler_manifest": "../sender-adoption-20261025/experiment.json"
+    },
+    "groups": [
+      {
+        "id": "read-manySmallFiles",
+        "phase": "screen",
+        "adapter": "file",
+        "stage": "read",
+        "fixture": "manySmallFiles",
+        "executable": "file_pipeline",
+        "scope": "isolated_sender_stage",
+        "arguments": [
+          "--readers",
+          "8"
+        ],
+        "aa_pairs": 5,
+        "ab_pairs": 10,
+        "allocation_pairs": 0
+      }
+    ]
+  },
+  "progress": {
+    "enabled": true,
+    "accepted_head": "2a7c8eeeb70f9046a4629168d66d4fc0123f247e",
+    "baseline_name": "accepted-m1-m2",
+    "candidate": "progress",
+    "before": {
+      "source": "sources/progress-before",
+      "manifest": "progress-before-source.json",
+      "artifacts": "artifacts/progress-before",
+      "compiler_manifest": "checks/windows/progress-before/release/attempt-01/environment.json"
+    },
+    "after": {
+      "source": "sources/progress-bench",
+      "manifest": "progress-bench-source.json",
+      "artifacts": "artifacts/progress-bench",
+      "compiler_manifest": "checks/windows/progress-bench/release/attempt-01/environment.json"
+    },
+    "groups": [
+      {
+        "id": "guard-transition-1m",
+        "phase": "screen",
+        "adapter": "tagged",
+        "stage": "progress-guard",
+        "fixture": "transition",
+        "executable": "progress_guard",
+        "tag": "progress-perf",
+        "scope": "progress_guard_channel_process",
+        "arguments": [
+          "--case",
+          "transition",
+          "--iterations",
+          "1000000",
+          "--repeats",
+          "1"
+        ],
+        "expected": {
+          "stage": "progress-guard",
+          "case": "transition",
+          "iterations": "1000000",
+          "scope": "progress_guard_channel_process",
+          "interval": "iterations_only",
+          "counters_schema": "2"
+        },
+        "aa_pairs": 5,
+        "ab_pairs": 10,
+        "allocation_pairs": 0
+      },
+      {
+        "id": "guard-same-state-1m",
+        "phase": "screen",
+        "adapter": "tagged",
+        "stage": "progress-guard",
+        "fixture": "same-state",
+        "executable": "progress_guard",
+        "tag": "progress-perf",
+        "scope": "progress_guard_channel_process",
+        "arguments": [
+          "--case",
+          "same-state",
+          "--iterations",
+          "1000000",
+          "--repeats",
+          "1"
+        ],
+        "expected": {
+          "stage": "progress-guard",
+          "case": "same-state",
+          "iterations": "1000000",
+          "scope": "progress_guard_channel_process",
+          "interval": "iterations_only",
+          "counters_schema": "2"
+        },
+        "aa_pairs": 5,
+        "ab_pairs": 10,
+        "allocation_pairs": 0
+      },
+      {
+        "id": "guard-none-1m",
+        "phase": "screen",
+        "adapter": "tagged",
+        "stage": "progress-guard",
+        "fixture": "none",
+        "executable": "progress_guard",
+        "tag": "progress-perf",
+        "scope": "progress_guard_channel_process",
+        "arguments": [
+          "--case",
+          "none",
+          "--iterations",
+          "1000000",
+          "--repeats",
+          "1"
+        ],
+        "expected": {
+          "stage": "progress-guard",
+          "case": "none",
+          "iterations": "1000000",
+          "scope": "progress_guard_channel_process",
+          "interval": "iterations_only",
+          "counters_schema": "2"
+        },
+        "aa_pairs": 5,
+        "ab_pairs": 10,
+        "allocation_pairs": 0
+      },
+      {
+        "id": "observed-many-small",
+        "phase": "e2e",
+        "adapter": "tagged",
+        "stage": "observed-e2e",
+        "fixture": "many-small",
+        "executable": "observed_e2e",
+        "tag": "observed-e2e-perf",
+        "scope": "sender_receiver_observer_process",
+        "arguments": [
+          "--fixture",
+          "many-small",
+          "--repeats",
+          "1"
+        ],
+        "expected": {
+          "stage": "observed-e2e",
+          "case": "many-small",
+          "iterations": "1",
+          "scope": "sender_receiver_observer_process",
+          "interval": "transfer_and_first_snapshot",
+          "readers": "4",
+          "threads": "1",
+          "level": "3",
+          "frame_mib": "8",
+          "observer_hz": "5",
+          "skipped_files": "0",
+          "frame_aborts": "0",
+          "frame_rebuilds": "0",
+          "total_terminal_skips": "0"
+        },
+        "aa_pairs": 5,
+        "ab_pairs": 5,
+        "allocation_pairs": 0
+      },
+      {
+        "id": "observed-streamed-large",
+        "phase": "e2e",
+        "adapter": "tagged",
+        "stage": "observed-e2e",
+        "fixture": "streamed-large",
+        "executable": "observed_e2e",
+        "tag": "observed-e2e-perf",
+        "scope": "sender_receiver_observer_process",
+        "arguments": [
+          "--fixture",
+          "streamed-large",
+          "--repeats",
+          "1"
+        ],
+        "expected": {
+          "stage": "observed-e2e",
+          "case": "streamed-large",
+          "iterations": "1",
+          "scope": "sender_receiver_observer_process",
+          "interval": "transfer_and_first_snapshot",
+          "readers": "4",
+          "threads": "1",
+          "level": "3",
+          "frame_mib": "8",
+          "observer_hz": "5",
+          "skipped_files": "0",
+          "frame_aborts": "0",
+          "frame_rebuilds": "0",
+          "total_terminal_skips": "0"
+        },
+        "aa_pairs": 5,
+        "ab_pairs": 5,
+        "allocation_pairs": 0
+      }
+    ]
+  },
+  "counter": {
+    "enabled": true,
+    "accepted_head": "2a7c8eeeb70f9046a4629168d66d4fc0123f247e",
+    "baseline_name": "accepted-m1-m2",
+    "candidate": "counter",
+    "before": {
+      "source": "sources/counter-before",
+      "manifest": "counter-before-source.json",
+      "artifacts": "artifacts/counter-before",
+      "allocation_artifacts": "artifacts/counter-before-alloc",
+      "compiler_manifest": "checks/windows/counter-before/release/attempt-01/environment.json"
+    },
+    "after": {
+      "source": "sources/counter-bench-v2",
+      "manifest": "counter-bench-v2-source.json",
+      "artifacts": "artifacts/counter-bench-v2",
+      "allocation_artifacts": "artifacts/counter-bench-v2-alloc",
+      "compiler_manifest": "checks/windows/counter-bench-v2/release/attempt-01/environment.json"
+    },
+    "groups": [
+      {
+        "id": "planner-resume-0",
+        "phase": "screen",
+        "adapter": "tagged",
+        "stage": "planner",
+        "fixture": "resume-0",
+        "executable": "planner_skips",
+        "tag": "planner-perf",
+        "scope": "planner_skip_process",
+        "arguments": [
+          "--case",
+          "resume-0",
+          "--iterations",
+          "64",
+          "--repeats",
+          "1"
+        ],
+        "allocation_arguments": [
+          "--case",
+          "resume-0",
+          "--iterations",
+          "8",
+          "--repeats",
+          "1"
+        ],
+        "expected": {
+          "stage": "planner",
+          "case": "resume-0",
+          "iterations": "64",
+          "scope": "planner_skip_process",
+          "interval": "iterations_only",
+          "cleanup": "planner_included_output_excluded",
+          "counters_schema": "2"
+        },
+        "allocation_expected": {
+          "stage": "planner",
+          "case": "resume-0",
+          "iterations": "8",
+          "scope": "planner_skip_process",
+          "interval": "iterations_only",
+          "cleanup": "planner_included_output_excluded",
+          "counters_schema": "2"
+        },
+        "aa_pairs": 5,
+        "ab_pairs": 10,
+        "allocation_pairs": 5
+      },
+      {
+        "id": "planner-resume-4096",
+        "phase": "screen",
+        "adapter": "tagged",
+        "stage": "planner",
+        "fixture": "resume-4096",
+        "executable": "planner_skips",
+        "tag": "planner-perf",
+        "scope": "planner_skip_process",
+        "arguments": [
+          "--case",
+          "resume-4096",
+          "--iterations",
+          "64",
+          "--repeats",
+          "1"
+        ],
+        "allocation_arguments": [
+          "--case",
+          "resume-4096",
+          "--iterations",
+          "8",
+          "--repeats",
+          "1"
+        ],
+        "expected": {
+          "stage": "planner",
+          "case": "resume-4096",
+          "iterations": "64",
+          "scope": "planner_skip_process",
+          "interval": "iterations_only",
+          "cleanup": "planner_included_output_excluded",
+          "counters_schema": "2"
+        },
+        "allocation_expected": {
+          "stage": "planner",
+          "case": "resume-4096",
+          "iterations": "8",
+          "scope": "planner_skip_process",
+          "interval": "iterations_only",
+          "cleanup": "planner_included_output_excluded",
+          "counters_schema": "2"
+        },
+        "aa_pairs": 5,
+        "ab_pairs": 10,
+        "allocation_pairs": 5
+      },
+      {
+        "id": "planner-new-unique",
+        "phase": "screen",
+        "adapter": "tagged",
+        "stage": "planner",
+        "fixture": "new-unique",
+        "executable": "planner_skips",
+        "tag": "planner-perf",
+        "scope": "planner_skip_process",
+        "arguments": [
+          "--case",
+          "new-unique",
+          "--iterations",
+          "65536",
+          "--repeats",
+          "1"
+        ],
+        "allocation_arguments": [
+          "--case",
+          "new-unique",
+          "--iterations",
+          "4096",
+          "--repeats",
+          "1"
+        ],
+        "expected": {
+          "stage": "planner",
+          "case": "new-unique",
+          "iterations": "65536",
+          "scope": "planner_skip_process",
+          "interval": "iterations_only",
+          "cleanup": "planner_included_output_excluded",
+          "counters_schema": "2"
+        },
+        "allocation_expected": {
+          "stage": "planner",
+          "case": "new-unique",
+          "iterations": "4096",
+          "scope": "planner_skip_process",
+          "interval": "iterations_only",
+          "cleanup": "planner_included_output_excluded",
+          "counters_schema": "2"
+        },
+        "aa_pairs": 5,
+        "ab_pairs": 10,
+        "allocation_pairs": 5
+      },
+      {
+        "id": "planner-new-duplicate",
+        "phase": "screen",
+        "adapter": "tagged",
+        "stage": "planner",
+        "fixture": "new-duplicate",
+        "executable": "planner_skips",
+        "tag": "planner-perf",
+        "scope": "planner_skip_process",
+        "arguments": [
+          "--case",
+          "new-duplicate",
+          "--iterations",
+          "65536",
+          "--repeats",
+          "1"
+        ],
+        "allocation_arguments": [
+          "--case",
+          "new-duplicate",
+          "--iterations",
+          "4096",
+          "--repeats",
+          "1"
+        ],
+        "expected": {
+          "stage": "planner",
+          "case": "new-duplicate",
+          "iterations": "65536",
+          "scope": "planner_skip_process",
+          "interval": "iterations_only",
+          "cleanup": "planner_included_output_excluded",
+          "counters_schema": "2"
+        },
+        "allocation_expected": {
+          "stage": "planner",
+          "case": "new-duplicate",
+          "iterations": "4096",
+          "scope": "planner_skip_process",
+          "interval": "iterations_only",
+          "cleanup": "planner_included_output_excluded",
+          "counters_schema": "2"
+        },
+        "aa_pairs": 5,
+        "ab_pairs": 10,
+        "allocation_pairs": 5
+      },
+      {
+        "id": "e2e-manySmallFiles",
+        "phase": "e2e",
+        "adapter": "e2e",
+        "stage": "e2e",
+        "fixture": "manySmallFiles",
+        "executable": "loopback_send_dump",
+        "scope": "sender_receiver_process",
+        "arguments": [
+          "--readers",
+          "8",
+          "--threads",
+          "4",
+          "--frames",
+          "64",
+          "--buffers",
+          "1024",
+          "--executor",
+          "default",
+          "--network-profile",
+          "loopback-localhost"
+        ],
+        "aa_pairs": 5,
+        "ab_pairs": 5,
+        "allocation_pairs": 0
+      },
+      {
+        "id": "e2e-mixed",
+        "phase": "e2e",
+        "adapter": "e2e",
+        "stage": "e2e",
+        "fixture": "mixed",
+        "executable": "loopback_send_dump",
+        "scope": "sender_receiver_process",
+        "arguments": [
+          "--readers",
+          "8",
+          "--threads",
+          "4",
+          "--frames",
+          "64",
+          "--buffers",
+          "1024",
+          "--executor",
+          "default",
+          "--network-profile",
+          "loopback-localhost"
+        ],
+        "aa_pairs": 5,
+        "ab_pairs": 5,
+        "allocation_pairs": 0
+      },
+      {
+        "id": "e2e-bigFiles",
+        "phase": "e2e",
+        "adapter": "e2e",
+        "stage": "e2e",
+        "fixture": "bigFiles",
+        "executable": "loopback_send_dump",
+        "scope": "sender_receiver_process",
+        "arguments": [
+          "--readers",
+          "8",
+          "--threads",
+          "4",
+          "--frames",
+          "64",
+          "--buffers",
+          "1024",
+          "--executor",
+          "default",
+          "--network-profile",
+          "loopback-localhost"
+        ],
+        "aa_pairs": 5,
+        "ab_pairs": 5,
+        "allocation_pairs": 0
+      }
+    ]
+  },
+  "commit": {
+    "enabled": true,
+    "accepted_head": "cb4886f1a0561f382f850081c273497789a20c0a",
+    "baseline_name": "accepted-m1-m2-counter",
+    "candidate": "commit",
+    "before": {
+      "source": "sources/commit-before",
+      "manifest": "commit-before-source.json",
+      "artifacts": "artifacts/commit-before",
+      "allocation_artifacts": "artifacts/commit-before-alloc",
+      "compiler_manifest": "checks/windows/commit-before/release/attempt-01/environment.json"
+    },
+    "after": {
+      "source": "sources/commit-bench",
+      "manifest": "commit-bench-source.json",
+      "artifacts": "artifacts/commit-bench",
+      "allocation_artifacts": "artifacts/commit-bench-alloc",
+      "compiler_manifest": "checks/windows/commit-bench/release/attempt-01/environment.json"
+    },
+    "groups": [
+      {
+        "id": "commit-1000000",
+        "phase": "screen",
+        "adapter": "tagged",
+        "stage": "control",
+        "fixture": "commit",
+        "executable": "control_messages",
+        "tag": "control-perf",
+        "scope": "control_encode_process",
+        "arguments": [
+          "--case",
+          "commit",
+          "--iterations",
+          "1000000",
+          "--repeats",
+          "1"
+        ],
+        "expected": {
+          "stage": "control",
+          "case": "commit",
+          "iterations": "1000000",
+          "scope": "control_encode_process",
+          "interval": "iterations_only",
+          "counters_schema": "2"
+        },
+        "aa_pairs": 5,
+        "ab_pairs": 10,
+        "allocation_pairs": 5,
+        "allocation_arguments": [
+          "--case",
+          "commit",
+          "--iterations",
+          "128",
+          "--repeats",
+          "1"
+        ],
+        "allocation_expected": {
+          "stage": "control",
+          "case": "commit",
+          "iterations": "128",
+          "scope": "control_encode_process",
+          "interval": "iterations_only",
+          "counters_schema": "2"
+        }
+      },
+      {
+        "id": "commit-16000000",
+        "phase": "screen",
+        "adapter": "tagged",
+        "stage": "control",
+        "fixture": "commit",
+        "executable": "control_messages",
+        "tag": "control-perf",
+        "scope": "control_encode_process",
+        "arguments": [
+          "--case",
+          "commit",
+          "--iterations",
+          "16000000",
+          "--repeats",
+          "1"
+        ],
+        "expected": {
+          "stage": "control",
+          "case": "commit",
+          "iterations": "16000000",
+          "scope": "control_encode_process",
+          "interval": "iterations_only",
+          "counters_schema": "2"
+        },
+        "aa_pairs": 5,
+        "ab_pairs": 10,
+        "allocation_pairs": 0
+      },
+      {
+        "id": "plan-short-4096-1024",
+        "phase": "screen",
+        "adapter": "tagged",
+        "stage": "control",
+        "fixture": "plan-short-4096",
+        "executable": "control_messages",
+        "tag": "control-perf",
+        "scope": "control_encode_process",
+        "arguments": [
+          "--case",
+          "plan-short-4096",
+          "--iterations",
+          "1024",
+          "--repeats",
+          "1"
+        ],
+        "expected": {
+          "stage": "control",
+          "case": "plan-short-4096",
+          "iterations": "1024",
+          "scope": "control_encode_process",
+          "interval": "iterations_only",
+          "counters_schema": "2"
+        },
+        "aa_pairs": 5,
+        "ab_pairs": 10,
+        "allocation_pairs": 0
+      },
+      {
+        "id": "plan-short-4096-16384",
+        "phase": "screen",
+        "adapter": "tagged",
+        "stage": "control",
+        "fixture": "plan-short-4096",
+        "executable": "control_messages",
+        "tag": "control-perf",
+        "scope": "control_encode_process",
+        "arguments": [
+          "--case",
+          "plan-short-4096",
+          "--iterations",
+          "16384",
+          "--repeats",
+          "1"
+        ],
+        "expected": {
+          "stage": "control",
+          "case": "plan-short-4096",
+          "iterations": "16384",
+          "scope": "control_encode_process",
+          "interval": "iterations_only",
+          "counters_schema": "2"
+        },
+        "aa_pairs": 5,
+        "ab_pairs": 10,
+        "allocation_pairs": 0
+      },
+      {
+        "id": "e2e-manySmallFiles",
+        "phase": "e2e",
+        "adapter": "e2e",
+        "stage": "e2e",
+        "fixture": "manySmallFiles",
+        "executable": "loopback_send_dump",
+        "scope": "sender_receiver_process",
+        "arguments": [
+          "--readers",
+          "8",
+          "--threads",
+          "4",
+          "--frames",
+          "64",
+          "--buffers",
+          "1024",
+          "--executor",
+          "default",
+          "--network-profile",
+          "loopback-localhost"
+        ],
+        "aa_pairs": 5,
+        "ab_pairs": 5,
+        "allocation_pairs": 0
+      },
+      {
+        "id": "e2e-mixed",
+        "phase": "e2e",
+        "adapter": "e2e",
+        "stage": "e2e",
+        "fixture": "mixed",
+        "executable": "loopback_send_dump",
+        "scope": "sender_receiver_process",
+        "arguments": [
+          "--readers",
+          "8",
+          "--threads",
+          "4",
+          "--frames",
+          "64",
+          "--buffers",
+          "1024",
+          "--executor",
+          "default",
+          "--network-profile",
+          "loopback-localhost"
+        ],
+        "aa_pairs": 5,
+        "ab_pairs": 5,
+        "allocation_pairs": 0
+      },
+      {
+        "id": "e2e-bigFiles",
+        "phase": "e2e",
+        "adapter": "e2e",
+        "stage": "e2e",
+        "fixture": "bigFiles",
+        "executable": "loopback_send_dump",
+        "scope": "sender_receiver_process",
+        "arguments": [
+          "--readers",
+          "8",
+          "--threads",
+          "4",
+          "--frames",
+          "64",
+          "--buffers",
+          "1024",
+          "--executor",
+          "default",
+          "--network-profile",
+          "loopback-localhost"
+        ],
+        "aa_pairs": 5,
+        "ab_pairs": 5,
+        "allocation_pairs": 0
+      }
+    ]
+  }
+}

@@ -1,0 +1,273 @@
+--- a/docs/runtime.md
++++ b/docs/runtime.md
+@@ -53,6 +53,11 @@
+ paging; the successful-file count does not impose this particular limit.
+ 
+ ## Source preparation and bounded data flow
++
++This isolated experiment queries Windows handle attribute/tag and standard
++information separately, keeping logical EOF, readonly mode and reparse handling.
++Unsupported information classes fall back to the existing metadata query. Linux
++keeps its existing path. This is not a reduction in the number of Windows calls.
+ 
+ - The archive contains regular files that were successfully captured and
+   readable symlink entries without dereferencing.
+--- a/src/sender/read.rs
++++ b/src/sender/read.rs
+@@ -51,8 +51,27 @@
+ }
+ 
+ enum OpenRegularFile {
+-    Opened(File, fs::Metadata, Option<u64>),
++    Opened(File, RegularMetadata, Option<u64>),
+     Unsupported(ExcludedFilesystem),
++}
++
++#[derive(Debug)]
++struct RegularMetadata {
++    size: u64,
++    mode: u32,
++    #[cfg(windows)]
++    attributes: u32,
++}
++
++impl RegularMetadata {
++    fn len(&self) -> u64 {
++        self.size
++    }
++
++    #[cfg(windows)]
++    fn file_attributes(&self) -> u32 {
++        self.attributes
++    }
+ }
+ 
+ impl StreamedRegularFile {
+@@ -355,7 +374,6 @@
+     }
+     #[cfg(windows)]
+     let (file, metadata) = {
+-        use std::os::windows::fs::MetadataExt;
+         use windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_REPARSE_POINT;
+ 
+         if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+@@ -382,7 +400,20 @@
+     ))
+ }
+ 
+-fn regular_file_metadata(file: &File, path: &Path) -> Result<fs::Metadata> {
++fn regular_file_metadata(file: &File, path: &Path) -> Result<RegularMetadata> {
++    #[cfg(windows)]
++    match narrow_regular_metadata(file) {
++        Ok(metadata) => return Ok(metadata),
++        Err(error) if unsupported_metadata_query(&error) => {}
++        Err(error) => {
++            return Err(error)
++                .with_context(|| format!("failed to read v4 metadata for {}", path.display()));
++        }
++    }
++    regular_file_metadata_fallback(file, path)
++}
++
++fn regular_file_metadata_fallback(file: &File, path: &Path) -> Result<RegularMetadata> {
+     let metadata = file
+         .metadata()
+         .with_context(|| format!("failed to read v4 metadata for {}", path.display()))?;
+@@ -391,7 +422,101 @@
+         "source entry is no longer a regular file: {}",
+         path.display()
+     );
+-    Ok(metadata)
++    Ok(RegularMetadata {
++        size: metadata.len(),
++        mode: metadata_mode(&metadata),
++        #[cfg(windows)]
++        attributes: {
++            use std::os::windows::fs::MetadataExt;
++            metadata.file_attributes()
++        },
++    })
++}
++
++#[cfg(windows)]
++fn unsupported_metadata_query(error: &io::Error) -> bool {
++    use windows_sys::Win32::Foundation::{
++        ERROR_CALL_NOT_IMPLEMENTED, ERROR_INVALID_FUNCTION, ERROR_INVALID_PARAMETER,
++        ERROR_NOT_SUPPORTED,
++    };
++    error.raw_os_error().is_some_and(|code| {
++        matches!(
++            code as u32,
++            ERROR_INVALID_FUNCTION
++                | ERROR_NOT_SUPPORTED
++                | ERROR_INVALID_PARAMETER
++                | ERROR_CALL_NOT_IMPLEMENTED
++        )
++    })
++}
++
++#[cfg(windows)]
++fn narrow_regular_metadata(file: &File) -> io::Result<RegularMetadata> {
++    use std::os::windows::io::AsRawHandle;
++    use windows_sys::Win32::Storage::FileSystem::{
++        FILE_ATTRIBUTE_TAG_INFO, FILE_STANDARD_INFO, FileAttributeTagInfo, FileStandardInfo,
++        GetFileInformationByHandleEx,
++    };
++    let mut attributes = FILE_ATTRIBUTE_TAG_INFO::default();
++    let mut standard = FILE_STANDARD_INFO::default();
++    // Каждый запрос заполняет ровно соответствующую C-структуру живого handle.
++    // Это эксперимент с ценой узких запросов, а не сокращение числа syscalls.
++    let attributes_ok = unsafe {
++        GetFileInformationByHandleEx(
++            file.as_raw_handle(),
++            FileAttributeTagInfo,
++            (&mut attributes as *mut FILE_ATTRIBUTE_TAG_INFO).cast(),
++            std::mem::size_of::<FILE_ATTRIBUTE_TAG_INFO>() as u32,
++        )
++    };
++    if attributes_ok == 0 {
++        return Err(io::Error::last_os_error());
++    }
++    let standard_ok = unsafe {
++        GetFileInformationByHandleEx(
++            file.as_raw_handle(),
++            FileStandardInfo,
++            (&mut standard as *mut FILE_STANDARD_INFO).cast(),
++            std::mem::size_of::<FILE_STANDARD_INFO>() as u32,
++        )
++    };
++    if standard_ok == 0 {
++        return Err(io::Error::last_os_error());
++    }
++    decode_regular_metadata(attributes, standard)
++}
++
++#[cfg(windows)]
++fn decode_regular_metadata(
++    attributes: windows_sys::Win32::Storage::FileSystem::FILE_ATTRIBUTE_TAG_INFO,
++    standard: windows_sys::Win32::Storage::FileSystem::FILE_STANDARD_INFO,
++) -> io::Result<RegularMetadata> {
++    use windows_sys::Win32::Storage::FileSystem::{
++        FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_READONLY, FILE_ATTRIBUTE_REPARSE_POINT,
++    };
++    // Как std: все name-surrogate tags являются ссылками, не только SYMLINK.
++    let name_surrogate = attributes.FileAttributes & FILE_ATTRIBUTE_REPARSE_POINT != 0
++        && attributes.ReparseTag & 0x2000_0000 != 0;
++    if standard.Directory
++        || attributes.FileAttributes & FILE_ATTRIBUTE_DIRECTORY != 0
++        || name_surrogate
++        || standard.EndOfFile < 0
++    {
++        return Err(io::Error::new(
++            io::ErrorKind::InvalidData,
++            "source entry is no longer a regular file",
++        ));
++    }
++    Ok(RegularMetadata {
++        // AllocationSize включает особенности размещения и не задаёт длину чтения.
++        size: standard.EndOfFile as u64,
++        mode: if attributes.FileAttributes & FILE_ATTRIBUTE_READONLY != 0 {
++            0o444
++        } else {
++            0o644
++        },
++        attributes: attributes.FileAttributes,
++    })
+ }
+ 
+ #[cfg(windows)]
+@@ -451,19 +576,23 @@
+ }
+ 
+ #[cfg(unix)]
+-fn regular_mode(metadata: &fs::Metadata) -> u32 {
++fn metadata_mode(metadata: &fs::Metadata) -> u32 {
+     use std::os::unix::fs::PermissionsExt;
+ 
+     metadata.permissions().mode()
+ }
+ 
+ #[cfg(not(unix))]
+-fn regular_mode(metadata: &fs::Metadata) -> u32 {
++fn metadata_mode(metadata: &fs::Metadata) -> u32 {
+     if metadata.permissions().readonly() {
+         0o444
+     } else {
+         0o644
+     }
++}
++
++fn regular_mode(metadata: &RegularMetadata) -> u32 {
++    metadata.mode
+ }
+ 
+ #[cfg(unix)]
+@@ -485,6 +614,68 @@
+     use crate::tests::TestDir;
+     use std::io::Write;
+     use std::sync::Arc;
++
++    #[cfg(windows)]
++    #[test]
++    fn narrow_metadata_matches_standard_on_open_handle() {
++        let dir = TestDir::new();
++        for size in [0, 17, 65537] {
++            let path = dir.path().join(format!("file-{size}"));
++            fs::write(&path, vec![0x5a; size]).unwrap();
++            let file = File::open(&path).unwrap();
++            let actual = narrow_regular_metadata(&file).unwrap();
++            let expected = regular_file_metadata_fallback(&file, &path).unwrap();
++            assert_eq!(actual.len(), expected.len());
++            assert_eq!(actual.mode, expected.mode);
++            assert_eq!(actual.attributes, expected.attributes);
++        }
++    }
++
++    #[cfg(windows)]
++    #[test]
++    fn narrow_metadata_uses_logical_length_and_rejects_name_surrogates() {
++        use windows_sys::Win32::Storage::FileSystem::{
++            FILE_ATTRIBUTE_READONLY, FILE_ATTRIBUTE_REPARSE_POINT, FILE_ATTRIBUTE_TAG_INFO,
++            FILE_STANDARD_INFO,
++        };
++        let attributes = FILE_ATTRIBUTE_TAG_INFO {
++            FileAttributes: FILE_ATTRIBUTE_READONLY,
++            ReparseTag: 0,
++        };
++        let standard = FILE_STANDARD_INFO {
++            AllocationSize: 4096,
++            EndOfFile: (1_i64 << 32) + 17,
++            ..Default::default()
++        };
++        let actual = decode_regular_metadata(attributes, standard).unwrap();
++        assert_eq!(actual.len(), (1_u64 << 32) + 17);
++        assert_eq!(actual.mode, 0o444);
++        let surrogate = FILE_ATTRIBUTE_TAG_INFO {
++            FileAttributes: FILE_ATTRIBUTE_REPARSE_POINT,
++            ReparseTag: 0xa000_0003,
++        };
++        assert!(decode_regular_metadata(surrogate, standard).is_err());
++        let directory = FILE_STANDARD_INFO {
++            Directory: true,
++            ..standard
++        };
++        assert!(decode_regular_metadata(attributes, directory).is_err());
++    }
++
++    #[cfg(windows)]
++    #[test]
++    fn narrow_metadata_only_falls_back_for_unsupported_queries() {
++        for code in [1, 50, 87, 120] {
++            assert!(unsupported_metadata_query(&io::Error::from_raw_os_error(
++                code
++            )));
++        }
++        for code in [2, 5, 6, 32] {
++            assert!(!unsupported_metadata_query(&io::Error::from_raw_os_error(
++                code
++            )));
++        }
++    }
+ 
+     #[test]
+     fn excluded_filesystem_is_skipped_before_payload_without_retry() {

@@ -1,0 +1,195 @@
+{
+  "schema_version": 1,
+  "id": "legacy-results-local-experiments-direct-chore-current-20261025-meas-6ddf286f893e",
+  "kind": "benchmark",
+  "label": "current-exact-e2e-manySmallFiles-ab",
+  "status": "imported",
+  "started_utc": "2026-10-25T20:39:31.145529+00:00",
+  "time_source": "original_file_mtime",
+  "imported_utc": "2026-10-25T20:42:59.784840+00:00",
+  "experiment_path": "results/local/experiments/direct-chore-current-20261025/measurements/current-exact-e2e-manySmallFiles-ab",
+  "import_sha256": "6ddf286f893ec0110b72713e15987f7dbf524dc40362e4cb6c76e5aeb40387c8",
+  "origin": "results/local/experiments/direct-chore-current-20261025/measurements",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "binary_sha256": {
+      "before": "71348e94daf639a6562399aba6f572c400cda65000da830cd0cda553a2d5e339",
+      "after": "3acbdbb4306cf5f64af6cd231c93251f95a8f84c6b8beae052fd72549aa7c67d"
+    },
+    "comparison_kind": "A/B",
+    "requested_readers": {
+      "before": 8,
+      "after": 8
+    },
+    "common_arguments": [
+      "--repeats",
+      "1",
+      "--shuffle-scenarios",
+      "--shuffle-seed",
+      "91",
+      "--source",
+      "E:\\projects\\cool_project\\fast-dump\\results\\local\\experiments\\sender-20261025\\fixtures\\manySmallFiles",
+      "--network-profile",
+      "loopback-localhost",
+      "--threads",
+      "4",
+      "--frames",
+      "64",
+      "--buffers",
+      "1024",
+      "--executor",
+      "default"
+    ],
+    "repeats_per_side": 10,
+    "policy": "AB then BA alternating; all samples retained; no automatic warmup or trimming",
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 6,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 6,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 7,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 7,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 8,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 8,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 9,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 9,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 10,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 10,
+        "side": "before",
+        "exit_code": 0
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "current-exact-e2e-manySmallFiles-ab/before/run.log",
+      "sha256": "a4a7eb1b95ad9ced3c644516bef17f22b58f8a3ff57339e4a60fe91e8050a2cf",
+      "bytes": 35473,
+      "extracted_sha256": "3cef2532f4c686224273df25926a59fa5f626c10a391c8b7290ab2b56437db38",
+      "saved": "raw/before/resource_samples.csv"
+    },
+    {
+      "source": "current-exact-e2e-manySmallFiles-ab/before/results_raw.csv",
+      "sha256": "80cec78e9b922d0ee4ef0760e62b6bec6dae6219ac7e5c13bfe85a9fd6ad91e7",
+      "bytes": 7180,
+      "saved": "raw/before/results_raw.csv"
+    },
+    {
+      "source": "current-exact-e2e-manySmallFiles-ab/after/run.log",
+      "sha256": "b9f5939cb7ec289cb48a928c19abaf2b917f637da91ee905003e81dc228803bd",
+      "bytes": 35443,
+      "extracted_sha256": "024a5f86bf152806059637fe995a759118dae8bdcbbd5de6fe5f2cac362e3caa",
+      "saved": "raw/after/resource_samples.csv"
+    },
+    {
+      "source": "current-exact-e2e-manySmallFiles-ab/after/results_raw.csv",
+      "sha256": "4c636ab17fb83f222e425cf255316e3e3b60be1aedb4873bb7fee96bf227f40c",
+      "bytes": 7177,
+      "saved": "raw/after/results_raw.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "current-exact-e2e-manySmallFiles-ab/paired-run.json",
+      "sha256": "5f6d30b25787b5b309a86ae46a3c4041174d6cdc36744a709a24e909ccf5dde0",
+      "bytes": 20640
+    },
+    {
+      "source": "current-exact-e2e-manySmallFiles-ab/before/run.log",
+      "sha256": "a4a7eb1b95ad9ced3c644516bef17f22b58f8a3ff57339e4a60fe91e8050a2cf",
+      "bytes": 35473
+    },
+    {
+      "source": "current-exact-e2e-manySmallFiles-ab/after/run.log",
+      "sha256": "b9f5939cb7ec289cb48a928c19abaf2b917f637da91ee905003e81dc228803bd",
+      "bytes": 35443
+    }
+  ]
+}

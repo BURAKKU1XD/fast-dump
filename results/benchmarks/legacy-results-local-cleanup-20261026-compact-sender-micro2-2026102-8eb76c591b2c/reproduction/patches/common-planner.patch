@@ -1,0 +1,480 @@
+diff --git a/Cargo.toml b/Cargo.toml
+index 10e1d55..0d9cf8d 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -45,6 +45,11 @@ name = "file_pipeline"
+ harness = false
+ required-features = ["bench-internals"]
+ 
++[[bench]]
++name = "planner_skips"
++harness = false
++required-features = ["bench-internals"]
++
+ [profile.release]
+ lto = "thin"
+ codegen-units = 1
+diff --git a/benches/planner_skips.rs b/benches/planner_skips.rs
+new file mode 100644
+index 0000000..0090912
+--- /dev/null
++++ b/benches/planner_skips.rs
+@@ -0,0 +1,113 @@
++use std::io::Write;
++
++use anyhow::{Result, ensure};
++use clap::Parser;
++use fast_dump::sender::file_bench::AllocationHooks;
++use fast_dump::sender::planner_bench::{CASES, measure};
++
++#[path = "support/run_output.rs"]
++mod run_output;
++
++#[cfg(feature = "bench-allocations")]
++#[path = "support/allocation_counter.rs"]
++mod allocation_counter;
++
++#[cfg(feature = "bench-allocations")]
++#[global_allocator]
++static ALLOCATOR: allocation_counter::CountingAllocator =
++    allocation_counter::CountingAllocator::new(std::alloc::System);
++
++#[cfg(feature = "bench-allocations")]
++fn allocation_hooks() -> AllocationHooks {
++    fn start() {
++        ALLOCATOR.start();
++    }
++    fn stop() -> fast_dump::sender::file_bench::AllocationCounts {
++        ALLOCATOR.stop()
++    }
++    AllocationHooks { start, stop }
++}
++
++#[derive(Parser)]
++#[command(about = "Measure production planner construction and terminal skip registration")]
++struct Args {
++    #[arg(long, value_parser = CASES)]
++    case: String,
++    #[arg(long, default_value_t = 1)]
++    iterations: u64,
++    #[arg(long, default_value_t = 1)]
++    repeats: usize,
++    #[arg(long)]
++    allocations: bool,
++    #[arg(long = "bench", hide = true)]
++    _bench: bool,
++}
++
++fn optional(value: Option<u64>) -> String {
++    value.map_or_else(|| "unmeasured".to_owned(), |value| value.to_string())
++}
++
++fn main() -> Result<()> {
++    let args = Args::parse();
++    ensure!(args.repeats > 0, "repeats must be positive");
++    ensure!(args.iterations > 0, "iterations must be positive");
++    let hooks: Option<AllocationHooks> = if args.allocations {
++        #[cfg(feature = "bench-allocations")]
++        {
++            Some(allocation_hooks())
++        }
++        #[cfg(not(feature = "bench-allocations"))]
++        {
++            anyhow::bail!("--allocations requires a separate --features bench-allocations build")
++        }
++    } else {
++        None
++    };
++    let output = run_output::create_run_dir("planner-skips")?;
++    let mut log = std::fs::File::create(output.join("run.log"))?;
++    for repeat in 1..=args.repeats {
++        let result = measure(&args.case, args.iterations, hooks)?;
++        let counters = result.counters;
++        let line = format!(
++            "[planner-perf] stage=planner case={} repeat={} iterations={} entries={} bytes={} constructors={} records={} terminal_skips={} outgoing_skips={} fingerprint={:016x} elapsed_ns={} cpu_ns={} user_ns={} kernel_ns={} cpu_cycles={} cycle_source={} io_source=unmeasured process_peak_rss_bytes={} allocs={} alloc_bytes={} reallocs={} deallocs={} alloc_successes={} alloc_success_bytes={} realloc_successes={} realloc_success_bytes={} alloc_failures={} realloc_failures={} dealloc_bytes={} zeroed_bytes={} counters_schema=2 scope=planner_skip_process interval=iterations_only cleanup=planner_included_output_excluded allocator_instrumented={} allocations_enabled={} verified=true",
++            args.case,
++            repeat,
++            args.iterations,
++            result.entries,
++            result.bytes,
++            result.constructors,
++            result.records,
++            result.terminal_skips,
++            result.outgoing_skips,
++            result.fingerprint,
++            counters.elapsed_ns,
++            counters.user_ns + counters.kernel_ns,
++            counters.user_ns,
++            counters.kernel_ns,
++            optional(counters.cpu_cycles),
++            counters.cycle_source,
++            counters.process_peak_rss_bytes,
++            optional(counters.allocations.map(|value| value.allocs)),
++            optional(counters.allocations.map(|value| value.alloc_bytes)),
++            optional(counters.allocations.map(|value| value.reallocs)),
++            optional(counters.allocations.map(|value| value.deallocs)),
++            optional(counters.allocations.map(|value| value.alloc_successes)),
++            optional(counters.allocations.map(|value| value.alloc_success_bytes)),
++            optional(counters.allocations.map(|value| value.realloc_successes)),
++            optional(
++                counters
++                    .allocations
++                    .map(|value| value.realloc_success_bytes)
++            ),
++            optional(counters.allocations.map(|value| value.alloc_failures)),
++            optional(counters.allocations.map(|value| value.realloc_failures)),
++            optional(counters.allocations.map(|value| value.dealloc_bytes)),
++            optional(counters.allocations.map(|value| value.zeroed_bytes)),
++            cfg!(feature = "bench-allocations"),
++            args.allocations,
++        );
++        println!("{line}");
++        writeln!(log, "{line}")?;
++    }
++    Ok(())
++}
+diff --git a/docs/benchmarks.md b/docs/benchmarks.md
+index 1a5f602..268d615 100644
+--- a/docs/benchmarks.md
++++ b/docs/benchmarks.md
+@@ -88,6 +88,28 @@ Reallocation bytes are the full new size, not growth alone. Freed bytes can
+ include objects allocated before the interval; these counters are not live-memory
+ or RSS measurements.
+ 
++The opt-in planner microbenchmark exercises production construction and terminal
++skip registration:
++
++```powershell
++cargo bench --bench planner_skips --features bench-internals -- --case resume-4096 --iterations 100 --repeats 7
++cargo bench --bench planner_skips --features bench-internals -- --case new-unique --iterations 4096 --repeats 7
++```
++
++`resume-0` and `resume-4096` measure repeated `DumpPlanner` construction from an
++empty source and a prepared resume catalog, including `finish_profile` and
++destruction/join. `new-unique` and `new-duplicate` prepare one planner outside the
++timer, then register one prepared descriptor per iteration; queue extraction,
++`finish_profile`, and planner destruction are measured. Returned descriptors are
++verified byte-for-byte and in order after timing, then released outside timing.
++Fixture strings and directories are prepared outside every interval. Input
++descriptors are consumed inside the interval. `[planner-perf]` reports total
++input entries/path bytes, constructor/record counts, exact terminal/outgoing
++counts, a fixture fingerprint, and the same CPU and requested-allocation schema
++as the file benchmark. Use a separate `bench-allocations` build with
++`--allocations` for diagnostics; timing uses `bench-internals` without allocation
++instrumentation. Compare only matching cases, iterations, and instrumentation.
++
+ Compare two saved binaries with matching instrumentation:
+ 
+ ```powershell
+diff --git a/src/sender/file_bench.rs b/src/sender/file_bench.rs
+index 2889e07..501bbbd 100644
+--- a/src/sender/file_bench.rs
++++ b/src/sender/file_bench.rs
+@@ -153,6 +153,40 @@ fn timed<T>(
+     ))
+ }
+ 
++pub(crate) fn measure_cpu_work<T>(
++    hooks: Option<AllocationHooks>,
++    work: impl FnOnce() -> Result<T>,
++) -> Result<(T, Measurement)> {
++    // Подготовка и проверка fixtures не входят в интервал microbench.
++    let (result, interval) = timed(hooks, work)?;
++    let measurement = Measurement {
++        elapsed_ns: interval.wall_ns,
++        work_ns: interval.wall_ns,
++        user_ns: interval
++            .after
++            .user_ns
++            .saturating_sub(interval.before.user_ns),
++        kernel_ns: interval
++            .after
++            .kernel_ns
++            .saturating_sub(interval.before.kernel_ns),
++        cpu_cycles: interval
++            .after
++            .cpu_cycles
++            .zip(interval.before.cpu_cycles)
++            .and_then(|(after, before)| after.checked_sub(before)),
++        cycle_source: if cfg!(windows) {
++            "windows-process-cycle-time"
++        } else {
++            "unavailable"
++        },
++        process_peak_rss_bytes: interval.after.peak_rss_bytes,
++        allocations: interval.allocations,
++        ..Measurement::default()
++    };
++    Ok((result, measurement))
++}
++
+ fn sum_delta(
+     first: &Interval,
+     second: &Interval,
+diff --git a/src/sender/mod.rs b/src/sender/mod.rs
+index 44846f2..07f8df9 100644
+--- a/src/sender/mod.rs
++++ b/src/sender/mod.rs
+@@ -18,6 +18,9 @@ pub(crate) use compress::compress_tar_termination_frame;
+ pub(crate) use network::send_dump_controlled;
+ pub use network::{SendReport, send_dump, send_dump_profile};
+ pub use plan::BundlePlanOptions;
++#[cfg(feature = "bench-internals")]
++#[doc(hidden)]
++pub use plan::bench as planner_bench;
+ pub(crate) use plan::plan_dump;
+ pub use scan::{SourceScanReport, SourceWalkReport, scan_source, walk_source};
+ 
+diff --git a/src/sender/plan/bench.rs b/src/sender/plan/bench.rs
+new file mode 100644
+index 0000000..43c2916
+--- /dev/null
++++ b/src/sender/plan/bench.rs
+@@ -0,0 +1,234 @@
++//! Production planner: создание с resume-каталогом и регистрация terminal skips.
++
++use std::fs;
++use std::path::PathBuf;
++use std::sync::atomic::{AtomicU64, Ordering};
++
++use anyhow::{Context, Result, ensure};
++use xxhash_rust::xxh3::Xxh3Default;
++
++use super::{BundlePlanOptions, DumpPlanner};
++use crate::network::protocol::{ResumeState, SkipReason, SkippedEntry};
++use crate::sender::file_bench::{AllocationHooks, Measurement, measure_cpu_work};
++
++pub const CASES: [&str; 4] = ["resume-0", "resume-4096", "new-unique", "new-duplicate"];
++
++pub struct PlannerMeasurement {
++    pub counters: Measurement,
++    pub entries: u64,
++    pub bytes: u64,
++    pub constructors: u64,
++    pub records: u64,
++    pub terminal_skips: u64,
++    pub outgoing_skips: u64,
++    pub fingerprint: u64,
++}
++
++struct EmptySource(PathBuf);
++
++impl EmptySource {
++    fn new() -> Result<Self> {
++        static NEXT: AtomicU64 = AtomicU64::new(0);
++        let path = std::env::temp_dir().join(format!(
++            "fast-dump-planner-bench-{}-{}",
++            std::process::id(),
++            NEXT.fetch_add(1, Ordering::Relaxed),
++        ));
++        fs::create_dir(&path)
++            .with_context(|| format!("create benchmark source {}", path.display()))?;
++        Ok(Self(path))
++    }
++}
++
++impl Drop for EmptySource {
++    fn drop(&mut self) {
++        let _ = fs::remove_dir(&self.0);
++    }
++}
++
++fn entry(index: usize) -> SkippedEntry {
++    SkippedEntry {
++        work_ordinal: index as u64 + 1,
++        relative_path: format!("каталог/🙂/entry-{index:08}"),
++        reason: match index % 4 {
++            0 => SkipReason::OpenFailed,
++            1 => SkipReason::UnstableAfterRetries,
++            2 => SkipReason::ReadSymlinkFailed,
++            _ => SkipReason::UnsupportedEntry,
++        },
++    }
++}
++
++fn hash_entry(hash: &mut Xxh3Default, entry: &SkippedEntry) {
++    hash.update(&entry.work_ordinal.to_le_bytes());
++    hash.update(&(entry.relative_path.len() as u64).to_le_bytes());
++    hash.update(entry.relative_path.as_bytes());
++    hash.update(entry.reason.as_str().as_bytes());
++}
++
++fn options() -> BundlePlanOptions {
++    BundlePlanOptions {
++        readers: 1,
++        ..BundlePlanOptions::default()
++    }
++}
++
++pub fn measure(
++    case: &str,
++    iterations: u64,
++    hooks: Option<AllocationHooks>,
++) -> Result<PlannerMeasurement> {
++    ensure!(
++        CASES.contains(&case),
++        "unknown planner benchmark case: {case}"
++    );
++    ensure!(iterations > 0, "iterations must be positive");
++    let source = EmptySource::new()?;
++    let mut fingerprint = Xxh3Default::new();
++    fingerprint.update(case.as_bytes());
++    fingerprint.update(&iterations.to_le_bytes());
++
++    if case.starts_with("resume-") {
++        let count = if case == "resume-4096" { 4096 } else { 0 };
++        let state = ResumeState {
++            terminal_skips: (0..count).map(entry).collect(),
++            ..ResumeState::default()
++        };
++        let entries = iterations
++            .checked_mul(count as u64)
++            .context("entry count overflow")?;
++        let path_bytes: u64 = state
++            .terminal_skips
++            .iter()
++            .map(|entry| entry.relative_path.len() as u64)
++            .sum();
++        let bytes = iterations
++            .checked_mul(path_bytes)
++            .context("path byte count overflow")?;
++        for entry in &state.terminal_skips {
++            hash_entry(&mut fingerprint, entry);
++        }
++        let options = options();
++        // Полный конструктор, его clones, finish_profile и Drop/join находятся внутри таймера.
++        let ((terminal_skips, outgoing_skips, discovered), counters) =
++            measure_cpu_work(hooks, || {
++                let mut terminal = 0;
++                let mut outgoing = 0;
++                let mut discovered = 0;
++                for _ in 0..iterations {
++                    let mut planner = DumpPlanner::new(&source.0, &state, options)?;
++                    outgoing += planner.take_new_terminal_skips().len() as u64;
++                    let profile = planner.finish_profile();
++                    terminal += profile.terminal_skips;
++                    discovered += profile.discovered_entries;
++                }
++                Ok((terminal, outgoing, discovered))
++            })?;
++        ensure!(terminal_skips == entries, "resume terminal count differs");
++        ensure!(outgoing_skips == 0, "saved skips were queued again");
++        ensure!(discovered == 0, "empty source discovered entries");
++        return Ok(PlannerMeasurement {
++            counters,
++            entries,
++            bytes,
++            constructors: iterations,
++            records: 0,
++            terminal_skips,
++            outgoing_skips,
++            fingerprint: fingerprint.digest(),
++        });
++    }
++
++    let duplicate = case == "new-duplicate";
++    let count = usize::try_from(iterations).context("iteration count exceeds address space")?;
++    let state = ResumeState {
++        terminal_skips: if duplicate {
++            vec![entry(0)]
++        } else {
++            Vec::new()
++        },
++        ..ResumeState::default()
++    };
++    let mut planner = DumpPlanner::new(&source.0, &state, options())?;
++    ensure!(
++        planner.take_new_terminal_skips().is_empty(),
++        "unexpected initial outgoing skips"
++    );
++    let inputs: Vec<_> = (0..count)
++        .map(|index| entry(if duplicate { 0 } else { index }))
++        .collect();
++    let bytes = inputs
++        .iter()
++        .map(|entry| entry.relative_path.len() as u64)
++        .sum();
++    for input in &inputs {
++        hash_entry(&mut fingerprint, input);
++    }
++    let expected = if duplicate {
++        Vec::new()
++    } else {
++        inputs.clone()
++    };
++    // Входные строки подготовлены заранее. Измеряем production record, выгрузку очереди
++    // и уничтожение planner; возвращённые descriptors проверяем и освобождаем после таймера.
++    let ((outgoing, profile), counters) = measure_cpu_work(hooks, || {
++        for skipped in inputs {
++            planner.record_terminal_skip(skipped);
++        }
++        let outgoing = planner.take_new_terminal_skips();
++        Ok((outgoing, planner.finish_profile()))
++    })?;
++    ensure!(
++        outgoing == expected,
++        "outgoing skip descriptors/order differ"
++    );
++    let expected_terminal = if duplicate { 1 } else { iterations };
++    ensure!(
++        profile.terminal_skips == expected_terminal,
++        "new skip terminal count differs"
++    );
++    ensure!(
++        profile.discovered_entries == 0,
++        "empty source discovered entries"
++    );
++    Ok(PlannerMeasurement {
++        counters,
++        entries: iterations,
++        bytes,
++        constructors: 0,
++        records: iterations,
++        terminal_skips: profile.terminal_skips,
++        outgoing_skips: outgoing.len() as u64,
++        fingerprint: fingerprint.digest(),
++    })
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn planner_benchmark_verifies_resume_and_unique_duplicate_outputs() {
++        for case in CASES {
++            let measured = measure(case, 3, None).unwrap();
++            match case {
++                "resume-0" => {
++                    assert_eq!((measured.terminal_skips, measured.outgoing_skips), (0, 0))
++                }
++                "resume-4096" => assert_eq!(
++                    (measured.terminal_skips, measured.outgoing_skips),
++                    (3 * 4096, 0)
++                ),
++                "new-unique" => {
++                    assert_eq!((measured.terminal_skips, measured.outgoing_skips), (3, 3))
++                }
++                "new-duplicate" => {
++                    assert_eq!((measured.terminal_skips, measured.outgoing_skips), (1, 0))
++                }
++                _ => unreachable!(),
++            }
++        }
++        assert!(measure("invalid", 1, None).is_err());
++        assert!(measure("resume-0", 0, None).is_err());
++    }
++}
+diff --git a/src/sender/plan.rs b/src/sender/plan.rs
+index 57e1e79..61c15f6 100644
+--- a/src/sender/plan.rs
++++ b/src/sender/plan.rs
+@@ -5,6 +5,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
+ use std::time::Instant;
+ 
+ use anyhow::{Context, Result, bail};
++#[cfg(feature = "bench-internals")]
++pub mod bench;
+ #[cfg(test)]
+ use xxhash_rust::xxh3::xxh3_64;
+ 

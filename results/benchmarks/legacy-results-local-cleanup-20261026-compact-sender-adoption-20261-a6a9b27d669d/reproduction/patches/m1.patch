@@ -1,0 +1,44 @@
+diff --git a/src/sender/scan/producer.rs b/src/sender/scan/producer.rs
+index 164723c..b83ccc2 100644
+--- a/src/sender/scan/producer.rs
++++ b/src/sender/scan/producer.rs
+@@ -52,6 +52,10 @@ impl ScanOutput {
+             return Ok(());
+         }
+         let batch = std::mem::replace(&mut self.batch, Vec::with_capacity(SCAN_BATCH_ENTRIES));
++        self.send_batch(batch)
++    }
++
++    fn send_batch(&mut self, batch: Vec<ScanItem>) -> Result<()> {
+         let message = ScanMessage::Batch(batch, self.duration());
+         let started = Instant::now();
+         let _waiting = progress::stage(
+@@ -66,15 +70,20 @@ impl ScanOutput {
+ 
+     pub(super) fn complete(mut self, result: Result<()>) {
+         // Даже при поздней ошибке сохраняем порядок: сначала найденный префикс.
+-        if self.flush().is_ok() {
+-            let message = result.map(|()| ScanMessage::Finished(self.duration()));
+-            let _waiting = progress::stage(
+-                self.control.as_ref(),
+-                PipelineStage::Scan,
+-                PipelineState::WaitingConsumer,
+-            );
+-            let _ = self.sender.send(message);
++        if !self.batch.is_empty() {
++            // После последнего batch новый буфер уже не понадобится.
++            let batch = std::mem::take(&mut self.batch);
++            if self.send_batch(batch).is_err() {
++                return;
++            }
+         }
++        let message = result.map(|()| ScanMessage::Finished(self.duration()));
++        let _waiting = progress::stage(
++            self.control.as_ref(),
++            PipelineStage::Scan,
++            PipelineState::WaitingConsumer,
++        );
++        let _ = self.sender.send(message);
+     }
+ }
+ 

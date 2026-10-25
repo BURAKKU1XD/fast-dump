@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "entries": [],
+  "warnings": [],
+  "checks": {
+    "windows/after/release/checks.json": {
+      "source": {
+        "path": "checks/windows/after/release/checks.json",
+        "sha256": "df6c4107819c201284cc018a49739be9cb1ff8ba1e93189bd0a9a343dc5772dd",
+        "bytes": 311
+      },
+      "observations": [
+        {
+          "check": "release-build",
+          "exit_code": 0,
+          "command": [
+            "cargo",
+            "build",
+            "--offline",
+            "--locked",
+            "--release",
+            "--bench",
+            "loopback_send_dump",
+            "--features",
+            "bench-internals"
+          ],
+          "seconds": 29.2635689000017,
+          "log": {
+            "path": "checks/windows/after/release/build.log",
+            "sha256": "39ea0965cf5a28a3dd56c0d1a6c987a10ccab780abb7d6d7677df09557a2d625",
+            "bytes": 200
+          }
+        }
+      ]
+    },
+    "windows/before/release/checks.json": {
+      "source": {
+        "path": "checks/windows/before/release/checks.json",
+        "sha256": "a80f6718e9bd4d9d975b575b7ef372b0faf188941591fa835d7fb50292addc69",
+        "bytes": 313
+      },
+      "observations": [
+        {
+          "check": "release-build",
+          "exit_code": 0,
+          "command": [
+            "cargo",
+            "build",
+            "--offline",
+            "--locked",
+            "--release",
+            "--bench",
+            "loopback_send_dump",
+            "--features",
+            "bench-internals"
+          ],
+          "seconds": 29.260283100011293,
+          "log": {
+            "path": "checks/windows/before/release/build.log",
+            "sha256": "b362ab05f04be02a6cb7449c6854ad4ce3ebd5cbb205426775151fac9aad35d9",
+            "bytes": 201
+          }
+        }
+      ]
+    }
+  }
+}

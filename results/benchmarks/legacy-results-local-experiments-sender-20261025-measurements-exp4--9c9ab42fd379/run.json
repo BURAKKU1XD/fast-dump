@@ -1,0 +1,145 @@
+{
+  "schema_version": 1,
+  "id": "legacy-results-local-experiments-sender-20261025-measurements-exp4--9c9ab42fd379",
+  "kind": "benchmark",
+  "label": "exp4-random",
+  "status": "imported",
+  "started_utc": "2026-10-25T12:41:59.929939+00:00",
+  "time_source": "original_file_mtime",
+  "imported_utc": "2026-10-25T12:47:09.844100+00:00",
+  "experiment_path": "results/local/experiments/sender-20261025/measurements/exp4-random",
+  "import_sha256": "9c9ab42fd3798da105797eb889dc46338daf9a3ad05aaef4671fa3800ec4861c",
+  "origin": "results/local/experiments/sender-20261025/measurements",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "binary_sha256": {
+      "before": "6a7f3a02b327c98f814c1b8406411dde2b030931cd2b52d86d1f82403fe2d011",
+      "after": "b4497b1095a9a21ad500ba0d9c6d7c3d8929e7c06c2531583d0c32d6d805d623"
+    },
+    "comparison_kind": "A/B",
+    "requested_readers": {
+      "before": 8,
+      "after": 8
+    },
+    "common_arguments": [
+      "--repeats",
+      "1",
+      "--shuffle-scenarios",
+      "--shuffle-seed",
+      "91",
+      "--source",
+      "E:\\projects\\cool_project\\fast-dump\\results\\local\\experiments\\sender-20261025\\fixtures\\incompressible",
+      "--network-profile",
+      "loopback-localhost",
+      "--threads",
+      "4",
+      "--frames",
+      "64",
+      "--buffers",
+      "1024",
+      "--executor",
+      "default"
+    ],
+    "repeats_per_side": 5,
+    "policy": "AB then BA alternating; all samples retained; no automatic warmup or trimming",
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "after",
+        "exit_code": 0
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "exp4-random/before/run.log",
+      "sha256": "0872dde6d436f373d8b86c6121c219a7c760a0e6f128f8f6a2e6a4f426dc6e4e",
+      "bytes": 17073,
+      "extracted_sha256": "539eca61f844e306b44531234c91d48daee68910e0545c068b03c8fd591f28dc",
+      "saved": "raw/before/resource_samples.csv"
+    },
+    {
+      "source": "exp4-random/before/results_raw.csv",
+      "sha256": "8c560dce1960e84491cb721ed0849ada0d87d5380d541b0943db5836e45f909b",
+      "bytes": 4276,
+      "saved": "raw/before/results_raw.csv"
+    },
+    {
+      "source": "exp4-random/after/run.log",
+      "sha256": "06d265ac325472eebafdda1c777405f9db8a2e60a70c37982d6936956ff86c37",
+      "bytes": 17058,
+      "extracted_sha256": "43bbb3d84be915476f1d5844549ba5b13b25875cc599bda15d892ae4a3d80001",
+      "saved": "raw/after/resource_samples.csv"
+    },
+    {
+      "source": "exp4-random/after/results_raw.csv",
+      "sha256": "2775fabe5f8f4581b7b85a191707739542db5dbf22888eb18c3156e1c6f95841",
+      "bytes": 4277,
+      "saved": "raw/after/results_raw.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "exp4-random/paired-run.json",
+      "sha256": "1395ec9ce65d190553c2bfd89fb9e1b3691398dfb03bb98e77b62d6e1a805c98",
+      "bytes": 10604
+    },
+    {
+      "source": "exp4-random/before/run.log",
+      "sha256": "0872dde6d436f373d8b86c6121c219a7c760a0e6f128f8f6a2e6a4f426dc6e4e",
+      "bytes": 17073
+    },
+    {
+      "source": "exp4-random/after/run.log",
+      "sha256": "06d265ac325472eebafdda1c777405f9db8a2e60a70c37982d6936956ff86c37",
+      "bytes": 17058
+    }
+  ]
+}

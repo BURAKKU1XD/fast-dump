@@ -1,0 +1,21 @@
+{
+  "schema": 1,
+  "purpose": "Direct verified end-to-end comparison of current bb50042 against chore: reorganize project and preserve benchmark history (4c58969)",
+  "before_commit": "4c58969a1ac1d4fbf18675077cac105485f2f2ab",
+  "after_commit": "bb5004255e8cc23c5d7543d5e6d6f4499960b27f",
+  "source_policy": "Exact Git blob snapshots excluding results only; no runtime or benchmark harness patches; separate fresh package builds and target directories. Dependency-only build cache seed is recorded.",
+  "comparison_id": "direct",
+  "planned_series": 6,
+  "planned_observations": 90,
+  "fixtures": ["manySmallFiles", "mixed", "bigFiles"],
+  "pairs_per_fixture": {"A/A": 5, "A/B": 10},
+  "order": "A/A then A/B within each fixture; AB/BA alternating within each series; all samples retained",
+  "settings": {"platform": "Windows", "network": "loopback-localhost", "readers": 8, "compression_threads": 4, "zstd_level": 3, "frame_target_mib": 64, "read_buffer_kib": 1024, "executor": "default", "allocation_instrumentation": false},
+  "measurement_scope": "Sender-profile full transfer wall time after transport establishment; combined sender/receiver benchmark process CPU/cycles and sampled RSS; archive verification outside timed intervals",
+  "cache_policy": "Uncontrolled; fixture content hashing before the run and archive verification can warm the filesystem cache; no cold-cache claim, no discarded warmup",
+  "concurrency_policy": "No agent builds, tests, hashing or analysis during the timed series; OS and external background workloads uncontrolled",
+  "verification": "Every completed tar.zst verified against the fixture, with zero skipped files, frame aborts or rebuilds; fixture content proof before and after; source/compiler/binary pins preserved",
+  "host_metadata": "host.json",
+  "code_changes": false,
+  "commit_created": false
+}

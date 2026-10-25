@@ -1,0 +1,42 @@
+{
+  "m2": {
+    "enabled": true,
+    "accepted_head": "e46d64e9bdbff490a1d05219a162b06e91e45b25",
+    "baseline_name": "m1-accepted",
+    "candidate": "m2-subtree-move",
+    "before": {
+      "source": "../sender-micro-20261025/sources/m1-scan-tail",
+      "manifest": "../sender-micro-20261025/source-manifests.json",
+      "manifest_key": "m1-scan-tail",
+      "artifacts": "../sender-micro-20261025/artifacts/m1-scan-tail",
+      "allocation_artifacts": "../sender-micro-20261025/artifacts/m1-scan-tail-alloc",
+      "compiler_manifest": "../sender-micro-20261025/experiment.json",
+      "reuse_note": "Immutable earlier M1 binaries; main production inputs checked against accepted M1, except six common benchmark-harness files kept only in the local snapshot."
+    },
+    "after": {
+      "source": "sources/m2-bench",
+      "manifest": "m2-bench-source.json",
+      "artifacts": "artifacts/m2-bench",
+      "allocation_artifacts": "artifacts/m2-bench-alloc",
+      "compiler_manifest": "experiment.json"
+    }
+  },
+  "m3-control": {
+    "enabled": true,
+    "accepted_head": "2a7c8eeeb70f9046a4629168d66d4fc0123f247e",
+    "baseline_name": "m1-m2-accepted",
+    "candidate": "m3-control-capacity",
+    "before": {
+      "source": "sources/m2-bench",
+      "manifest": "m2-bench-source.json",
+      "artifacts": "artifacts/m2-bench",
+      "compiler_manifest": "experiment.json"
+    },
+    "after": {
+      "source": "sources/m3-bench",
+      "manifest": "m3-bench-source.json",
+      "artifacts": "artifacts/m3-bench",
+      "compiler_manifest": "experiment.json"
+    }
+  }
+}

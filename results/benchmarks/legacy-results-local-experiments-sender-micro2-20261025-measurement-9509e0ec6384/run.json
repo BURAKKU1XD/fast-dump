@@ -1,0 +1,101 @@
+{
+  "schema_version": 1,
+  "id": "legacy-results-local-experiments-sender-micro2-20261025-measurement-9509e0ec6384",
+  "kind": "benchmark",
+  "label": "progress-guard-none-1m-aa",
+  "status": "imported",
+  "started_utc": "2026-10-25T19:56:13.530159+00:00",
+  "time_source": "original_file_mtime",
+  "imported_utc": "2026-10-25T20:13:00.356984+00:00",
+  "experiment_path": "results/local/experiments/sender-micro2-20261025/measurements/progress-guard-none-1m-aa",
+  "import_sha256": "9509e0ec63847a3f86276c9928bf909baee702fe170d1071ce0a9466114c0ee7",
+  "origin": "results/local/experiments/sender-micro2-20261025/measurements",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "binary_sha256": {
+      "before": "5eb76cf74a7c41f5ad544c7487955fff0c78fcc748eaf2a67b55eb4947bc3254",
+      "after": "5eb76cf74a7c41f5ad544c7487955fff0c78fcc748eaf2a67b55eb4947bc3254"
+    },
+    "comparison_kind": "A/A",
+    "common_arguments": [
+      "--case",
+      "none",
+      "--iterations",
+      "1000000",
+      "--repeats",
+      "1"
+    ],
+    "allocations_diagnostic": false,
+    "repeats": 5,
+    "policy": "Alternating AB/BA; every observation retained; no dropped warmup or outliers.",
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "after",
+        "exit_code": 0
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "progress-guard-none-1m-aa/samples.csv",
+      "sha256": "448aae11e46a94fa112c3df25589248a0f8bc9517f2758b28b7a33dab9eef89d",
+      "bytes": 3958,
+      "saved": "raw/samples.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "progress-guard-none-1m-aa/paired-run.json",
+      "sha256": "6da378b31c13aa4f0d21fe6018bb264728d78c1e103127150354144a5485dc35",
+      "bytes": 14934
+    }
+  ]
+}

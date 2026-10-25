@@ -1,0 +1,107 @@
+{
+  "direct": {
+    "enabled": true,
+    "accepted_head": "4c58969a1ac1d4fbf18675077cac105485f2f2ab",
+    "after_commit": "bb5004255e8cc23c5d7543d5e6d6f4499960b27f",
+    "baseline_name": "chore-exact",
+    "candidate": "current-exact",
+    "before": {
+      "source": "sources/before",
+      "manifest": "before-source.json",
+      "artifacts": "artifacts/before",
+      "compiler_manifest": "checks/windows/before/release/environment.json"
+    },
+    "after": {
+      "source": "sources/after",
+      "manifest": "after-source.json",
+      "artifacts": "artifacts/after",
+      "compiler_manifest": "checks/windows/after/release/environment.json"
+    },
+    "groups": [
+      {
+        "id": "e2e-manySmallFiles",
+        "phase": "screen",
+        "adapter": "e2e",
+        "stage": "e2e",
+        "fixture": "manySmallFiles",
+        "executable": "loopback_send_dump",
+        "scope": "sender_receiver_process",
+        "arguments": [
+          "--readers",
+          "8",
+          "--threads",
+          "4",
+          "--frames",
+          "64",
+          "--buffers",
+          "1024",
+          "--executor",
+          "default",
+          "--network-profile",
+          "loopback-localhost"
+        ],
+        "aa_pairs": 5,
+        "ab_pairs": 10,
+        "allocation_pairs": 0
+      },
+      {
+        "id": "e2e-mixed",
+        "phase": "screen",
+        "adapter": "e2e",
+        "stage": "e2e",
+        "fixture": "mixed",
+        "executable": "loopback_send_dump",
+        "scope": "sender_receiver_process",
+        "arguments": [
+          "--readers",
+          "8",
+          "--threads",
+          "4",
+          "--frames",
+          "64",
+          "--buffers",
+          "1024",
+          "--executor",
+          "default",
+          "--network-profile",
+          "loopback-localhost"
+        ],
+        "aa_pairs": 5,
+        "ab_pairs": 10,
+        "allocation_pairs": 0
+      },
+      {
+        "id": "e2e-bigFiles",
+        "phase": "screen",
+        "adapter": "e2e",
+        "stage": "e2e",
+        "fixture": "bigFiles",
+        "executable": "loopback_send_dump",
+        "scope": "sender_receiver_process",
+        "arguments": [
+          "--readers",
+          "8",
+          "--threads",
+          "4",
+          "--frames",
+          "64",
+          "--buffers",
+          "1024",
+          "--executor",
+          "default",
+          "--network-profile",
+          "loopback-localhost"
+        ],
+        "aa_pairs": 5,
+        "ab_pairs": 10,
+        "allocation_pairs": 0
+      }
+    ],
+    "fixture_before": {
+      "path": "fixture-before.json",
+      "sha256": "ddda1b1c2581c1a038bcbe252d8fe8b2c0c50f619c273d90793f9bfee2c1a208",
+      "combined_sha256": "ce79913dec1a228e4fb9e34af3a688f9d76b23af9b57429d6c804aebaf3ef534",
+      "script_sha256": "867909fd6650cd726c7f2c525567f304fe986ecf2a1d7ec83b74795796403d09"
+    }
+  }
+}

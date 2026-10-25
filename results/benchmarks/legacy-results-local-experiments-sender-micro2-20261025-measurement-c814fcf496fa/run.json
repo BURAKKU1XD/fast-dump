@@ -1,0 +1,145 @@
+{
+  "schema_version": 1,
+  "id": "legacy-results-local-experiments-sender-micro2-20261025-measurement-c814fcf496fa",
+  "kind": "benchmark",
+  "label": "commit-e2e-mixed-ab",
+  "status": "imported",
+  "started_utc": "2026-10-25T20:09:53.493479+00:00",
+  "time_source": "original_file_mtime",
+  "imported_utc": "2026-10-25T20:13:00.162868+00:00",
+  "experiment_path": "results/local/experiments/sender-micro2-20261025/measurements/commit-e2e-mixed-ab",
+  "import_sha256": "c814fcf496fa60677bf6fd3d3a49aaa4c30604cc8d7a9b6d8f31e8319eec548f",
+  "origin": "results/local/experiments/sender-micro2-20261025/measurements",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "binary_sha256": {
+      "before": "76f7e37b24fdf7933d9af952d1544bffdcb89e0716e30a45eddb83e84d3627ba",
+      "after": "336f0aac57d89c19581caf63fc9bc0bcf1a48f8ca251aad7c619111df53a89f0"
+    },
+    "comparison_kind": "A/B",
+    "requested_readers": {
+      "before": 8,
+      "after": 8
+    },
+    "common_arguments": [
+      "--repeats",
+      "1",
+      "--shuffle-scenarios",
+      "--shuffle-seed",
+      "91",
+      "--source",
+      "E:\\projects\\cool_project\\fast-dump\\results\\local\\experiments\\sender-20261025\\fixtures\\mixed",
+      "--network-profile",
+      "loopback-localhost",
+      "--threads",
+      "4",
+      "--frames",
+      "64",
+      "--buffers",
+      "1024",
+      "--executor",
+      "default"
+    ],
+    "repeats_per_side": 5,
+    "policy": "AB then BA alternating; all samples retained; no automatic warmup or trimming",
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "after",
+        "exit_code": 0
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "commit-e2e-mixed-ab/before/run.log",
+      "sha256": "fcf15b1f0f6c8c38cca99c27a7eb41dcc8cd2a395ff8a39d8d30f228410940ea",
+      "bytes": 17371,
+      "extracted_sha256": "5d88ab9c39d58b539765b58b8f3cdf5e3b9f0e6fc12bc8cf362bfc680a0fec74",
+      "saved": "raw/before/resource_samples.csv"
+    },
+    {
+      "source": "commit-e2e-mixed-ab/before/results_raw.csv",
+      "sha256": "4e4546d3eaac5095ee7300d9f26b23b076301ec8cbf18d3dd173c1b5e57b417a",
+      "bytes": 4394,
+      "saved": "raw/before/results_raw.csv"
+    },
+    {
+      "source": "commit-e2e-mixed-ab/after/run.log",
+      "sha256": "2271c0fd2712a0f969e660258ab0b39c328caa4e671425dceb90e5d9f9ddc6f6",
+      "bytes": 17358,
+      "extracted_sha256": "d6d6d2c9c9ed88818be234d0e214d701e79e54c1cd2afc5c41d4c8582a6cb446",
+      "saved": "raw/after/resource_samples.csv"
+    },
+    {
+      "source": "commit-e2e-mixed-ab/after/results_raw.csv",
+      "sha256": "94d2ddb1dfa4578794e836236d2bbc4f4f97b433cb6f1a1968052c91df36ef3e",
+      "bytes": 4393,
+      "saved": "raw/after/results_raw.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "commit-e2e-mixed-ab/paired-run.json",
+      "sha256": "1fd8f0e3b4e14afc76015234e70c869fd6676074faad7bca1c2954aee2492746",
+      "bytes": 10546
+    },
+    {
+      "source": "commit-e2e-mixed-ab/before/run.log",
+      "sha256": "fcf15b1f0f6c8c38cca99c27a7eb41dcc8cd2a395ff8a39d8d30f228410940ea",
+      "bytes": 17371
+    },
+    {
+      "source": "commit-e2e-mixed-ab/after/run.log",
+      "sha256": "2271c0fd2712a0f969e660258ab0b39c328caa4e671425dceb90e5d9f9ddc6f6",
+      "bytes": 17358
+    }
+  ]
+}

@@ -1,0 +1,145 @@
+{
+  "schema_version": 1,
+  "id": "legacy-results-local-experiments-sender-micro2-20261025-measurement-ad1a067b15b5",
+  "kind": "benchmark",
+  "label": "counter-e2e-bigFiles-ab",
+  "status": "imported",
+  "started_utc": "2026-10-25T20:02:22.288153+00:00",
+  "time_source": "original_file_mtime",
+  "imported_utc": "2026-10-25T20:13:00.216745+00:00",
+  "experiment_path": "results/local/experiments/sender-micro2-20261025/measurements/counter-e2e-bigFiles-ab",
+  "import_sha256": "ad1a067b15b5543a4c95147ca189bd5a75b72f396874c6454b75d3cf9850b33e",
+  "origin": "results/local/experiments/sender-micro2-20261025/measurements",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "binary_sha256": {
+      "before": "3ea9a94cde4aa93d5de4573d43746440d192af9ed8a022246ebd9f89f0cbf0a3",
+      "after": "0b7493d2d6e520a3af2253dc13815f0e1f0b25a3cb15c5d3996bbfa8f2ec9bd4"
+    },
+    "comparison_kind": "A/B",
+    "requested_readers": {
+      "before": 8,
+      "after": 8
+    },
+    "common_arguments": [
+      "--repeats",
+      "1",
+      "--shuffle-scenarios",
+      "--shuffle-seed",
+      "91",
+      "--source",
+      "E:\\projects\\cool_project\\fast-dump\\results\\local\\experiments\\sender-20261025\\fixtures\\bigFiles",
+      "--network-profile",
+      "loopback-localhost",
+      "--threads",
+      "4",
+      "--frames",
+      "64",
+      "--buffers",
+      "1024",
+      "--executor",
+      "default"
+    ],
+    "repeats_per_side": 5,
+    "policy": "AB then BA alternating; all samples retained; no automatic warmup or trimming",
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "after",
+        "exit_code": 0
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "counter-e2e-bigFiles-ab/before/run.log",
+      "sha256": "b9fa6f72634264c066d7e743216a84118cb21cac2e698340b9f65f4e7d3e87b5",
+      "bytes": 17338,
+      "extracted_sha256": "28f66271794362f15eead0d1ec1ca6766f48f1aa5f8fc0189f5c5ce909364f3d",
+      "saved": "raw/before/resource_samples.csv"
+    },
+    {
+      "source": "counter-e2e-bigFiles-ab/before/results_raw.csv",
+      "sha256": "d917345358a31403e39f8b8d12d4de905fb3023381314f43338a139358fb8a8c",
+      "bytes": 4307,
+      "saved": "raw/before/results_raw.csv"
+    },
+    {
+      "source": "counter-e2e-bigFiles-ab/after/run.log",
+      "sha256": "5f93bda693862b6469dc1fb01465246c88f2d0b3d0cfeb185f8344b296250887",
+      "bytes": 17321,
+      "extracted_sha256": "ac0353efad1626ca7fba6037cd57c3397f8c627750aff5f7b4c5e4e5329b16be",
+      "saved": "raw/after/resource_samples.csv"
+    },
+    {
+      "source": "counter-e2e-bigFiles-ab/after/results_raw.csv",
+      "sha256": "0ac35ab59189394c57b190a2f5148beb2cef97952d30c023713a1d0976302183",
+      "bytes": 4307,
+      "saved": "raw/after/results_raw.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "counter-e2e-bigFiles-ab/paired-run.json",
+      "sha256": "259c576bd47fb1c05254cc4cee2331b158ba83a2cc5944d2a6532f168ec092db",
+      "bytes": 10644
+    },
+    {
+      "source": "counter-e2e-bigFiles-ab/before/run.log",
+      "sha256": "b9fa6f72634264c066d7e743216a84118cb21cac2e698340b9f65f4e7d3e87b5",
+      "bytes": 17338
+    },
+    {
+      "source": "counter-e2e-bigFiles-ab/after/run.log",
+      "sha256": "5f93bda693862b6469dc1fb01465246c88f2d0b3d0cfeb185f8344b296250887",
+      "bytes": 17321
+    }
+  ]
+}
