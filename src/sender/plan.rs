@@ -145,7 +145,7 @@ pub(crate) struct DumpPlanner {
     options: BundlePlanOptions,
     known_terminal_paths: BTreeSet<String>,
     new_terminal_skips: Vec<SkippedEntry>,
-    terminal_skips: Vec<SkippedEntry>,
+    terminal_skip_count: usize,
     final_work_ordinal: u64,
     profile: PrepareProfile,
     #[cfg(test)]
@@ -279,7 +279,7 @@ impl DumpPlanner {
             options,
             known_terminal_paths,
             new_terminal_skips: Vec::new(),
-            terminal_skips: resume_state.terminal_skips.clone(),
+            terminal_skip_count: resume_state.terminal_skips.len(),
             final_work_ordinal: 0,
             profile: PrepareProfile::default(),
             #[cfg(test)]
@@ -482,7 +482,7 @@ impl DumpPlanner {
 
     pub(crate) fn finish_profile(mut self) -> PrepareProfile {
         self.refresh_scan_state();
-        self.profile.terminal_skips = self.terminal_skips.len() as u64;
+        self.profile.terminal_skips = self.terminal_skip_count as u64;
         self.profile
     }
 
@@ -517,8 +517,9 @@ impl DumpPlanner {
             .known_terminal_paths
             .insert(skipped.relative_path.clone())
         {
-            self.new_terminal_skips.push(skipped.clone());
-            self.terminal_skips.push(skipped);
+            // Полный descriptor нужен исходящей очереди; для итогового profile достаточно числа.
+            self.terminal_skip_count += 1;
+            self.new_terminal_skips.push(skipped);
             #[cfg(test)]
             if self
                 .cancel_after_skips
@@ -1167,6 +1168,61 @@ mod tests {
         assert_eq!(profile.discovered_entries, 97);
         assert_eq!(profile.bundled_entries, 56);
         assert_eq!(profile.terminal_skips, 1);
+    }
+
+    #[test]
+    fn terminal_skip_count_preserves_resume_len_and_unique_outgoing_descriptors() {
+        use crate::network::protocol::SkipReason;
+
+        let dir = TestDir::new();
+        let saved = SkippedEntry {
+            work_ordinal: 4,
+            relative_path: "данные/уже-пропущен".into(),
+            reason: SkipReason::OpenFailed,
+        };
+        // Счётчик повторяет прежний len каталога, а дедупликация новых skips остаётся по пути.
+        let state = ResumeState {
+            terminal_skips: vec![saved.clone(), saved.clone()],
+            ..ResumeState::default()
+        };
+        let mut planner = DumpPlanner::new(
+            dir.path(),
+            &state,
+            BundlePlanOptions {
+                readers: 1,
+                ..BundlePlanOptions::default()
+            },
+        )
+        .unwrap();
+        planner.record_terminal_skip(SkippedEntry {
+            work_ordinal: 99,
+            reason: SkipReason::UnstableAfterRetries,
+            ..saved
+        });
+        assert!(planner.take_new_terminal_skips().is_empty());
+        let first = SkippedEntry {
+            work_ordinal: 7,
+            relative_path: "новый/🙂".into(),
+            reason: SkipReason::ReadSymlinkFailed,
+        };
+        planner.record_terminal_skip(first.clone());
+        planner.record_terminal_skip(SkippedEntry {
+            work_ordinal: 100,
+            reason: SkipReason::UnsupportedEntry,
+            ..first.clone()
+        });
+        assert_eq!(planner.take_new_terminal_skips(), vec![first.clone()]);
+        planner.record_terminal_skip(first);
+        let second = SkippedEntry {
+            work_ordinal: 0,
+            relative_path: "отключённый-каталог".into(),
+            reason: SkipReason::UnsupportedEntry,
+        };
+        planner.record_terminal_skip(second.clone());
+        assert_eq!(planner.take_new_terminal_skips(), vec![second]);
+        assert!(planner.take_new_terminal_skips().is_empty());
+        assert_eq!(planner.finish_profile().terminal_skips, 4);
+        assert_eq!(state.terminal_skips.len(), 2);
     }
 
     #[cfg(unix)]
