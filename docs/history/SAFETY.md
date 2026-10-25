@@ -1,3 +1,6 @@
+> Historical document. See the [current runtime](../runtime.md) and
+> [protocol v4](../../src/network/protocol.md) for the active contract.
+
 # SAFETY Plan for v3
 
 Этот документ фиксирует план по тестам на надежность для текущего `v3` runtime

@@ -1,0 +1,97 @@
+{
+  "schema_version": 1,
+  "entries": [
+    {
+      "family": "matrix",
+      "case": "manySmallFiles",
+      "side": "",
+      "scenario": {
+        "dataset": "manySmallFiles",
+        "protocol_runtime": "v3",
+        "network_profile": "loopback-localhost",
+        "executor": "default",
+        "threads": "1",
+        "frame_target_mb": "16",
+        "read_buffer_kb": "64",
+        "large_file_single_frame_threshold_mib": "16",
+        "manifest_chunk_kb": "512",
+        "manifest_ack_records": "65536",
+        "manifest_ack_kb": "8192",
+        "readers": null,
+        "side": null
+      },
+      "metrics": {
+        "elapsed_ms": {
+          "n": 1,
+          "mean": 144.0533,
+          "median": 144.0533,
+          "min": 144.0533,
+          "max": 144.0533,
+          "p95": 144.0533,
+          "unit": "ms",
+          "direction": "lower"
+        },
+        "throughput_mib_s": {
+          "n": 1,
+          "mean": 0.039722,
+          "median": 0.039722,
+          "min": 0.039722,
+          "max": 0.039722,
+          "p95": 0.039722,
+          "unit": "MiB/s",
+          "direction": "higher"
+        },
+        "cpu_pct": {
+          "n": 1,
+          "mean": 8.689077,
+          "median": 8.689077,
+          "min": 8.689077,
+          "max": 8.689077,
+          "p95": 8.689077,
+          "unit": "%",
+          "direction": "lower"
+        },
+        "rss_mib": {
+          "n": 1,
+          "mean": 8.207031,
+          "median": 8.207031,
+          "min": 8.207031,
+          "max": 8.207031,
+          "p95": 8.207031,
+          "unit": "MiB",
+          "direction": "lower"
+        },
+        "first_bundle_ms": {
+          "n": 1,
+          "mean": 19.1854,
+          "median": 19.1854,
+          "min": 19.1854,
+          "max": 19.1854,
+          "p95": 19.1854,
+          "unit": "ms",
+          "direction": "lower"
+        }
+      },
+      "sample_count": 1,
+      "reported_repeats": null,
+      "evidence": "raw",
+      "fixture": {
+        "entries": 2000.0,
+        "bytes": 6000.0,
+        "fingerprint": null
+      },
+      "verified": false,
+      "static_fixture_clean": true,
+      "counter_contract": null,
+      "notes": [
+        "Fixture content fingerprint unavailable; historical comparisons require context."
+      ],
+      "files": [
+        "raw/results_raw.csv"
+      ],
+      "experiment": "target/bench-small-fallback-20260407",
+      "pair_context": null
+    }
+  ],
+  "warnings": []
+}

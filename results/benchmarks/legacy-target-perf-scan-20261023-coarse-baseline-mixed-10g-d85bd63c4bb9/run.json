@@ -1,0 +1,174 @@
+{
+  "schema_version": 1,
+  "id": "legacy-target-perf-scan-20261023-coarse-baseline-mixed-10g-d85bd63c4bb9",
+  "kind": "benchmark",
+  "label": "target/perf-scan-20261023/coarse-baseline-mixed-10g",
+  "status": "imported",
+  "started_utc": "2026-10-23T20:29:47.123008+00:00",
+  "time_source": "original_file_mtime",
+  "imported_utc": "2026-10-25T02:06:44.327861+00:00",
+  "import_sha256": "d85bd63c4bb99299cca01ea35026a10768f5588ed2e47db2e01918bfff3e3834",
+  "origin": "results/history/2026-10-24",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "binary_sha256": {
+      "before": "da67604e5471ffd0ed024dcfbafe0d7968b4d3262ff3c8cda15bb900e24510c2",
+      "after": "38970f8290efd8d30a023ed3421957b716516bc4f8e9363de087591677172167"
+    },
+    "comparison_kind": "A/B",
+    "requested_readers": {
+      "before": 16,
+      "after": 16
+    },
+    "common_arguments": [
+      "--repeats",
+      "1",
+      "--shuffle-scenarios",
+      "--shuffle-seed",
+      "91",
+      "--source",
+      "E:\\projects\\cool_project\\fast-dump\\target\\bench-verify-20261022\\datasets\\mixed",
+      "--network-profile",
+      "link-10gbps",
+      "--threads",
+      "31",
+      "--frames",
+      "64",
+      "--buffers",
+      "1024",
+      "--executor",
+      "default"
+    ],
+    "repeats_per_side": 8,
+    "policy": "AB then BA alternating; all samples retained; no automatic warmup or trimming",
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 6,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 6,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 7,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 7,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 8,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 8,
+        "side": "before",
+        "exit_code": 0
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "target/perf-scan-20261023/coarse-baseline-mixed-10g/before/run.log",
+      "sha256": "c8f93a0f3f99ca8fee11b384778de9b894b5d270540269069e7e2e35ec793154",
+      "bytes": 26578,
+      "extracted_sha256": "a37a41885b203da32709902086821f5fa4bbc44b795460be9c4abd95af646ad2",
+      "saved": "raw/before/resource_samples.csv"
+    },
+    {
+      "source": "target/perf-scan-20261023/coarse-baseline-mixed-10g/before/results_raw.csv",
+      "sha256": "95f9cf15ef2c2d990c403afd5eb5e8f8b0528110ead5f1f4e746cb9f20af9988",
+      "bytes": 6059,
+      "saved": "raw/before/results_raw.csv"
+    },
+    {
+      "source": "target/perf-scan-20261023/coarse-baseline-mixed-10g/after/run.log",
+      "sha256": "f3d17ce8de1ba46b66a8dad5b939d3ca3f35625c4a895117a0814071d4f49c5f",
+      "bytes": 26532,
+      "extracted_sha256": "88ae5ff97b141cea6e8fddfb609331a099a56c7fd5b61a8eaa772f953d5aa1c8",
+      "saved": "raw/after/resource_samples.csv"
+    },
+    {
+      "source": "target/perf-scan-20261023/coarse-baseline-mixed-10g/after/results_raw.csv",
+      "sha256": "9f6e8ed05f7f7c09195023afe79c79141f81a9983ba1e5cccd4540884c0dcccc",
+      "bytes": 6043,
+      "saved": "raw/after/results_raw.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "target/perf-scan-20261023/coarse-baseline-mixed-10g/paired-run.json",
+      "sha256": "e27e70a832e97036fb632f7b5d98c7c73503cb93e3711473d6436abd2fd3346a",
+      "bytes": 14560
+    },
+    {
+      "source": "target/perf-scan-20261023/coarse-baseline-mixed-10g/before/run.log",
+      "sha256": "c8f93a0f3f99ca8fee11b384778de9b894b5d270540269069e7e2e35ec793154",
+      "bytes": 26578
+    },
+    {
+      "source": "target/perf-scan-20261023/coarse-baseline-mixed-10g/after/run.log",
+      "sha256": "f3d17ce8de1ba46b66a8dad5b939d3ca3f35625c4a895117a0814071d4f49c5f",
+      "bytes": 26532
+    }
+  ]
+}

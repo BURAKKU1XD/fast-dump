@@ -1,0 +1,154 @@
+{
+  "schema_version": 1,
+  "id": "legacy-target-perf-scan-20261023-candidate3-small-10g-066c0eb7491b",
+  "kind": "benchmark",
+  "label": "target/perf-scan-20261023/candidate3-small-10g",
+  "status": "imported",
+  "started_utc": "2026-10-23T20:24:20.931701+00:00",
+  "time_source": "original_file_mtime",
+  "imported_utc": "2026-10-25T02:06:44.251233+00:00",
+  "import_sha256": "066c0eb7491be7cba831399dd325cea5351ac8319fc1ab56e1ca6e6f267f4d39",
+  "origin": "results/history/2026-10-24",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "binary_sha256": {
+      "before": "da67604e5471ffd0ed024dcfbafe0d7968b4d3262ff3c8cda15bb900e24510c2",
+      "after": "a461cc797f748d3209b65e7ce4724eea85cfbc22cec2e8084df6cfd46f3fcb15"
+    },
+    "comparison_kind": "A/B",
+    "requested_readers": {
+      "before": 16,
+      "after": 16
+    },
+    "common_arguments": [
+      "--repeats",
+      "1",
+      "--shuffle-scenarios",
+      "--shuffle-seed",
+      "91",
+      "--source",
+      "E:\\projects\\cool_project\\fast-dump\\target\\bench-verify-20261022\\datasets\\manySmallFiles",
+      "--network-profile",
+      "link-10gbps",
+      "--threads",
+      "31",
+      "--frames",
+      "64",
+      "--buffers",
+      "1024",
+      "--executor",
+      "default"
+    ],
+    "repeats_per_side": 6,
+    "policy": "AB then BA alternating; all samples retained; no automatic warmup or trimming",
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 6,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 6,
+        "side": "before",
+        "exit_code": 0
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "target/perf-scan-20261023/candidate3-small-10g/before/run.log",
+      "sha256": "c7cc814be5070b40424afd8a24fde994dc586c480903e5ed582fce668947572a",
+      "bytes": 19874,
+      "extracted_sha256": "8bc14f19ab08aa9e065630e0fd6404045622768e7232ef85a32f5c576c6f148e",
+      "saved": "raw/before/resource_samples.csv"
+    },
+    {
+      "source": "target/perf-scan-20261023/candidate3-small-10g/before/results_raw.csv",
+      "sha256": "098e67df830548689815dde0e934a43cb72366b6d305f4e890f44c2d612907a4",
+      "bytes": 4890,
+      "saved": "raw/before/results_raw.csv"
+    },
+    {
+      "source": "target/perf-scan-20261023/candidate3-small-10g/after/run.log",
+      "sha256": "58abd32ebc16db7474e05eaf70b0fb592f04727e01649415047672712a5a6baa",
+      "bytes": 19855,
+      "extracted_sha256": "27438f77038d8f67bd538c0fdffdbf7026aa398dcb2307b47c5b573a279f7c61",
+      "saved": "raw/after/resource_samples.csv"
+    },
+    {
+      "source": "target/perf-scan-20261023/candidate3-small-10g/after/results_raw.csv",
+      "sha256": "0e6a48f8ae19d364f6456fd3701fc9b9b3bcfecf2fc74dbba9e9f648fed54bce",
+      "bytes": 4897,
+      "saved": "raw/after/results_raw.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "target/perf-scan-20261023/candidate3-small-10g/paired-run.json",
+      "sha256": "a02fbc12f85e516bd0b5c6d62444318e401dec396e444dd6394fd749964b4811",
+      "bytes": 11213
+    },
+    {
+      "source": "target/perf-scan-20261023/candidate3-small-10g/before/run.log",
+      "sha256": "c7cc814be5070b40424afd8a24fde994dc586c480903e5ed582fce668947572a",
+      "bytes": 19874
+    },
+    {
+      "source": "target/perf-scan-20261023/candidate3-small-10g/after/run.log",
+      "sha256": "58abd32ebc16db7474e05eaf70b0fb592f04727e01649415047672712a5a6baa",
+      "bytes": 19855
+    }
+  ]
+}

@@ -1,0 +1,159 @@
+{
+  "schema_version": 1,
+  "id": "legacy-target-perf-files-20261023-netem-small-confirm-10gbit-bench-61c22e2de426",
+  "kind": "benchmark",
+  "label": "target/perf-files-20261023/netem/small-confirm-10gbit/bench",
+  "status": "imported",
+  "started_utc": "2026-10-22T21:56:22.840336+00:00",
+  "time_source": "original_file_mtime",
+  "imported_utc": "2026-10-25T02:06:41.084468+00:00",
+  "import_sha256": "61c22e2de426774eaa8ff02dc7a4c7d826f3094748044776bdf822dbe06f4a16",
+  "origin": "results/history/2026-10-24",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "binary_sha256": {
+      "before": "1e42dc24822b37c92d4e702060aa09cd9bcb34a1b0440fe343a8e2f78e7521ff",
+      "after": "a12350e11ae40f91c5e9a3923e1a9269c53abecb7f079cc59a41505f74448d22"
+    },
+    "common_arguments": [
+      "--repeats",
+      "1",
+      "--shuffle-scenarios",
+      "--shuffle-seed",
+      "91",
+      "--dataset",
+      "manySmallFiles",
+      "--network-profile",
+      "loopback-localhost",
+      "--threads",
+      "3",
+      "--frames",
+      "64",
+      "--buffers",
+      "1024",
+      "--executor",
+      "default"
+    ],
+    "repeats_per_side": 7,
+    "policy": "AB then BA alternating; all samples retained; no automatic warmup or trimming",
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 6,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 6,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 7,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 7,
+        "side": "after",
+        "exit_code": 0
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "target/perf-files-20261023/netem/small-confirm-10gbit/bench/before/run.log",
+      "sha256": "875eb3cda41a8d4c04670c7b1a4dc338fa3acdc62c4328740fc8b958a02db34e",
+      "bytes": 15649,
+      "extracted_sha256": "b49127f74ce6cc86cfafc4cbf3c7ed58bea8c1b42d7c64c2b26325f9d77fa2b8",
+      "saved": "raw/before/resource_samples.csv"
+    },
+    {
+      "source": "target/perf-files-20261023/netem/small-confirm-10gbit/bench/before/results_raw.csv",
+      "sha256": "1a5a472e078968036ad3ed493f75628ccb0f27faf9d3a4dc94b5a29a9fa28da1",
+      "bytes": 5461,
+      "saved": "raw/before/results_raw.csv"
+    },
+    {
+      "source": "target/perf-files-20261023/netem/small-confirm-10gbit/bench/after/run.log",
+      "sha256": "1a1f227f885394e947615e10e9e52050994d9268d91dc3d6dde0abd407657834",
+      "bytes": 15638,
+      "extracted_sha256": "03b159baa5fa2fd7bcce91c5ea4e90d1c0a6fba5940c1f7b3b752b1ad9aef4b9",
+      "saved": "raw/after/resource_samples.csv"
+    },
+    {
+      "source": "target/perf-files-20261023/netem/small-confirm-10gbit/bench/after/results_raw.csv",
+      "sha256": "ade8b4356092fbbc04d2d5e291e2bd3bfbd65357fb288d0eb3ce75c0ad23494d",
+      "bytes": 5465,
+      "saved": "raw/after/results_raw.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "target/perf-files-20261023/netem/small-confirm-10gbit/bench/paired-run.json",
+      "sha256": "c523821539ef10f9b849cd240de1d232e1ca9ba2cd379b9ee41879d78d9f6c6c",
+      "bytes": 10881
+    },
+    {
+      "source": "target/perf-files-20261023/netem/small-confirm-10gbit/bench/before/run.log",
+      "sha256": "875eb3cda41a8d4c04670c7b1a4dc338fa3acdc62c4328740fc8b958a02db34e",
+      "bytes": 15649
+    },
+    {
+      "source": "target/perf-files-20261023/netem/small-confirm-10gbit/bench/after/run.log",
+      "sha256": "1a1f227f885394e947615e10e9e52050994d9268d91dc3d6dde0abd407657834",
+      "bytes": 15638
+    }
+  ]
+}

@@ -1,3 +1,7 @@
+use std::io::Write;
+#[path = "support/run_output.rs"]
+mod run_output;
+
 use std::path::PathBuf;
 
 use anyhow::{Result, ensure};
@@ -60,9 +64,11 @@ fn main() -> Result<()> {
     } else {
         None
     };
+    let output = run_output::create_run_dir("file-pipeline")?;
+    let mut log = std::fs::File::create(output.join("run.log"))?;
     for repeat in 1..=args.repeats {
         let result = measure(&args.source, &args.stage, args.readers, hooks)?;
-        println!(
+        let line = format!(
             "[file-perf] stage={} repeat={} entries={} files={} bytes={} elapsed_ns={} work_ns={} drop_ns={} cpu_ns={} user_ns={} kernel_ns={} readers={} fingerprint={:016x} allocs={} alloc_bytes={} reallocs={} deallocs={} voluntary_switches={} involuntary_switches={} minor_faults={} major_faults={} process_peak_rss_bytes={} cpu_cycles={} cycle_source={} io_read_ops={} io_write_ops={} io_other_ops={} io_read_bytes={} io_write_bytes={} io_other_bytes={} storage_read_bytes={} storage_write_bytes={} page_faults={} io_source={} io_read_ops_raw={} io_read_bytes_raw={} io_observer_read_ops={} io_observer_read_bytes={} alloc_successes={} alloc_success_bytes={} realloc_successes={} realloc_success_bytes={} alloc_failures={} realloc_failures={} dealloc_bytes={} zeroed_bytes={} counters_schema=2 allocator_instrumented={} allocations_enabled={} verified=true",
             args.stage,
             repeat,
@@ -113,6 +119,8 @@ fn main() -> Result<()> {
             cfg!(feature = "bench-allocations"),
             args.allocations,
         );
+        println!("{line}");
+        writeln!(log, "{line}")?;
     }
     Ok(())
 }

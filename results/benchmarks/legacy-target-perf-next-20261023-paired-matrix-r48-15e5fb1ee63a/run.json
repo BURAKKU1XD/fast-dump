@@ -1,0 +1,124 @@
+{
+  "schema_version": 1,
+  "id": "legacy-target-perf-next-20261023-paired-matrix-r48-15e5fb1ee63a",
+  "kind": "benchmark",
+  "label": "target/perf-next-20261023/paired-matrix-r48",
+  "status": "imported",
+  "started_utc": "2026-10-23T00:32:03.228639+00:00",
+  "time_source": "original_file_mtime",
+  "imported_utc": "2026-10-25T02:06:43.525043+00:00",
+  "import_sha256": "15e5fb1ee63a897c12ea0ec17ab3d2b1d9fa776e189f87e1fdc475683105da95",
+  "origin": "results/history/2026-10-24",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "binary_sha256": {
+      "before": "3e28949e47a7e31894cca504f2f8e228b2a6b2a9f1a9aacc4b3cc20e790e19b5",
+      "after": "516907df5657c5af7b1e4ace716aaf0982329e03d0746f549191592f67a83ca1"
+    },
+    "comparison_kind": "A/B",
+    "requested_readers": {
+      "before": 48,
+      "after": 48
+    },
+    "common_arguments": [
+      "--repeats",
+      "1",
+      "--shuffle-scenarios",
+      "--shuffle-seed",
+      "91",
+      "--dataset",
+      "manySmallFiles",
+      "--network-profile",
+      "link-1gbps,link-10gbps",
+      "--threads",
+      "31",
+      "--frames",
+      "64",
+      "--buffers",
+      "1024",
+      "--executor",
+      "default"
+    ],
+    "repeats_per_side": 3,
+    "policy": "AB then BA alternating; all samples retained; no automatic warmup or trimming",
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "exit_code": 0
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "target/perf-next-20261023/paired-matrix-r48/before/run.log",
+      "sha256": "de091267887e36aab47e1b7d2c7f616717e02b2f05ce9237fa499f6d54efe0da",
+      "bytes": 10854,
+      "extracted_sha256": "5484cc748cf42a3e143785d6328a28f3a7a2549c35248f6f4d35bdb29e67adc3",
+      "saved": "raw/before/resource_samples.csv"
+    },
+    {
+      "source": "target/perf-next-20261023/paired-matrix-r48/before/results_raw.csv",
+      "sha256": "5105d17a192a66ebbf41570d36dd9611dbbbd4f713f00fd8d36c34fbd260431e",
+      "bytes": 4956,
+      "saved": "raw/before/results_raw.csv"
+    },
+    {
+      "source": "target/perf-next-20261023/paired-matrix-r48/after/run.log",
+      "sha256": "f3f541da1430b0903465dbc8ec589a524f9f5bc17b009edc35522222afda4585",
+      "bytes": 11508,
+      "extracted_sha256": "62ca54b7256a7dd185b7570439090892ee1dc1cd060a422c353709535a2e7909",
+      "saved": "raw/after/resource_samples.csv"
+    },
+    {
+      "source": "target/perf-next-20261023/paired-matrix-r48/after/results_raw.csv",
+      "sha256": "55e89ab9802be054b6d65e96f247fb5be9a742e49fe198c973fafd8c238ad16f",
+      "bytes": 4956,
+      "saved": "raw/after/results_raw.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "target/perf-next-20261023/paired-matrix-r48/paired-run.json",
+      "sha256": "299f8fada753dbab37896249c749d1ba087a43c6c23773e64ba2dd0fb9e4d0b1",
+      "bytes": 5752
+    },
+    {
+      "source": "target/perf-next-20261023/paired-matrix-r48/before/run.log",
+      "sha256": "de091267887e36aab47e1b7d2c7f616717e02b2f05ce9237fa499f6d54efe0da",
+      "bytes": 10854
+    },
+    {
+      "source": "target/perf-next-20261023/paired-matrix-r48/after/run.log",
+      "sha256": "f3f541da1430b0903465dbc8ec589a524f9f5bc17b009edc35522222afda4585",
+      "bytes": 11508
+    }
+  ]
+}

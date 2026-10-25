@@ -1,0 +1,1126 @@
+{
+  "schema_version": 1,
+  "entries": [
+    {
+      "family": "file",
+      "case": "scan",
+      "side": "before",
+      "scenario": {
+        "stage": "scan",
+        "readers": 1.0,
+        "allocations": false
+      },
+      "metrics": {
+        "elapsed_ms": {
+          "n": 7,
+          "mean": 175.86495714285715,
+          "median": 170.8963,
+          "min": 164.6767,
+          "max": 197.2504,
+          "p95": 192.28291000000002,
+          "unit": "ms",
+          "direction": "lower"
+        },
+        "cpu_ms": {
+          "n": 7,
+          "mean": 1200.892857142857,
+          "median": 1218.75,
+          "min": 1062.5,
+          "max": 1328.125,
+          "p95": 1309.375,
+          "unit": "ms",
+          "direction": "lower"
+        },
+        "cpu_cycles": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "cycles",
+          "direction": "lower"
+        },
+        "rss_mib": {
+          "n": 7,
+          "mean": 24.53515625,
+          "median": 24.54296875,
+          "min": 24.296875,
+          "max": 24.72265625,
+          "p95": 24.691015625,
+          "unit": "MiB",
+          "direction": "lower"
+        },
+        "allocations": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "requests",
+          "direction": "lower"
+        },
+        "allocated_bytes": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "bytes",
+          "direction": "lower"
+        },
+        "read_operations": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "operations",
+          "direction": "lower"
+        },
+        "read_bytes": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "bytes",
+          "direction": "lower"
+        }
+      },
+      "sample_count": 7,
+      "evidence": "raw",
+      "fixture": {
+        "entries": 40000.0,
+        "bytes": 92160000.0,
+        "fingerprint": "e4058fff46a43bfd",
+        "scope": "entry_order"
+      },
+      "verified": true,
+      "counter_contract": {
+        "schema": 1,
+        "cycles": null,
+        "io": null
+      },
+      "notes": [],
+      "files": [
+        "raw/samples.csv"
+      ],
+      "experiment": "target/perf-files-20261023/windows-timing",
+      "pair_context": "target/perf-files-20261023/windows-timing"
+    },
+    {
+      "family": "file",
+      "case": "scan",
+      "side": "after",
+      "scenario": {
+        "stage": "scan",
+        "readers": 1.0,
+        "allocations": false
+      },
+      "metrics": {
+        "elapsed_ms": {
+          "n": 7,
+          "mean": 173.01931428571427,
+          "median": 169.8486,
+          "min": 161.6122,
+          "max": 191.2026,
+          "p95": 188.07011999999997,
+          "unit": "ms",
+          "direction": "lower"
+        },
+        "cpu_ms": {
+          "n": 7,
+          "mean": 1191.9642857142858,
+          "median": 1187.5,
+          "min": 1062.5,
+          "max": 1312.5,
+          "p95": 1303.125,
+          "unit": "ms",
+          "direction": "lower"
+        },
+        "cpu_cycles": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "cycles",
+          "direction": "lower"
+        },
+        "rss_mib": {
+          "n": 7,
+          "mean": 23.38671875,
+          "median": 23.3359375,
+          "min": 23.23046875,
+          "max": 23.6484375,
+          "p95": 23.626171875,
+          "unit": "MiB",
+          "direction": "lower"
+        },
+        "allocations": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "requests",
+          "direction": "lower"
+        },
+        "allocated_bytes": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "bytes",
+          "direction": "lower"
+        },
+        "read_operations": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "operations",
+          "direction": "lower"
+        },
+        "read_bytes": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "bytes",
+          "direction": "lower"
+        }
+      },
+      "sample_count": 7,
+      "evidence": "raw",
+      "fixture": {
+        "entries": 40000.0,
+        "bytes": 92160000.0,
+        "fingerprint": "e4058fff46a43bfd",
+        "scope": "entry_order"
+      },
+      "verified": true,
+      "counter_contract": {
+        "schema": 1,
+        "cycles": null,
+        "io": null
+      },
+      "notes": [],
+      "files": [
+        "raw/samples.csv"
+      ],
+      "experiment": "target/perf-files-20261023/windows-timing",
+      "pair_context": "target/perf-files-20261023/windows-timing"
+    },
+    {
+      "family": "file",
+      "case": "read",
+      "side": "before",
+      "scenario": {
+        "stage": "read",
+        "readers": 1.0,
+        "allocations": false
+      },
+      "metrics": {
+        "elapsed_ms": {
+          "n": 7,
+          "mean": 970.8701714285716,
+          "median": 880.5728,
+          "min": 864.4048,
+          "max": 1433.2731,
+          "p95": 1285.9360799999997,
+          "unit": "ms",
+          "direction": "lower"
+        },
+        "cpu_ms": {
+          "n": 7,
+          "mean": 959.8214285714286,
+          "median": 875.0,
+          "min": 859.375,
+          "max": 1406.25,
+          "p95": 1265.6249999999995,
+          "unit": "ms",
+          "direction": "lower"
+        },
+        "cpu_cycles": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "cycles",
+          "direction": "lower"
+        },
+        "rss_mib": {
+          "n": 7,
+          "mean": 128.95479910714286,
+          "median": 128.9375,
+          "min": 128.60546875,
+          "max": 129.28515625,
+          "p95": 129.234765625,
+          "unit": "MiB",
+          "direction": "lower"
+        },
+        "allocations": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "requests",
+          "direction": "lower"
+        },
+        "allocated_bytes": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "bytes",
+          "direction": "lower"
+        },
+        "read_operations": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "operations",
+          "direction": "lower"
+        },
+        "read_bytes": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "bytes",
+          "direction": "lower"
+        }
+      },
+      "sample_count": 7,
+      "evidence": "raw",
+      "fixture": {
+        "entries": 40000.0,
+        "bytes": 92160000.0,
+        "fingerprint": "81b614ca532f28b4",
+        "scope": "content"
+      },
+      "verified": true,
+      "counter_contract": {
+        "schema": 1,
+        "cycles": null,
+        "io": null
+      },
+      "notes": [],
+      "files": [
+        "raw/samples.csv"
+      ],
+      "experiment": "target/perf-files-20261023/windows-timing",
+      "pair_context": "target/perf-files-20261023/windows-timing"
+    },
+    {
+      "family": "file",
+      "case": "read",
+      "side": "after",
+      "scenario": {
+        "stage": "read",
+        "readers": 1.0,
+        "allocations": false
+      },
+      "metrics": {
+        "elapsed_ms": {
+          "n": 7,
+          "mean": 935.6561285714286,
+          "median": 934.2695,
+          "min": 914.1307,
+          "max": 988.1614,
+          "p95": 972.2905,
+          "unit": "ms",
+          "direction": "lower"
+        },
+        "cpu_ms": {
+          "n": 7,
+          "mean": 924.1071428571429,
+          "median": 921.875,
+          "min": 890.625,
+          "max": 1000.0,
+          "p95": 976.5625,
+          "unit": "ms",
+          "direction": "lower"
+        },
+        "cpu_cycles": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "cycles",
+          "direction": "lower"
+        },
+        "rss_mib": {
+          "n": 7,
+          "mean": 128.18917410714286,
+          "median": 128.203125,
+          "min": 127.7265625,
+          "max": 128.4375,
+          "p95": 128.431640625,
+          "unit": "MiB",
+          "direction": "lower"
+        },
+        "allocations": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "requests",
+          "direction": "lower"
+        },
+        "allocated_bytes": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "bytes",
+          "direction": "lower"
+        },
+        "read_operations": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "operations",
+          "direction": "lower"
+        },
+        "read_bytes": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "bytes",
+          "direction": "lower"
+        }
+      },
+      "sample_count": 7,
+      "evidence": "raw",
+      "fixture": {
+        "entries": 40000.0,
+        "bytes": 92160000.0,
+        "fingerprint": "81b614ca532f28b4",
+        "scope": "content"
+      },
+      "verified": true,
+      "counter_contract": {
+        "schema": 1,
+        "cycles": null,
+        "io": null
+      },
+      "notes": [],
+      "files": [
+        "raw/samples.csv"
+      ],
+      "experiment": "target/perf-files-20261023/windows-timing",
+      "pair_context": "target/perf-files-20261023/windows-timing"
+    },
+    {
+      "family": "file",
+      "case": "read",
+      "side": "before",
+      "scenario": {
+        "stage": "read",
+        "readers": 4.0,
+        "allocations": false
+      },
+      "metrics": {
+        "elapsed_ms": {
+          "n": 7,
+          "mean": 388.55314285714286,
+          "median": 390.0097,
+          "min": 372.0441,
+          "max": 403.3237,
+          "p95": 401.76712,
+          "unit": "ms",
+          "direction": "lower"
+        },
+        "cpu_ms": {
+          "n": 7,
+          "mean": 1609.375,
+          "median": 1609.375,
+          "min": 1546.875,
+          "max": 1703.125,
+          "p95": 1684.375,
+          "unit": "ms",
+          "direction": "lower"
+        },
+        "cpu_cycles": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "cycles",
+          "direction": "lower"
+        },
+        "rss_mib": {
+          "n": 7,
+          "mean": 131.13504464285714,
+          "median": 130.484375,
+          "min": 130.296875,
+          "max": 132.578125,
+          "p95": 132.53359375,
+          "unit": "MiB",
+          "direction": "lower"
+        },
+        "allocations": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "requests",
+          "direction": "lower"
+        },
+        "allocated_bytes": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "bytes",
+          "direction": "lower"
+        },
+        "read_operations": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "operations",
+          "direction": "lower"
+        },
+        "read_bytes": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "bytes",
+          "direction": "lower"
+        }
+      },
+      "sample_count": 7,
+      "evidence": "raw",
+      "fixture": {
+        "entries": 40000.0,
+        "bytes": 92160000.0,
+        "fingerprint": "81b614ca532f28b4",
+        "scope": "content"
+      },
+      "verified": true,
+      "counter_contract": {
+        "schema": 1,
+        "cycles": null,
+        "io": null
+      },
+      "notes": [],
+      "files": [
+        "raw/samples.csv"
+      ],
+      "experiment": "target/perf-files-20261023/windows-timing",
+      "pair_context": "target/perf-files-20261023/windows-timing"
+    },
+    {
+      "family": "file",
+      "case": "read",
+      "side": "after",
+      "scenario": {
+        "stage": "read",
+        "readers": 4.0,
+        "allocations": false
+      },
+      "metrics": {
+        "elapsed_ms": {
+          "n": 7,
+          "mean": 310.9251,
+          "median": 296.28,
+          "min": 277.7197,
+          "max": 405.4871,
+          "p95": 381.17902999999995,
+          "unit": "ms",
+          "direction": "lower"
+        },
+        "cpu_ms": {
+          "n": 7,
+          "mean": 1194.1964285714287,
+          "median": 1171.875,
+          "min": 1000.0,
+          "max": 1515.625,
+          "p95": 1426.5624999999998,
+          "unit": "ms",
+          "direction": "lower"
+        },
+        "cpu_cycles": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "cycles",
+          "direction": "lower"
+        },
+        "rss_mib": {
+          "n": 7,
+          "mean": 127.56808035714286,
+          "median": 127.8203125,
+          "min": 126.80859375,
+          "max": 128.16796875,
+          "p95": 128.124609375,
+          "unit": "MiB",
+          "direction": "lower"
+        },
+        "allocations": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "requests",
+          "direction": "lower"
+        },
+        "allocated_bytes": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "bytes",
+          "direction": "lower"
+        },
+        "read_operations": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "operations",
+          "direction": "lower"
+        },
+        "read_bytes": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "bytes",
+          "direction": "lower"
+        }
+      },
+      "sample_count": 7,
+      "evidence": "raw",
+      "fixture": {
+        "entries": 40000.0,
+        "bytes": 92160000.0,
+        "fingerprint": "81b614ca532f28b4",
+        "scope": "content"
+      },
+      "verified": true,
+      "counter_contract": {
+        "schema": 1,
+        "cycles": null,
+        "io": null
+      },
+      "notes": [],
+      "files": [
+        "raw/samples.csv"
+      ],
+      "experiment": "target/perf-files-20261023/windows-timing",
+      "pair_context": "target/perf-files-20261023/windows-timing"
+    },
+    {
+      "family": "file",
+      "case": "read",
+      "side": "before",
+      "scenario": {
+        "stage": "read",
+        "readers": 8.0,
+        "allocations": false
+      },
+      "metrics": {
+        "elapsed_ms": {
+          "n": 7,
+          "mean": 295.07674285714285,
+          "median": 288.6185,
+          "min": 279.777,
+          "max": 329.8685,
+          "p95": 321.77506999999997,
+          "unit": "ms",
+          "direction": "lower"
+        },
+        "cpu_ms": {
+          "n": 7,
+          "mean": 2281.25,
+          "median": 2218.75,
+          "min": 2093.75,
+          "max": 2609.375,
+          "p95": 2557.8125,
+          "unit": "ms",
+          "direction": "lower"
+        },
+        "cpu_cycles": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "cycles",
+          "direction": "lower"
+        },
+        "rss_mib": {
+          "n": 7,
+          "mean": 130.38337053571428,
+          "median": 130.8046875,
+          "min": 129.11328125,
+          "max": 130.9453125,
+          "p95": 130.94296875,
+          "unit": "MiB",
+          "direction": "lower"
+        },
+        "allocations": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "requests",
+          "direction": "lower"
+        },
+        "allocated_bytes": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "bytes",
+          "direction": "lower"
+        },
+        "read_operations": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "operations",
+          "direction": "lower"
+        },
+        "read_bytes": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "bytes",
+          "direction": "lower"
+        }
+      },
+      "sample_count": 7,
+      "evidence": "raw",
+      "fixture": {
+        "entries": 40000.0,
+        "bytes": 92160000.0,
+        "fingerprint": "81b614ca532f28b4",
+        "scope": "content"
+      },
+      "verified": true,
+      "counter_contract": {
+        "schema": 1,
+        "cycles": null,
+        "io": null
+      },
+      "notes": [],
+      "files": [
+        "raw/samples.csv"
+      ],
+      "experiment": "target/perf-files-20261023/windows-timing",
+      "pair_context": "target/perf-files-20261023/windows-timing"
+    },
+    {
+      "family": "file",
+      "case": "read",
+      "side": "after",
+      "scenario": {
+        "stage": "read",
+        "readers": 8.0,
+        "allocations": false
+      },
+      "metrics": {
+        "elapsed_ms": {
+          "n": 7,
+          "mean": 242.15290000000002,
+          "median": 239.3908,
+          "min": 226.5477,
+          "max": 281.6186,
+          "p95": 270.53078,
+          "unit": "ms",
+          "direction": "lower"
+        },
+        "cpu_ms": {
+          "n": 7,
+          "mean": 1703.125,
+          "median": 1734.375,
+          "min": 1406.25,
+          "max": 1984.375,
+          "p95": 1928.1249999999998,
+          "unit": "ms",
+          "direction": "lower"
+        },
+        "cpu_cycles": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "cycles",
+          "direction": "lower"
+        },
+        "rss_mib": {
+          "n": 7,
+          "mean": 128.85602678571428,
+          "median": 128.8515625,
+          "min": 128.2734375,
+          "max": 129.25,
+          "p95": 129.248828125,
+          "unit": "MiB",
+          "direction": "lower"
+        },
+        "allocations": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "requests",
+          "direction": "lower"
+        },
+        "allocated_bytes": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "bytes",
+          "direction": "lower"
+        },
+        "read_operations": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "operations",
+          "direction": "lower"
+        },
+        "read_bytes": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "bytes",
+          "direction": "lower"
+        }
+      },
+      "sample_count": 7,
+      "evidence": "raw",
+      "fixture": {
+        "entries": 40000.0,
+        "bytes": 92160000.0,
+        "fingerprint": "81b614ca532f28b4",
+        "scope": "content"
+      },
+      "verified": true,
+      "counter_contract": {
+        "schema": 1,
+        "cycles": null,
+        "io": null
+      },
+      "notes": [],
+      "files": [
+        "raw/samples.csv"
+      ],
+      "experiment": "target/perf-files-20261023/windows-timing",
+      "pair_context": "target/perf-files-20261023/windows-timing"
+    },
+    {
+      "family": "file",
+      "case": "read",
+      "side": "before",
+      "scenario": {
+        "stage": "read",
+        "readers": 32.0,
+        "allocations": false
+      },
+      "metrics": {
+        "elapsed_ms": {
+          "n": 7,
+          "mean": 205.64165714285716,
+          "median": 203.7405,
+          "min": 190.2995,
+          "max": 229.7995,
+          "p95": 226.47187,
+          "unit": "ms",
+          "direction": "lower"
+        },
+        "cpu_ms": {
+          "n": 7,
+          "mean": 4299.107142857143,
+          "median": 4328.125,
+          "min": 3906.25,
+          "max": 4687.5,
+          "p95": 4654.6875,
+          "unit": "ms",
+          "direction": "lower"
+        },
+        "cpu_cycles": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "cycles",
+          "direction": "lower"
+        },
+        "rss_mib": {
+          "n": 7,
+          "mean": 129.68136160714286,
+          "median": 129.62890625,
+          "min": 129.203125,
+          "max": 130.31640625,
+          "p95": 130.312890625,
+          "unit": "MiB",
+          "direction": "lower"
+        },
+        "allocations": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "requests",
+          "direction": "lower"
+        },
+        "allocated_bytes": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "bytes",
+          "direction": "lower"
+        },
+        "read_operations": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "operations",
+          "direction": "lower"
+        },
+        "read_bytes": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "bytes",
+          "direction": "lower"
+        }
+      },
+      "sample_count": 7,
+      "evidence": "raw",
+      "fixture": {
+        "entries": 40000.0,
+        "bytes": 92160000.0,
+        "fingerprint": "81b614ca532f28b4",
+        "scope": "content"
+      },
+      "verified": true,
+      "counter_contract": {
+        "schema": 1,
+        "cycles": null,
+        "io": null
+      },
+      "notes": [],
+      "files": [
+        "raw/samples.csv"
+      ],
+      "experiment": "target/perf-files-20261023/windows-timing",
+      "pair_context": "target/perf-files-20261023/windows-timing"
+    },
+    {
+      "family": "file",
+      "case": "read",
+      "side": "after",
+      "scenario": {
+        "stage": "read",
+        "readers": 32.0,
+        "allocations": false
+      },
+      "metrics": {
+        "elapsed_ms": {
+          "n": 7,
+          "mean": 165.5877142857143,
+          "median": 165.5913,
+          "min": 163.1866,
+          "max": 168.1529,
+          "p95": 167.87876,
+          "unit": "ms",
+          "direction": "lower"
+        },
+        "cpu_ms": {
+          "n": 7,
+          "mean": 3957.589285714286,
+          "median": 3984.375,
+          "min": 3359.375,
+          "max": 4296.875,
+          "p95": 4282.8125,
+          "unit": "ms",
+          "direction": "lower"
+        },
+        "cpu_cycles": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "cycles",
+          "direction": "lower"
+        },
+        "rss_mib": {
+          "n": 7,
+          "mean": 135.30747767857142,
+          "median": 135.453125,
+          "min": 133.1953125,
+          "max": 136.91796875,
+          "p95": 136.574609375,
+          "unit": "MiB",
+          "direction": "lower"
+        },
+        "allocations": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "requests",
+          "direction": "lower"
+        },
+        "allocated_bytes": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "bytes",
+          "direction": "lower"
+        },
+        "read_operations": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "operations",
+          "direction": "lower"
+        },
+        "read_bytes": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "bytes",
+          "direction": "lower"
+        }
+      },
+      "sample_count": 7,
+      "evidence": "raw",
+      "fixture": {
+        "entries": 40000.0,
+        "bytes": 92160000.0,
+        "fingerprint": "81b614ca532f28b4",
+        "scope": "content"
+      },
+      "verified": true,
+      "counter_contract": {
+        "schema": 1,
+        "cycles": null,
+        "io": null
+      },
+      "notes": [],
+      "files": [
+        "raw/samples.csv"
+      ],
+      "experiment": "target/perf-files-20261023/windows-timing",
+      "pair_context": "target/perf-files-20261023/windows-timing"
+    }
+  ],
+  "warnings": []
+}

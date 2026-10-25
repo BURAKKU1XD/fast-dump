@@ -621,45 +621,19 @@ pub(crate) fn benchmark_report_path(output_dir: &Path) -> PathBuf {
     output_dir.join("benchmark_report.md")
 }
 
-pub(crate) fn reset_results(output_dir: &Path) -> Result<()> {
-    let raw_path = results_raw_path(output_dir);
-    let summary_path = results_summary_path(output_dir);
-    let benchmark_plan_path = benchmark_plan_path(output_dir);
-    let benchmark_report_path = benchmark_report_path(output_dir);
-
-    if raw_path.exists() {
-        fs::remove_file(&raw_path).with_context(|| {
-            format!(
-                "failed to remove stale raw results file {}",
-                raw_path.display()
-            )
-        })?;
+pub(crate) fn ensure_fresh_results(output_dir: &Path) -> Result<()> {
+    for path in [
+        results_raw_path(output_dir),
+        results_summary_path(output_dir),
+        benchmark_plan_path(output_dir),
+        benchmark_report_path(output_dir),
+    ] {
+        anyhow::ensure!(
+            !path.try_exists()?,
+            "results already exist at {}; select a new directory or use --resume",
+            path.display()
+        );
     }
-    if summary_path.exists() {
-        fs::remove_file(&summary_path).with_context(|| {
-            format!(
-                "failed to remove stale summary results file {}",
-                summary_path.display()
-            )
-        })?;
-    }
-    if benchmark_plan_path.exists() {
-        fs::remove_file(&benchmark_plan_path).with_context(|| {
-            format!(
-                "failed to remove stale benchmark plan file {}",
-                benchmark_plan_path.display()
-            )
-        })?;
-    }
-    if benchmark_report_path.exists() {
-        fs::remove_file(&benchmark_report_path).with_context(|| {
-            format!(
-                "failed to remove stale benchmark report file {}",
-                benchmark_report_path.display()
-            )
-        })?;
-    }
-
     Ok(())
 }
 

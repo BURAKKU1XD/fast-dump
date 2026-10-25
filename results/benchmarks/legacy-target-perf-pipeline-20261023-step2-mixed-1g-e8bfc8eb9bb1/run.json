@@ -1,0 +1,154 @@
+{
+  "schema_version": 1,
+  "id": "legacy-target-perf-pipeline-20261023-step2-mixed-1g-e8bfc8eb9bb1",
+  "kind": "benchmark",
+  "label": "target/perf-pipeline-20261023/step2-mixed-1g",
+  "status": "imported",
+  "started_utc": "2026-10-23T18:54:00.809986+00:00",
+  "time_source": "original_file_mtime",
+  "imported_utc": "2026-10-25T02:06:43.921230+00:00",
+  "import_sha256": "e8bfc8eb9bb16e16a18346e1feb032e24fd6aabf1dcee7a306ea8b60e5a6668d",
+  "origin": "results/history/2026-10-24",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "binary_sha256": {
+      "before": "29346dcd80d8ad61afc8221cf2bdb1c8f43afcf6d771becf8b8e3fbe4884c689",
+      "after": "3658ea63e26cd984bcb77a386a69b6213cdf9f42342e1040d8514605a8e8b7c0"
+    },
+    "comparison_kind": "A/B",
+    "requested_readers": {
+      "before": 16,
+      "after": 16
+    },
+    "common_arguments": [
+      "--repeats",
+      "1",
+      "--shuffle-scenarios",
+      "--shuffle-seed",
+      "91",
+      "--source",
+      "E:\\projects\\cool_project\\fast-dump\\target\\bench-verify-20261022\\datasets\\mixed",
+      "--network-profile",
+      "link-1gbps",
+      "--threads",
+      "31",
+      "--frames",
+      "64",
+      "--buffers",
+      "1024",
+      "--executor",
+      "default"
+    ],
+    "repeats_per_side": 6,
+    "policy": "AB then BA alternating; all samples retained; no automatic warmup or trimming",
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 6,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 6,
+        "side": "before",
+        "exit_code": 0
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "target/perf-pipeline-20261023/step2-mixed-1g/before/run.log",
+      "sha256": "2ed242abe6e54386f27a5ffda9e745c65b7763703162069ecc1a25f5d7c35eb0",
+      "bytes": 19767,
+      "extracted_sha256": "ee531c24ddf1e80e5d230051796dd56ca15e2f5f6d885de433f1aabc1f26d1a0",
+      "saved": "raw/before/resource_samples.csv"
+    },
+    {
+      "source": "target/perf-pipeline-20261023/step2-mixed-1g/before/results_raw.csv",
+      "sha256": "afccbd32397cc221199903c7c0bcb499c3e0101f77b24dd4d0e73a85f1b84078",
+      "bytes": 4917,
+      "saved": "raw/before/results_raw.csv"
+    },
+    {
+      "source": "target/perf-pipeline-20261023/step2-mixed-1g/after/run.log",
+      "sha256": "4fa69bf2cb85a6230b8cce5c81ef192bb31d4652fb5a64f9e647022ab53a8e14",
+      "bytes": 19746,
+      "extracted_sha256": "b1a7c6a2806a6f44c50e168439525a21e2ee6ec5df45946b3fd7ce00d3b235e0",
+      "saved": "raw/after/resource_samples.csv"
+    },
+    {
+      "source": "target/perf-pipeline-20261023/step2-mixed-1g/after/results_raw.csv",
+      "sha256": "09f8d4b30cefb5c3f6583099bce00bf0c37d1f3c5d6a9da299a204743627aa0d",
+      "bytes": 4916,
+      "saved": "raw/after/results_raw.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "target/perf-pipeline-20261023/step2-mixed-1g/paired-run.json",
+      "sha256": "14daae924101afdba7f9b7136da69358a9490c00e538e3338f86d666968cd902",
+      "bytes": 11063
+    },
+    {
+      "source": "target/perf-pipeline-20261023/step2-mixed-1g/before/run.log",
+      "sha256": "2ed242abe6e54386f27a5ffda9e745c65b7763703162069ecc1a25f5d7c35eb0",
+      "bytes": 19767
+    },
+    {
+      "source": "target/perf-pipeline-20261023/step2-mixed-1g/after/run.log",
+      "sha256": "4fa69bf2cb85a6230b8cce5c81ef192bb31d4652fb5a64f9e647022ab53a8e14",
+      "bytes": 19746
+    }
+  ]
+}

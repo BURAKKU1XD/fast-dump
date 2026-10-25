@@ -1,0 +1,889 @@
+{
+  "commit": "92012a082190a95cbc317a3e1d7ca87b347bae04",
+  "clean_worktree": true,
+  "source_freeze": "verified-source.json",
+  "checks": {
+    "linux-msrv-validation": [
+      {
+        "check": "tests",
+        "command": [
+          "cargo",
+          "+1.89.0",
+          "test",
+          "--quiet",
+          "--locked",
+          "--offline",
+          "--target-dir",
+          "target/stabilize-msrv-linux"
+        ],
+        "exit_code": 0,
+        "seconds": 110.46684741973877,
+        "log": "linux-msrv-tests.log",
+        "passed_tests": 218
+      },
+      {
+        "check": "tests-all-features",
+        "command": [
+          "cargo",
+          "+1.89.0",
+          "test",
+          "--quiet",
+          "--all-features",
+          "--locked",
+          "--offline",
+          "--target-dir",
+          "target/stabilize-msrv-linux"
+        ],
+        "exit_code": 0,
+        "seconds": 94.59370255470276,
+        "log": "linux-msrv-tests-all-features.log",
+        "passed_tests": 225
+      },
+      {
+        "check": "clippy",
+        "command": [
+          "cargo",
+          "+1.89.0",
+          "clippy",
+          "--all-targets",
+          "--all-features",
+          "--locked",
+          "--offline",
+          "--target-dir",
+          "target/stabilize-msrv-linux",
+          "--",
+          "-D",
+          "warnings"
+        ],
+        "exit_code": 0,
+        "seconds": 23.140307903289795,
+        "log": "linux-msrv-clippy.log",
+        "passed_tests": 0
+      },
+      {
+        "check": "benches",
+        "command": [
+          "cargo",
+          "+1.89.0",
+          "check",
+          "--benches",
+          "--all-features",
+          "--locked",
+          "--offline",
+          "--target-dir",
+          "target/stabilize-msrv-linux"
+        ],
+        "exit_code": 0,
+        "seconds": 12.223367691040039,
+        "log": "linux-msrv-benches.log",
+        "passed_tests": 0
+      }
+    ],
+    "linux-release-validation": [
+      {
+        "check": "tests-all-features",
+        "command": [
+          "cargo",
+          "+stable",
+          "test",
+          "--quiet",
+          "--all-features",
+          "--locked",
+          "--offline",
+          "--release",
+          "--target-dir",
+          "target/verify-linux"
+        ],
+        "exit_code": 0,
+        "seconds": 67.577298348,
+        "log": "linux-release-tests-all-features.log",
+        "passed_tests": 225
+      },
+      {
+        "check": "roundtrip-list",
+        "command": [
+          "cargo",
+          "+stable",
+          "test",
+          "--locked",
+          "--offline",
+          "--release",
+          "--target-dir",
+          "target/verify-linux",
+          "--test",
+          "integration",
+          "--",
+          "--list",
+          "--ignored"
+        ],
+        "exit_code": 0,
+        "seconds": 24.396212270000035,
+        "log": "linux-release-roundtrip-list.log",
+        "passed_tests": 0
+      },
+      {
+        "check": "roundtrip",
+        "command": [
+          "cargo",
+          "+stable",
+          "test",
+          "--locked",
+          "--offline",
+          "--release",
+          "--target-dir",
+          "target/verify-linux",
+          "--test",
+          "integration",
+          "connectivity::roundtrip_fast::sender_and_receiver_roundtrip_random_files_and_verify_hashes",
+          "--",
+          "--exact",
+          "--ignored",
+          "--nocapture"
+        ],
+        "exit_code": 0,
+        "seconds": 22.793885528000033,
+        "log": "linux-release-roundtrip.log",
+        "passed_tests": 1
+      },
+      {
+        "check": "recovery-list",
+        "command": [
+          "cargo",
+          "+stable",
+          "test",
+          "--locked",
+          "--offline",
+          "--release",
+          "--target-dir",
+          "target/verify-linux",
+          "--test",
+          "integration",
+          "--",
+          "--list",
+          "--ignored"
+        ],
+        "exit_code": 0,
+        "seconds": 1.8814359410000066,
+        "log": "linux-release-recovery-list.log",
+        "passed_tests": 0
+      },
+      {
+        "check": "recovery",
+        "command": [
+          "cargo",
+          "+stable",
+          "test",
+          "--locked",
+          "--offline",
+          "--release",
+          "--target-dir",
+          "target/verify-linux",
+          "--test",
+          "integration",
+          "connectivity::recovery_stress::receiver_process_kill_and_resume_preserves_archive_push_and_pull",
+          "--",
+          "--exact",
+          "--ignored",
+          "--nocapture"
+        ],
+        "exit_code": 0,
+        "seconds": 3.50406268200004,
+        "log": "linux-release-recovery.log",
+        "passed_tests": 1
+      },
+      {
+        "check": "lifecycle-list",
+        "command": [
+          "cargo",
+          "+stable",
+          "test",
+          "--locked",
+          "--offline",
+          "--release",
+          "--target-dir",
+          "target/verify-linux",
+          "--lib",
+          "--",
+          "--list",
+          "--ignored"
+        ],
+        "exit_code": 0,
+        "seconds": 38.73261799100004,
+        "log": "linux-release-lifecycle-list.log",
+        "passed_tests": 0
+      },
+      {
+        "check": "lifecycle",
+        "command": [
+          "cargo",
+          "+stable",
+          "test",
+          "--locked",
+          "--offline",
+          "--release",
+          "--target-dir",
+          "target/verify-linux",
+          "--lib",
+          "receiver::network::lifecycle_tests::repeated_full_transfers_release_all_reader_handles",
+          "--",
+          "--exact",
+          "--ignored",
+          "--nocapture"
+        ],
+        "exit_code": 0,
+        "seconds": 15.056533081999987,
+        "log": "linux-release-lifecycle.log",
+        "passed_tests": 1
+      },
+      {
+        "check": "build",
+        "command": [
+          "cargo",
+          "+stable",
+          "build",
+          "--locked",
+          "--offline",
+          "--release",
+          "--target-dir",
+          "target/verify-linux",
+          "--bin",
+          "fast-dump"
+        ],
+        "exit_code": 0,
+        "seconds": 18.29655650099994,
+        "log": "linux-release-build.log",
+        "passed_tests": 0
+      }
+    ],
+    "linux-stable-validation": [
+      {
+        "check": "tests",
+        "command": [
+          "cargo",
+          "+stable",
+          "test",
+          "--quiet",
+          "--locked",
+          "--offline",
+          "--target-dir",
+          "target/verify-linux"
+        ],
+        "exit_code": 0,
+        "seconds": 21.143795013427734,
+        "log": "linux-stable-tests.log",
+        "passed_tests": 218
+      },
+      {
+        "check": "tests-all-features",
+        "command": [
+          "cargo",
+          "+stable",
+          "test",
+          "--quiet",
+          "--all-features",
+          "--locked",
+          "--offline",
+          "--target-dir",
+          "target/verify-linux"
+        ],
+        "exit_code": 0,
+        "seconds": 18.4527587890625,
+        "log": "linux-stable-tests-all-features.log",
+        "passed_tests": 225
+      },
+      {
+        "check": "clippy",
+        "command": [
+          "cargo",
+          "+stable",
+          "clippy",
+          "--all-targets",
+          "--all-features",
+          "--locked",
+          "--offline",
+          "--target-dir",
+          "target/verify-linux",
+          "--",
+          "-D",
+          "warnings"
+        ],
+        "exit_code": 0,
+        "seconds": 5.025923728942871,
+        "log": "linux-stable-clippy.log",
+        "passed_tests": 0
+      },
+      {
+        "check": "benches",
+        "command": [
+          "cargo",
+          "+stable",
+          "check",
+          "--benches",
+          "--all-features",
+          "--locked",
+          "--offline",
+          "--target-dir",
+          "target/verify-linux"
+        ],
+        "exit_code": 0,
+        "seconds": 3.8199687004089355,
+        "log": "linux-stable-benches.log",
+        "passed_tests": 0
+      }
+    ],
+    "windows-msrv-validation": [
+      {
+        "check": "tests",
+        "command": [
+          "cargo",
+          "+1.89.0",
+          "test",
+          "--quiet",
+          "--locked",
+          "--offline",
+          "--target-dir",
+          "target/stabilize-msrv-windows"
+        ],
+        "exit_code": 0,
+        "seconds": 35.51684069633484,
+        "log": "windows-msrv-tests.log",
+        "passed_tests": 213
+      },
+      {
+        "check": "tests-all-features",
+        "command": [
+          "cargo",
+          "+1.89.0",
+          "test",
+          "--quiet",
+          "--all-features",
+          "--locked",
+          "--offline",
+          "--target-dir",
+          "target/stabilize-msrv-windows"
+        ],
+        "exit_code": 0,
+        "seconds": 16.508747100830078,
+        "log": "windows-msrv-tests-all-features.log",
+        "passed_tests": 219
+      },
+      {
+        "check": "clippy",
+        "command": [
+          "cargo",
+          "+1.89.0",
+          "clippy",
+          "--all-targets",
+          "--all-features",
+          "--locked",
+          "--offline",
+          "--target-dir",
+          "target/stabilize-msrv-windows",
+          "--",
+          "-D",
+          "warnings"
+        ],
+        "exit_code": 0,
+        "seconds": 10.700088262557983,
+        "log": "windows-msrv-clippy.log",
+        "passed_tests": 0
+      },
+      {
+        "check": "benches",
+        "command": [
+          "cargo",
+          "+1.89.0",
+          "check",
+          "--benches",
+          "--all-features",
+          "--locked",
+          "--offline",
+          "--target-dir",
+          "target/stabilize-msrv-windows"
+        ],
+        "exit_code": 0,
+        "seconds": 2.528486967086792,
+        "log": "windows-msrv-benches.log",
+        "passed_tests": 0
+      }
+    ],
+    "windows-release-validation": [
+      {
+        "check": "tests-all-features",
+        "command": [
+          "cargo",
+          "+stable",
+          "test",
+          "--quiet",
+          "--all-features",
+          "--locked",
+          "--offline",
+          "--release",
+          "--target-dir",
+          "target"
+        ],
+        "exit_code": 0,
+        "seconds": 78.18878619995667,
+        "log": "windows-release-tests-all-features.log",
+        "passed_tests": 219
+      },
+      {
+        "check": "roundtrip-list",
+        "command": [
+          "cargo",
+          "+stable",
+          "test",
+          "--locked",
+          "--offline",
+          "--release",
+          "--target-dir",
+          "target",
+          "--test",
+          "integration",
+          "--",
+          "--list",
+          "--ignored"
+        ],
+        "exit_code": 0,
+        "seconds": 24.358874100027606,
+        "log": "windows-release-roundtrip-list.log",
+        "passed_tests": 0
+      },
+      {
+        "check": "roundtrip",
+        "command": [
+          "cargo",
+          "+stable",
+          "test",
+          "--locked",
+          "--offline",
+          "--release",
+          "--target-dir",
+          "target",
+          "--test",
+          "integration",
+          "connectivity::roundtrip_fast::sender_and_receiver_roundtrip_random_files_and_verify_hashes",
+          "--",
+          "--exact",
+          "--ignored",
+          "--nocapture"
+        ],
+        "exit_code": 0,
+        "seconds": 24.631763499986846,
+        "log": "windows-release-roundtrip.log",
+        "passed_tests": 1
+      },
+      {
+        "check": "recovery-list",
+        "command": [
+          "cargo",
+          "+stable",
+          "test",
+          "--locked",
+          "--offline",
+          "--release",
+          "--target-dir",
+          "target",
+          "--test",
+          "integration",
+          "--",
+          "--list",
+          "--ignored"
+        ],
+        "exit_code": 0,
+        "seconds": 0.2194156000041403,
+        "log": "windows-release-recovery-list.log",
+        "passed_tests": 0
+      },
+      {
+        "check": "recovery",
+        "command": [
+          "cargo",
+          "+stable",
+          "test",
+          "--locked",
+          "--offline",
+          "--release",
+          "--target-dir",
+          "target",
+          "--test",
+          "integration",
+          "connectivity::recovery_stress::receiver_process_kill_and_resume_preserves_archive_push_and_pull",
+          "--",
+          "--exact",
+          "--ignored",
+          "--nocapture"
+        ],
+        "exit_code": 0,
+        "seconds": 7.016332500032149,
+        "log": "windows-release-recovery.log",
+        "passed_tests": 1
+      },
+      {
+        "check": "lifecycle-list",
+        "command": [
+          "cargo",
+          "+stable",
+          "test",
+          "--locked",
+          "--offline",
+          "--release",
+          "--target-dir",
+          "target",
+          "--lib",
+          "--",
+          "--list",
+          "--ignored"
+        ],
+        "exit_code": 0,
+        "seconds": 55.258380999963265,
+        "log": "windows-release-lifecycle-list.log",
+        "passed_tests": 0
+      },
+      {
+        "check": "lifecycle",
+        "command": [
+          "cargo",
+          "+stable",
+          "test",
+          "--locked",
+          "--offline",
+          "--release",
+          "--target-dir",
+          "target",
+          "--lib",
+          "receiver::network::lifecycle_tests::repeated_full_transfers_release_all_reader_handles",
+          "--",
+          "--exact",
+          "--ignored",
+          "--nocapture"
+        ],
+        "exit_code": 0,
+        "seconds": 3.4024712999816984,
+        "log": "windows-release-lifecycle.log",
+        "passed_tests": 1
+      },
+      {
+        "check": "build",
+        "command": [
+          "cargo",
+          "+stable",
+          "build",
+          "--locked",
+          "--offline",
+          "--release",
+          "--target-dir",
+          "target",
+          "--bin",
+          "fast-dump"
+        ],
+        "exit_code": 0,
+        "seconds": 26.802365799958352,
+        "log": "windows-release-build.log",
+        "passed_tests": 0
+      }
+    ],
+    "windows-stable-validation": [
+      {
+        "check": "tests",
+        "command": [
+          "cargo",
+          "+stable",
+          "test",
+          "--quiet",
+          "--locked",
+          "--offline",
+          "--target-dir",
+          "target"
+        ],
+        "exit_code": 0,
+        "seconds": 15.150944471359253,
+        "log": "windows-stable-tests.log",
+        "passed_tests": 213
+      },
+      {
+        "check": "tests-all-features",
+        "command": [
+          "cargo",
+          "+stable",
+          "test",
+          "--quiet",
+          "--all-features",
+          "--locked",
+          "--offline",
+          "--target-dir",
+          "target"
+        ],
+        "exit_code": 0,
+        "seconds": 16.707971334457397,
+        "log": "windows-stable-tests-all-features.log",
+        "passed_tests": 219
+      },
+      {
+        "check": "clippy",
+        "command": [
+          "cargo",
+          "+stable",
+          "clippy",
+          "--all-targets",
+          "--all-features",
+          "--locked",
+          "--offline",
+          "--target-dir",
+          "target",
+          "--",
+          "-D",
+          "warnings"
+        ],
+        "exit_code": 0,
+        "seconds": 8.553418397903442,
+        "log": "windows-stable-clippy.log",
+        "passed_tests": 0
+      },
+      {
+        "check": "benches",
+        "command": [
+          "cargo",
+          "+stable",
+          "check",
+          "--benches",
+          "--all-features",
+          "--locked",
+          "--offline",
+          "--target-dir",
+          "target"
+        ],
+        "exit_code": 0,
+        "seconds": 2.696176052093506,
+        "log": "windows-stable-benches.log",
+        "passed_tests": 0
+      }
+    ]
+  },
+  "python_tests": {
+    "passed": 18,
+    "log": "python-tests.log"
+  },
+  "additional_checks": {
+    "format": "passed",
+    "staged_diff_check": "passed",
+    "release_manifest_script": "executed successfully; all shared fields match independent manifest",
+    "source_identity": "93 files unchanged"
+  },
+  "stress": {
+    "platforms": [
+      "Windows",
+      "Linux/WSL"
+    ],
+    "roundtrip_files": 10116,
+    "process_kill": {
+      "pairings": [
+        "push",
+        "pull"
+      ],
+      "files_per_pairing": 1041,
+      "durable_prefix_preserved": true
+    },
+    "sessions_per_platform": 128,
+    "files_per_session": 65,
+    "verified_bytes_per_platform": 289915520,
+    "live_receiver_reader_handles_after_each_session": 0
+  },
+  "retained_smoke": {
+    "started_utc": "2026-10-23T21:50:52.474002+00:00",
+    "purpose": "correctness and v4 interoperability; no throughput benchmark",
+    "binaries": {
+      "E:\\projects\\cool_project\\fast-dump\\target\\release\\fast-dump.exe": {
+        "path": "E:\\projects\\cool_project\\fast-dump\\target\\release\\fast-dump.exe",
+        "bytes": 2124288,
+        "sha256": "6674bf6ac976014d5930f7e383c26033a5c23d1b927c744e7569522acac91fb7"
+      },
+      "E:\\projects\\cool_project\\fast-dump\\target\\perf-scan-20261023\\baseline\\cli.exe": {
+        "path": "E:\\projects\\cool_project\\fast-dump\\target\\perf-scan-20261023\\baseline\\cli.exe",
+        "bytes": 2122752,
+        "sha256": "867054febb673f77c2d84ca2edc0bbfaf460ecff8295050d047fb9c446a15f72"
+      },
+      "E:\\projects\\cool_project\\fast-dump\\target\\perf-next-20261023\\verify-retained-windows.exe": {
+        "path": "E:\\projects\\cool_project\\fast-dump\\target\\perf-next-20261023\\verify-retained-windows.exe",
+        "bytes": 435200,
+        "sha256": "d8852270cb36f406c2644a3854d0deac9ed98772e128ae15353a0e0d34ef0e1f"
+      }
+    },
+    "cases": [
+      {
+        "name": "retained-dump",
+        "started_utc": "2026-10-23T21:50:53.721033+00:00",
+        "status": "passed",
+        "commands": "E:\\projects\\cool_project\\fast-dump\\target\\stabilize-20261024\\retained-dump\\commands.json",
+        "archive": {
+          "path": "E:\\projects\\cool_project\\fast-dump\\target\\stabilize-20261024\\retained-dump\\stable-mixed.tar.zst",
+          "bytes": 388741844,
+          "sha256": "d9b3610d9ee3f031a5186282404411e3a98281018b4ed56eca429d326e40feff"
+        },
+        "verification": {
+          "exit_code": 0,
+          "stdout": "verified files=10134 bytes=916426752 full_zstd_stream=true",
+          "files": 10134,
+          "bytes": 916426752,
+          "full_zstd_stream": true
+        },
+        "processes": {
+          "sender": {
+            "pid": 99292,
+            "exit_code": 0
+          },
+          "receiver": {
+            "pid": 90636,
+            "exit_code": 0
+          }
+        },
+        "completed_utc": "2026-10-23T21:50:57.217642+00:00"
+      },
+      {
+        "name": "compat-old-sender-new-receiver",
+        "started_utc": "2026-10-23T21:50:57.221629+00:00",
+        "status": "passed",
+        "commands": "E:\\projects\\cool_project\\fast-dump\\target\\stabilize-20261024\\compat-old-sender-new-receiver\\commands.json",
+        "archive": {
+          "path": "E:\\projects\\cool_project\\fast-dump\\target\\stabilize-20261024\\compat-old-sender-new-receiver\\old-sender-new-receiver.tar.zst",
+          "bytes": 2164634,
+          "sha256": "3129405fc8bfb2937ecc2c61841c8f4241cf84a001db2e2f25fc5b6f97a4db06"
+        },
+        "verification": {
+          "exit_code": 0,
+          "stdout": "verified files=66 bytes=2162864 full_zstd_stream=true",
+          "files": 66,
+          "bytes": 2162864,
+          "full_zstd_stream": true
+        },
+        "processes": {
+          "sender": {
+            "pid": 94324,
+            "exit_code": 0
+          },
+          "receiver": {
+            "pid": 68776,
+            "exit_code": 0
+          }
+        },
+        "completed_utc": "2026-10-23T21:50:57.422357+00:00"
+      },
+      {
+        "name": "compat-new-sender-old-receiver",
+        "started_utc": "2026-10-23T21:50:57.426411+00:00",
+        "status": "passed",
+        "commands": "E:\\projects\\cool_project\\fast-dump\\target\\stabilize-20261024\\compat-new-sender-old-receiver\\commands.json",
+        "archive": {
+          "path": "E:\\projects\\cool_project\\fast-dump\\target\\stabilize-20261024\\compat-new-sender-old-receiver\\new-sender-old-receiver.tar.zst",
+          "bytes": 2164634,
+          "sha256": "3129405fc8bfb2937ecc2c61841c8f4241cf84a001db2e2f25fc5b6f97a4db06"
+        },
+        "verification": {
+          "exit_code": 0,
+          "stdout": "verified files=66 bytes=2162864 full_zstd_stream=true",
+          "files": 66,
+          "bytes": 2162864,
+          "full_zstd_stream": true
+        },
+        "processes": {
+          "sender": {
+            "pid": 92784,
+            "exit_code": 0
+          },
+          "receiver": {
+            "pid": 98264,
+            "exit_code": 0
+          }
+        },
+        "completed_utc": "2026-10-23T21:50:57.623668+00:00"
+      }
+    ],
+    "verifier_scope": "all regular-file paths and bytes, duplicate/missing files, full zstd EOF; no symlink fixture",
+    "completed_utc": "2026-10-23T21:50:57.624892+00:00",
+    "passed": true
+  },
+  "builds": {
+    "windows": {
+      "package": "fast-dump",
+      "version": "0.1.0",
+      "commit": "92012a082190a95cbc317a3e1d7ca87b347bae04",
+      "source_tree": "c977872e8b171d39f8f2452ec793477bdf3e646d",
+      "target": "x86_64-pc-windows-msvc",
+      "profile": "release",
+      "features": [],
+      "rustc": "rustc 1.93.1 (01f6ddf75 2026-02-11)\nbinary: rustc\ncommit-hash: 01f6ddf7588f42ae2d7eb0a2f21d44e8e96674cf\ncommit-date: 2026-02-11\nhost: x86_64-pc-windows-msvc\nrelease: 1.93.1\nLLVM version: 21.1.8",
+      "cargo": "cargo 1.93.1 (083ac5135 2025-12-15)",
+      "cargo_lock_sha256": "efbbca8423cb6dee8bffa7a01b64d700e0104ee7294205b1c6e8c41590a233d5",
+      "binary": "fast-dump.exe",
+      "binary_bytes": 2124288,
+      "binary_sha256": "6674bf6ac976014d5930f7e383c26033a5c23d1b927c744e7569522acac91fb7",
+      "created_utc": "2026-10-23T21:52:06.481091+00:00",
+      "build_command": [
+        "cargo",
+        "+stable",
+        "build",
+        "--release",
+        "--locked",
+        "--offline",
+        "--target-dir",
+        "target",
+        "--bin",
+        "fast-dump"
+      ]
+    },
+    "linux": {
+      "package": "fast-dump",
+      "version": "0.1.0",
+      "commit": "92012a082190a95cbc317a3e1d7ca87b347bae04",
+      "source_tree": "c977872e8b171d39f8f2452ec793477bdf3e646d",
+      "target": "x86_64-unknown-linux-gnu",
+      "profile": "release",
+      "features": [],
+      "rustc": "rustc 1.94.1 (e408947bf 2026-03-25)\nbinary: rustc\ncommit-hash: e408947bfd200af42db322daf0fadfe7e26d3bd1\ncommit-date: 2026-03-25\nhost: x86_64-unknown-linux-gnu\nrelease: 1.94.1\nLLVM version: 21.1.8",
+      "cargo": "cargo 1.94.1 (29ea6fb6a 2026-03-24)",
+      "cargo_lock_sha256": "efbbca8423cb6dee8bffa7a01b64d700e0104ee7294205b1c6e8c41590a233d5",
+      "binary": "fast-dump",
+      "binary_bytes": 2618008,
+      "binary_sha256": "b0aaf0b6a0363de83b5edfac2fdd48d875809760f19a583d13c842fdb5b2d1fc",
+      "created_utc": "2026-10-23T21:52:48.349474+00:00",
+      "build_command": [
+        "cargo",
+        "+stable",
+        "build",
+        "--release",
+        "--locked",
+        "--offline",
+        "--target-dir",
+        "target/verify-linux",
+        "--bin",
+        "fast-dump"
+      ],
+      "git_process_config": {
+        "GIT_CONFIG_COUNT": "1",
+        "GIT_CONFIG_KEY_0": "core.autocrlf",
+        "GIT_CONFIG_VALUE_0": "true"
+      }
+    }
+  },
+  "packages": [
+    {
+      "path": "fast-dump-92012a0-x86_64-pc-windows-msvc.tar.gz",
+      "sha256": "2b2e39d51601e676316abc38df4483670ae1a9068fe3fe9b15cc2c6f9bbbf4c3",
+      "bytes": 909751
+    },
+    {
+      "path": "fast-dump-92012a0-x86_64-unknown-linux-gnu.tar.gz",
+      "sha256": "54a1a16245ddf91d0528e8c7baad75352e2ea61f523469445de8b8e8a298dc6c",
+      "bytes": 1173153
+    }
+  ],
+  "limitations": [
+    "Linux checks ran in WSL; physical 1/10 GbE link not tested.",
+    "Process-kill and injected I/O errors do not simulate physical power loss.",
+    "128-session run is not a multi-hour production soak; no claim about total RSS stability.",
+    "Connected silent peers have no general idle deadline.",
+    "Rust source API changed: receiver data streams must implement CloneableStream and shutdown_stream; v4 wire and CLI preserved.",
+    "GitHub workflow definitions added and checked locally; remote CI not triggered."
+  ],
+  "git_eol_note": "Windows checkout includes CRLF; Linux final provenance used process-local core.autocrlf=true, with exact bytes independently verified by SHA-256. No repository config or source changed."
+}

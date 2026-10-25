@@ -1,12 +1,16 @@
+use super::events::receive_next_event;
+use super::readers::{DATA_BUFFER_COUNT, DataBuffer, READER_QUEUE_CAPACITY, spawn_data_reader};
+use crate::network::protocol::wire::BundleAck;
+use crate::network::protocol::{BundleCommitDescriptor, BundleDescriptor, BundlePlanDescriptor};
+use crate::tests::TestDir;
+use crossbeam_channel::bounded;
 use std::fs;
 use std::io::Cursor;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::Ordering;
 
 use super::*;
 use crate::network::protocol::PreparedBundle;
-
-static NEXT_TEST_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
 #[test]
 fn failed_error_reply_preserves_the_primary_protocol_failure() {
@@ -45,35 +49,19 @@ fn failed_error_reply_preserves_the_primary_protocol_failure() {
     assert!(!crate::network::is_retryable_error(&error));
 }
 
-struct TestDirectory(PathBuf);
+struct TestDirectory(TestDir);
 
 impl TestDirectory {
     fn new() -> Self {
-        let path = std::env::temp_dir().join(format!(
-            "fast-dump-receiver-boundaries-{}-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos(),
-            NEXT_TEST_DIRECTORY.fetch_add(1, Ordering::Relaxed),
-        ));
-        fs::create_dir_all(&path).unwrap();
-        Self(path)
+        Self(TestDir::new())
     }
 
     fn open(&self) -> ReceiverSession {
-        ReceiverSession::open(self.0.clone(), "boundaries", 1).unwrap()
+        ReceiverSession::open(self.0.path().to_path_buf(), "boundaries", 1).unwrap()
     }
 
     fn archive_bytes(&self) -> Vec<u8> {
-        fs::read(self.0.join("boundaries.tar.zst.part")).unwrap()
-    }
-}
-
-impl Drop for TestDirectory {
-    fn drop(&mut self) {
-        let _ = fs::remove_dir_all(&self.0);
+        fs::read(self.0.path().join("boundaries.tar.zst.part")).unwrap()
     }
 }
 
@@ -182,9 +170,13 @@ fn progress_tracks_written_payload_and_durable_entries_without_using_ordinals() 
     let run = RunControl::new(Some(hub));
     let control = run.session(Role::Receiver, "boundaries", "peer");
     let progress = control.progress().unwrap();
-    let mut receiver =
-        ReceiverSession::open_controlled(directory.0.clone(), "boundaries", 1, Some(&control))
-            .unwrap();
+    let mut receiver = ReceiverSession::open_controlled(
+        directory.0.path().to_path_buf(),
+        "boundaries",
+        1,
+        Some(&control),
+    )
+    .unwrap();
     let mut payload = bundle(1);
     payload.descriptor.first_work_ordinal = 3;
     payload.descriptor.last_work_ordinal = 9;
@@ -248,9 +240,13 @@ fn progress_tracks_written_payload_and_durable_entries_without_using_ordinals() 
     assert_eq!(progress.bundles.load(Ordering::Relaxed), 1);
     drop(receiver);
     let resumed = run.session(Role::Receiver, "boundaries", "peer");
-    let _receiver =
-        ReceiverSession::open_controlled(directory.0.clone(), "boundaries", 1, Some(&resumed))
-            .unwrap();
+    let _receiver = ReceiverSession::open_controlled(
+        directory.0.path().to_path_buf(),
+        "boundaries",
+        1,
+        Some(&resumed),
+    )
+    .unwrap();
     let resumed_progress = resumed.progress().unwrap();
     assert_eq!(
         resumed_progress.resumed_bytes.load(Ordering::Relaxed),
@@ -301,7 +297,7 @@ fn grouped_wal_preserves_exact_boundaries_with_speculative_suffix_and_torn_tail(
     assert_eq!(receiver.current_archive_len(), expected_ends[3] + 5);
     drop(receiver);
 
-    let wal_path = directory.0.join("boundaries.wal.part");
+    let wal_path = directory.0.path().join("boundaries.wal.part");
     let wal = fs::read_to_string(&wal_path).unwrap();
     let recorded_ends = wal
         .lines()
@@ -401,7 +397,7 @@ fn recovery_ignores_parseable_record_without_newline() {
     receiver.commit_bundle(&bundle(1)).unwrap();
     receiver.commit_bundle(&bundle(2)).unwrap();
     drop(receiver);
-    let path = directory.0.join("boundaries.wal.part");
+    let path = directory.0.path().join("boundaries.wal.part");
     let mut bytes = fs::read(&path).unwrap();
     assert_eq!(bytes.pop(), Some(b'\n'));
     fs::write(path, bytes).unwrap();
@@ -414,11 +410,11 @@ fn completed_archive_with_stale_wal_is_preserved() {
     let mut receiver = directory.open();
     receiver.commit_bundle(&bundle(1)).unwrap();
     drop(receiver);
-    let part = directory.0.join("boundaries.tar.zst.part");
-    let final_path = directory.0.join("boundaries.tar.zst");
+    let part = directory.0.path().join("boundaries.tar.zst.part");
+    let final_path = directory.0.path().join("boundaries.tar.zst");
     let expected = fs::read(&part).unwrap();
     fs::rename(&part, &final_path).unwrap();
-    assert!(ReceiverSession::open(directory.0.clone(), "boundaries", 1).is_err());
+    assert!(ReceiverSession::open(directory.0.path().to_path_buf(), "boundaries", 1).is_err());
     assert_eq!(fs::read(final_path).unwrap(), expected);
     assert!(!part.exists());
 }
@@ -431,12 +427,12 @@ fn completed_archive_and_partial_state_are_both_preserved_on_reopen() {
     receiver.stage_bundle(&bundle(2)).unwrap();
     drop(receiver);
     let expected_part = directory.archive_bytes();
-    let wal_path = directory.0.join("boundaries.wal.part");
+    let wal_path = directory.0.path().join("boundaries.wal.part");
     let expected_wal = fs::read(&wal_path).unwrap();
-    let final_path = directory.0.join("boundaries.tar.zst");
+    let final_path = directory.0.path().join("boundaries.tar.zst");
     fs::write(&final_path, b"previous completed archive").unwrap();
 
-    assert!(ReceiverSession::open(directory.0.clone(), "boundaries", 1).is_err());
+    assert!(ReceiverSession::open(directory.0.path().to_path_buf(), "boundaries", 1).is_err());
     assert_eq!(fs::read(final_path).unwrap(), b"previous completed archive");
     assert_eq!(directory.archive_bytes(), expected_part);
     assert_eq!(fs::read(wal_path).unwrap(), expected_wal);
@@ -447,10 +443,10 @@ fn finalize_preserves_existing_archive_and_resume_state() {
     let directory = TestDirectory::new();
     let mut receiver = directory.open();
     receiver.commit_bundle(&bundle(1)).unwrap();
-    let final_path = directory.0.join("boundaries.tar.zst");
+    let final_path = directory.0.path().join("boundaries.tar.zst");
     // Имитируем посторонний готовый файл, появившийся после открытия сессии.
     fs::write(&final_path, b"another completed archive").unwrap();
-    let wal_path = directory.0.join("boundaries.wal.part");
+    let wal_path = directory.0.path().join("boundaries.wal.part");
     let expected_wal = fs::read(&wal_path).unwrap();
 
     assert!(receiver.finalize().is_err());
@@ -471,7 +467,7 @@ fn complete_corrupt_wal_record_fails_without_truncating_archive_or_wal() {
     receiver.commit_bundle(&bundle(2)).unwrap();
     drop(receiver);
     let expected_archive = directory.archive_bytes();
-    let wal_path = directory.0.join("boundaries.wal.part");
+    let wal_path = directory.0.path().join("boundaries.wal.part");
     let complete_wal = fs::read(&wal_path).unwrap();
     let prefix_end = complete_wal
         .iter()
@@ -492,7 +488,7 @@ fn complete_corrupt_wal_record_fails_without_truncating_archive_or_wal() {
         // Ошибка в середине тоже не должна скрывать дальнейшие записи.
         corrupt.extend_from_slice(&complete_wal[prefix_end..]);
         fs::write(&wal_path, &corrupt).unwrap();
-        let error = ReceiverSession::open(directory.0.clone(), "boundaries", 1)
+        let error = ReceiverSession::open(directory.0.path().to_path_buf(), "boundaries", 1)
             .err()
             .expect("complete corrupt WAL must fail recovery");
         assert!(format!("{error:#}").contains("complete v4 wal record"));
@@ -513,7 +509,7 @@ fn numeric_wal_corruption_is_rejected_but_skipped_bundle_numbers_resume() {
     receiver.commit_bundle(&bundle(3)).unwrap();
     drop(receiver);
     let expected_archive = directory.archive_bytes();
-    let wal_path = directory.0.join("boundaries.wal.part");
+    let wal_path = directory.0.path().join("boundaries.wal.part");
     let valid = fs::read_to_string(&wal_path).unwrap();
     let mut lines = valid.lines().map(str::to_owned).collect::<Vec<_>>();
     let original_columns = lines[2].split('\t').map(str::to_owned).collect::<Vec<_>>();
@@ -530,7 +526,7 @@ fn numeric_wal_corruption_is_rejected_but_skipped_bundle_numbers_resume() {
         lines[2] = columns.join("\t");
         let corrupt = format!("{}\n", lines.join("\n"));
         fs::write(&wal_path, &corrupt).unwrap();
-        let error = ReceiverSession::open(directory.0.clone(), "boundaries", 1)
+        let error = ReceiverSession::open(directory.0.path().to_path_buf(), "boundaries", 1)
             .err()
             .expect("inconsistent WAL must fail recovery");
         assert!(format!("{error:#}").contains("inconsistent complete v4 wal record"));
@@ -574,7 +570,7 @@ fn dump_lock_prevents_cross_process_recovery_until_owner_closes() {
     receiver.commit_bundle(&bundle(1)).unwrap();
     receiver.stage_bundle(&bundle(2)).unwrap();
     let expected_archive = directory.archive_bytes();
-    let wal_path = directory.0.join("boundaries.wal.part");
+    let wal_path = directory.0.path().join("boundaries.wal.part");
     let expected_wal = fs::read(&wal_path).unwrap();
     let probe = |mode: &str| {
         let output = std::process::Command::new(std::env::current_exe().unwrap())
@@ -583,7 +579,7 @@ fn dump_lock_prevents_cross_process_recovery_until_owner_closes() {
                 "receiver::network::tests::dump_lock_child_probe",
                 "--nocapture",
             ])
-            .env("FAST_DUMP_TEST_RECEIVER_LOCK_DIR", &directory.0)
+            .env("FAST_DUMP_TEST_RECEIVER_LOCK_DIR", directory.0.path())
             .env("FAST_DUMP_TEST_RECEIVER_LOCK_EXPECT", mode)
             .output()
             .unwrap();
@@ -596,22 +592,22 @@ fn dump_lock_prevents_cross_process_recovery_until_owner_closes() {
         assert!(String::from_utf8_lossy(&output.stdout).contains("1 passed"));
     };
     probe("busy");
-    assert!(ReceiverSession::open(directory.0.clone(), "boundaries", 1).is_err());
+    assert!(ReceiverSession::open(directory.0.path().to_path_buf(), "boundaries", 1).is_err());
     assert_eq!(directory.archive_bytes(), expected_archive);
     assert_eq!(fs::read(&wal_path).unwrap(), expected_wal);
 
     drop(receiver);
-    assert!(directory.0.join("boundaries.lock").exists());
+    assert!(directory.0.path().join("boundaries.lock").exists());
     probe("available");
     assert_eq!(directory.archive_bytes(), bundle(1).compressed_payload);
     assert_eq!(fs::read(wal_path).unwrap(), expected_wal);
-    assert!(directory.0.join("boundaries.lock").exists());
+    assert!(directory.0.path().join("boundaries.lock").exists());
 }
 
 #[test]
 fn invalid_dump_id_is_rejected_before_creating_receiver_directory() {
     let directory = TestDirectory::new();
-    let data_dir = directory.0.join("not-created");
+    let data_dir = directory.0.path().join("not-created");
     for dump_id in ["../escaped", "nested/dump", "nested\\dump"] {
         assert!(ReceiverSession::open(data_dir.clone(), dump_id, 1).is_err());
     }
@@ -621,11 +617,12 @@ fn invalid_dump_id_is_rejected_before_creating_receiver_directory() {
 #[test]
 fn legacy_migration_never_takes_files_from_active_or_closed_v4_suffix_dump() {
     let directory = TestDirectory::new();
-    let mut suffixed = ReceiverSession::open(directory.0.clone(), "boundaries.v4", 1).unwrap();
+    let mut suffixed =
+        ReceiverSession::open(directory.0.path().to_path_buf(), "boundaries.v4", 1).unwrap();
     suffixed.commit_bundle(&bundle(1)).unwrap();
     suffixed.stage_bundle(&bundle(2)).unwrap();
-    let suffixed_part = directory.0.join("boundaries.v4.tar.zst.part");
-    let suffixed_wal = directory.0.join("boundaries.v4.wal.part");
+    let suffixed_part = directory.0.path().join("boundaries.v4.tar.zst.part");
+    let suffixed_wal = directory.0.path().join("boundaries.v4.wal.part");
     let expected_part = fs::read(&suffixed_part).unwrap();
     let expected_wal = fs::read(&suffixed_wal).unwrap();
 
@@ -643,7 +640,8 @@ fn legacy_migration_never_takes_files_from_active_or_closed_v4_suffix_dump() {
     assert_eq!(base.resume_state().last_committed_bundle_no, 3);
     assert_eq!(fs::read(&suffixed_part).unwrap(), expected_part);
     assert_eq!(fs::read(&suffixed_wal).unwrap(), expected_wal);
-    let suffixed = ReceiverSession::open(directory.0.clone(), "boundaries.v4", 1).unwrap();
+    let suffixed =
+        ReceiverSession::open(directory.0.path().to_path_buf(), "boundaries.v4", 1).unwrap();
     assert_eq!(suffixed.resume_state().last_committed_bundle_no, 1);
     assert_eq!(
         fs::read(suffixed_part).unwrap(),
@@ -660,14 +658,14 @@ fn corrupt_skip_catalog_blocks_recovery_without_truncating_speculative_bytes() {
     receiver.stage_bundle(&bundle(2)).unwrap();
     drop(receiver);
     let expected_archive = directory.archive_bytes();
-    let path = directory.0.join("boundaries.catalog.part");
+    let path = directory.0.path().join("boundaries.catalog.part");
     for corrupt in [
         "",
         "fast-dump-v4-catalog-1",
         "fast-dump-v4-catalog-1\nskip\t3\topen_failed\tx",
     ] {
         fs::write(&path, corrupt).unwrap();
-        assert!(ReceiverSession::open(directory.0.clone(), "boundaries", 1).is_err());
+        assert!(ReceiverSession::open(directory.0.path().to_path_buf(), "boundaries", 1).is_err());
         assert_eq!(directory.archive_bytes(), expected_archive);
         assert_eq!(fs::read_to_string(&path).unwrap(), corrupt);
     }
@@ -679,13 +677,13 @@ fn recovery_does_not_extend_short_archive_to_wal_boundary() {
     let mut receiver = directory.open();
     receiver.commit_bundle(&bundle(1)).unwrap();
     drop(receiver);
-    let path = directory.0.join("boundaries.tar.zst.part");
+    let path = directory.0.path().join("boundaries.tar.zst.part");
     let bytes = directory.archive_bytes();
     fs::write(&path, &bytes[..5]).unwrap();
-    assert!(ReceiverSession::open(directory.0.clone(), "boundaries", 1).is_err());
+    assert!(ReceiverSession::open(directory.0.path().to_path_buf(), "boundaries", 1).is_err());
     assert_eq!(directory.archive_bytes(), bytes[..5]);
     fs::remove_file(&path).unwrap();
-    assert!(ReceiverSession::open(directory.0.clone(), "boundaries", 1).is_err());
+    assert!(ReceiverSession::open(directory.0.path().to_path_buf(), "boundaries", 1).is_err());
     assert!(!path.exists());
 }
 

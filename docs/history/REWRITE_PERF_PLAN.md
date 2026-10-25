@@ -1,3 +1,6 @@
+> Historical document. See the [current runtime](../runtime.md) and
+> [protocol v4](../../src/network/protocol.md) for the active contract.
+
 # Rewrite Performance Plan
 
 Status on 2026-04-14: the rewrite and cutover are already complete. Keep this

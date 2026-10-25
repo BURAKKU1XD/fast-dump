@@ -1,0 +1,154 @@
+{
+  "schema_version": 1,
+  "id": "legacy-target-perf-memory-20261023-final-bigFiles-10g-543ea2fb82ab",
+  "kind": "benchmark",
+  "label": "target/perf-memory-20261023/final-bigFiles-10g",
+  "status": "imported",
+  "started_utc": "2026-10-23T10:18:16.714432+00:00",
+  "time_source": "original_file_mtime",
+  "imported_utc": "2026-10-25T02:06:41.589078+00:00",
+  "import_sha256": "543ea2fb82ab16a38f60be45da483f4fee2265961bc1bb4816ed97ed9eec469b",
+  "origin": "results/history/2026-10-24",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "binary_sha256": {
+      "before": "d7dce4575ee4290e5fa72faeca0ecfb92ae5e609e5de797fb5f1a51587ab4bab",
+      "after": "b74cf97b815e51fac00e2b52887f272cdf242faf8a36cb8972ae1bb82d5c77d8"
+    },
+    "comparison_kind": "A/B",
+    "requested_readers": {
+      "before": 16,
+      "after": 16
+    },
+    "common_arguments": [
+      "--repeats",
+      "1",
+      "--shuffle-scenarios",
+      "--shuffle-seed",
+      "91",
+      "--source",
+      "E:\\projects\\cool_project\\fast-dump\\target\\bench-verify-20261022\\datasets\\bigFiles",
+      "--network-profile",
+      "link-10gbps",
+      "--threads",
+      "31",
+      "--frames",
+      "64",
+      "--buffers",
+      "1024",
+      "--executor",
+      "default"
+    ],
+    "repeats_per_side": 6,
+    "policy": "AB then BA alternating; all samples retained; no automatic warmup or trimming",
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 6,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 6,
+        "side": "before",
+        "exit_code": 0
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "target/perf-memory-20261023/final-bigFiles-10g/before/run.log",
+      "sha256": "e334589a3d0a507aee00a9198c82e9659a5a759020ae0dea70ee13cfcc58705e",
+      "bytes": 13984,
+      "extracted_sha256": "d590820fcf77d32f553bdc18fb0a594c9d7937d50c4dd8d69f1965b39d7c1a3a",
+      "saved": "raw/before/resource_samples.csv"
+    },
+    {
+      "source": "target/perf-memory-20261023/final-bigFiles-10g/before/results_raw.csv",
+      "sha256": "88204a98826eda666d090fbea5e81945d96377a96af32cbe017f7a426baed8a3",
+      "bytes": 4817,
+      "saved": "raw/before/results_raw.csv"
+    },
+    {
+      "source": "target/perf-memory-20261023/final-bigFiles-10g/after/run.log",
+      "sha256": "28401d93dd6aaca6c9d0754fc9c59dbb23b53ce506fb8cc319eb91c43fee7ff8",
+      "bytes": 13966,
+      "extracted_sha256": "8b1368e874c25e4c30ffeeed7b04546c95ce66b5bce75be768419f53a8a402d2",
+      "saved": "raw/after/resource_samples.csv"
+    },
+    {
+      "source": "target/perf-memory-20261023/final-bigFiles-10g/after/results_raw.csv",
+      "sha256": "037630dcc481ab7eb24a1c3542e1f9b9b04d5595a2d641fe8fc61a3d9ed6a6a4",
+      "bytes": 4817,
+      "saved": "raw/after/results_raw.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "target/perf-memory-20261023/final-bigFiles-10g/paired-run.json",
+      "sha256": "729405223514ed8fbfd556787c2e51faee60c7da51e670c66b541f4b8dc2f970",
+      "bytes": 11215
+    },
+    {
+      "source": "target/perf-memory-20261023/final-bigFiles-10g/before/run.log",
+      "sha256": "e334589a3d0a507aee00a9198c82e9659a5a759020ae0dea70ee13cfcc58705e",
+      "bytes": 13984
+    },
+    {
+      "source": "target/perf-memory-20261023/final-bigFiles-10g/after/run.log",
+      "sha256": "28401d93dd6aaca6c9d0754fc9c59dbb23b53ce506fb8cc319eb91c43fee7ff8",
+      "bytes": 13966
+    }
+  ]
+}

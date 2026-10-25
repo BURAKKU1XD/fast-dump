@@ -42,11 +42,36 @@ jobs:
           toolchain: ${{ matrix.toolchain }}
           components: clippy
       - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
       - name: Test default features
-        run: cargo test --locked --quiet
+        run: python scripts/results.py record --kind test --label default -- cargo test --locked --quiet
       - name: Test all features
-        run: cargo test --locked --all-features --quiet
+        run: python scripts/results.py record --kind test --label all-features -- cargo test --locked --all-features --quiet
       - name: Clippy
         run: cargo clippy --locked --all-targets --all-features -- -D warnings
       - name: Check benches
         run: cargo check --locked --benches --all-features
+      - name: Python regression tests
+        run: python -B -m unittest discover -s scripts -p 'test_*.py'
+      - name: PowerShell syntax
+        run: |
+          Get-ChildItem scripts/*.ps1 | ForEach-Object {
+            $parseErrors = $null
+            $parseTokens = $null
+            [void][System.Management.Automation.Language.Parser]::ParseFile($_.FullName, [ref]$parseTokens, [ref]$parseErrors)
+            if ($parseErrors.Count) { throw ($parseErrors | Out-String) }
+          }
+      - name: Shell syntax
+        if: runner.os == 'Linux'
+        shell: bash
+        run: bash -n scripts/bench-netem.sh
+      - name: Upload verification results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: verification-${{ matrix.os }}-${{ matrix.toolchain }}
+          path: |
+            results/tests/
+            results/local/tests/

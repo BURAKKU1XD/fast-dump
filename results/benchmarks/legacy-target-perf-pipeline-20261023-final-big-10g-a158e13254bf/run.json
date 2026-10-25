@@ -1,0 +1,154 @@
+{
+  "schema_version": 1,
+  "id": "legacy-target-perf-pipeline-20261023-final-big-10g-a158e13254bf",
+  "kind": "benchmark",
+  "label": "target/perf-pipeline-20261023/final-big-10g",
+  "status": "imported",
+  "started_utc": "2026-10-23T19:19:11.316948+00:00",
+  "time_source": "original_file_mtime",
+  "imported_utc": "2026-10-25T02:06:43.753870+00:00",
+  "import_sha256": "a158e13254bfcd6a560e5335f57a87fa2ab02c9e389050ec42ca3434a7bc7285",
+  "origin": "results/history/2026-10-24",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "binary_sha256": {
+      "before": "a10b08f13c07642af453f092583dd0fc9fc890dddbec4edce25ec89b073dc310",
+      "after": "70fc33efa7b0bc78640e5d79f5d802a6e2788d9ed1e3615401a628f2f72df629"
+    },
+    "comparison_kind": "A/B",
+    "requested_readers": {
+      "before": 16,
+      "after": 16
+    },
+    "common_arguments": [
+      "--repeats",
+      "1",
+      "--shuffle-scenarios",
+      "--shuffle-seed",
+      "91",
+      "--source",
+      "E:\\projects\\cool_project\\fast-dump\\target\\bench-verify-20261022\\datasets\\bigFiles",
+      "--network-profile",
+      "link-10gbps",
+      "--threads",
+      "31",
+      "--frames",
+      "64",
+      "--buffers",
+      "1024",
+      "--executor",
+      "default"
+    ],
+    "repeats_per_side": 6,
+    "policy": "AB then BA alternating; all samples retained; no automatic warmup or trimming",
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 6,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 6,
+        "side": "before",
+        "exit_code": 0
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "target/perf-pipeline-20261023/final-big-10g/before/run.log",
+      "sha256": "4c1e83976eff1dc64664d7c06ff99b2ddd3fe3c5f016a140e9441df961708f44",
+      "bytes": 17310,
+      "extracted_sha256": "529ea050d3cdaad2a1f70eba74ec254d7541a5aa5a2ca6429f61347c65367aa0",
+      "saved": "raw/before/resource_samples.csv"
+    },
+    {
+      "source": "target/perf-pipeline-20261023/final-big-10g/before/results_raw.csv",
+      "sha256": "72d743d28b3553a4b942e11d6c76a01cfaebaa8789014e21a80777401c4d3d50",
+      "bytes": 4817,
+      "saved": "raw/before/results_raw.csv"
+    },
+    {
+      "source": "target/perf-pipeline-20261023/final-big-10g/after/run.log",
+      "sha256": "bd0cfce071970b2f240b5a30269e7d7a39d9a4ba3caafd504b855f75d5af7c52",
+      "bytes": 19657,
+      "extracted_sha256": "fdc2658d2226e2293414b19750abdbead216b5f2a570a68ff61d1070f4250142",
+      "saved": "raw/after/resource_samples.csv"
+    },
+    {
+      "source": "target/perf-pipeline-20261023/final-big-10g/after/results_raw.csv",
+      "sha256": "14ec76f94edb62d931cce209e0a26f983fd6152ca4dc369a6250b15693703d88",
+      "bytes": 4824,
+      "saved": "raw/after/results_raw.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "target/perf-pipeline-20261023/final-big-10g/paired-run.json",
+      "sha256": "2a78deb685869681727fa0e26350a49b04332394536d8414c0f5f2208a01c01a",
+      "bytes": 11121
+    },
+    {
+      "source": "target/perf-pipeline-20261023/final-big-10g/before/run.log",
+      "sha256": "4c1e83976eff1dc64664d7c06ff99b2ddd3fe3c5f016a140e9441df961708f44",
+      "bytes": 17310
+    },
+    {
+      "source": "target/perf-pipeline-20261023/final-big-10g/after/run.log",
+      "sha256": "bd0cfce071970b2f240b5a30269e7d7a39d9a4ba3caafd504b855f75d5af7c52",
+      "bytes": 19657
+    }
+  ]
+}

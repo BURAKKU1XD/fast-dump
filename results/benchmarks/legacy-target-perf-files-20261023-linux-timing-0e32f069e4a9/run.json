@@ -1,0 +1,398 @@
+{
+  "schema_version": 1,
+  "id": "legacy-target-perf-files-20261023-linux-timing-0e32f069e4a9",
+  "kind": "benchmark",
+  "label": "target/perf-files-20261023/linux-timing",
+  "status": "imported",
+  "started_utc": "2026-10-22T21:42:42.295199+00:00",
+  "time_source": "manifest",
+  "imported_utc": "2026-10-25T02:06:41.021914+00:00",
+  "import_sha256": "0e32f069e4a957bb874ccc143453b8cb8646dac8b8409f2ce10a8d7d86d43a51",
+  "origin": "results/history/2026-10-24",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "created_utc": "2026-10-22T21:42:42.295199+00:00",
+    "binary_sha256": {
+      "before": "4859cf5de4aace0eb5c8b58962c8f2b4fcfcd2930139fcaf2ca86f16cfd5c35e",
+      "after": "7be4634c504f27d0b167a024b7b5d625928bdc629a21ec6d2df00351c6e090ae"
+    },
+    "platform": "Linux-6.18.54.1-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+    "logical_cpus": 4,
+    "allocations_diagnostic": false,
+    "repeats": 7,
+    "policy": "AB/BA alternating pairs; no trimming, implicit warmup, or dropped first samples",
+    "scenarios": [
+      [
+        "scan",
+        1
+      ],
+      [
+        "read",
+        1
+      ],
+      [
+        "read",
+        4
+      ],
+      [
+        "read",
+        8
+      ]
+    ],
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "stage": "scan",
+        "readers": 1
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "stage": "scan",
+        "readers": 1
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "stage": "scan",
+        "readers": 1
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "stage": "scan",
+        "readers": 1
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "stage": "scan",
+        "readers": 1
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "stage": "scan",
+        "readers": 1
+      },
+      {
+        "pair": 4,
+        "side": "after",
+        "stage": "scan",
+        "readers": 1
+      },
+      {
+        "pair": 4,
+        "side": "before",
+        "stage": "scan",
+        "readers": 1
+      },
+      {
+        "pair": 5,
+        "side": "before",
+        "stage": "scan",
+        "readers": 1
+      },
+      {
+        "pair": 5,
+        "side": "after",
+        "stage": "scan",
+        "readers": 1
+      },
+      {
+        "pair": 6,
+        "side": "after",
+        "stage": "scan",
+        "readers": 1
+      },
+      {
+        "pair": 6,
+        "side": "before",
+        "stage": "scan",
+        "readers": 1
+      },
+      {
+        "pair": 7,
+        "side": "before",
+        "stage": "scan",
+        "readers": 1
+      },
+      {
+        "pair": 7,
+        "side": "after",
+        "stage": "scan",
+        "readers": 1
+      },
+      {
+        "pair": 1,
+        "side": "before",
+        "stage": "read",
+        "readers": 1
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "stage": "read",
+        "readers": 1
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "stage": "read",
+        "readers": 1
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "stage": "read",
+        "readers": 1
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "stage": "read",
+        "readers": 1
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "stage": "read",
+        "readers": 1
+      },
+      {
+        "pair": 4,
+        "side": "after",
+        "stage": "read",
+        "readers": 1
+      },
+      {
+        "pair": 4,
+        "side": "before",
+        "stage": "read",
+        "readers": 1
+      },
+      {
+        "pair": 5,
+        "side": "before",
+        "stage": "read",
+        "readers": 1
+      },
+      {
+        "pair": 5,
+        "side": "after",
+        "stage": "read",
+        "readers": 1
+      },
+      {
+        "pair": 6,
+        "side": "after",
+        "stage": "read",
+        "readers": 1
+      },
+      {
+        "pair": 6,
+        "side": "before",
+        "stage": "read",
+        "readers": 1
+      },
+      {
+        "pair": 7,
+        "side": "before",
+        "stage": "read",
+        "readers": 1
+      },
+      {
+        "pair": 7,
+        "side": "after",
+        "stage": "read",
+        "readers": 1
+      },
+      {
+        "pair": 1,
+        "side": "before",
+        "stage": "read",
+        "readers": 4
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "stage": "read",
+        "readers": 4
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "stage": "read",
+        "readers": 4
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "stage": "read",
+        "readers": 4
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "stage": "read",
+        "readers": 4
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "stage": "read",
+        "readers": 4
+      },
+      {
+        "pair": 4,
+        "side": "after",
+        "stage": "read",
+        "readers": 4
+      },
+      {
+        "pair": 4,
+        "side": "before",
+        "stage": "read",
+        "readers": 4
+      },
+      {
+        "pair": 5,
+        "side": "before",
+        "stage": "read",
+        "readers": 4
+      },
+      {
+        "pair": 5,
+        "side": "after",
+        "stage": "read",
+        "readers": 4
+      },
+      {
+        "pair": 6,
+        "side": "after",
+        "stage": "read",
+        "readers": 4
+      },
+      {
+        "pair": 6,
+        "side": "before",
+        "stage": "read",
+        "readers": 4
+      },
+      {
+        "pair": 7,
+        "side": "before",
+        "stage": "read",
+        "readers": 4
+      },
+      {
+        "pair": 7,
+        "side": "after",
+        "stage": "read",
+        "readers": 4
+      },
+      {
+        "pair": 1,
+        "side": "before",
+        "stage": "read",
+        "readers": 8
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "stage": "read",
+        "readers": 8
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "stage": "read",
+        "readers": 8
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "stage": "read",
+        "readers": 8
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "stage": "read",
+        "readers": 8
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "stage": "read",
+        "readers": 8
+      },
+      {
+        "pair": 4,
+        "side": "after",
+        "stage": "read",
+        "readers": 8
+      },
+      {
+        "pair": 4,
+        "side": "before",
+        "stage": "read",
+        "readers": 8
+      },
+      {
+        "pair": 5,
+        "side": "before",
+        "stage": "read",
+        "readers": 8
+      },
+      {
+        "pair": 5,
+        "side": "after",
+        "stage": "read",
+        "readers": 8
+      },
+      {
+        "pair": 6,
+        "side": "after",
+        "stage": "read",
+        "readers": 8
+      },
+      {
+        "pair": 6,
+        "side": "before",
+        "stage": "read",
+        "readers": 8
+      },
+      {
+        "pair": 7,
+        "side": "before",
+        "stage": "read",
+        "readers": 8
+      },
+      {
+        "pair": 7,
+        "side": "after",
+        "stage": "read",
+        "readers": 8
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "target/perf-files-20261023/linux-timing/samples.csv",
+      "sha256": "9ae97b2d87256897b63a0a1cab6bdceaf5646de1023f32cdf3dca81fb7b92551",
+      "bytes": 18467,
+      "saved": "raw/samples.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "target/perf-files-20261023/linux-timing/paired-run.json",
+      "sha256": "ff7bf2aea5aac8ad750d05c8f91acbf3f61873de1048a33579637bde4eaaec04",
+      "bytes": 93957
+    }
+  ]
+}

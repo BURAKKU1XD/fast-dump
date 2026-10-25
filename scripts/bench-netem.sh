@@ -7,7 +7,7 @@ Usage: bash bench-netem.sh {none|1gbit|10gbit} LABEL [LINUX_BENCH_BINARY_OR_PY_D
 
 Always creates a fresh network namespace; host interfaces are never configured.
 Calibration only when LINUX_BENCH_BINARY is omitted.
-Results: target/bench-netem/LABEL/; FAST_DUMP_NETEM_DIR overrides the output root.
+Results: results/local/benchmarks/netem/LABEL/; FAST_DUMP_NETEM_DIR overrides the output root.
 Defaults: NETEM_DELAY=500us, NETEM_MTU=1500, CALIBRATION_MIB=256.
 The single lo qdisc applies delay in both directions and SHARES its rate cap
 between directions. It is not a full-duplex pair of independent rate limiters.
@@ -34,7 +34,7 @@ done
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 repo_dir=$(cd -- "$script_dir/.." && pwd)
-output_root=$(python3 -c 'import os, sys; print(os.path.abspath(sys.argv[1]))' "${FAST_DUMP_NETEM_DIR:-$repo_dir/target/bench-netem}")
+output_root=$(python3 -c 'import os, sys; print(os.path.abspath(sys.argv[1]))' "${FAST_DUMP_NETEM_DIR:-${FAST_DUMP_RESULTS_RUN_DIR:-$repo_dir/results/local/benchmarks}/netem}")
 parent_namespace=$(readlink /proc/self/ns/net)
 
 # Все ip/tc находятся только в дочернем unshare. Повторная проверка inode

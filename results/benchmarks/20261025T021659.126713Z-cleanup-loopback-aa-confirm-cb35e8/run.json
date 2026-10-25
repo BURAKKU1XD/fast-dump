@@ -1,0 +1,177 @@
+{
+  "schema_version": 1,
+  "id": "20261025T021659.126713Z-cleanup-loopback-aa-confirm-cb35e8",
+  "kind": "benchmark",
+  "label": "cleanup-loopback-aa-confirm",
+  "suite": null,
+  "status": "completed",
+  "started_utc": "2026-10-25T02:16:59.127530+00:00",
+  "command": [
+    "python",
+    "-u",
+    "scripts/bench-paired.py",
+    "--before",
+    "target/cleanup-perf/baseline/release/deps/loopback_send_dump-6838da89a4037375.exe",
+    "--after",
+    "target/cleanup-perf/baseline/release/deps/loopback_send_dump-6838da89a4037375.exe",
+    "--allow-identical-binaries",
+    "--output",
+    "E:\\projects\\cool_project\\fast-dump\\results\\local\\benchmarks\\20261025T021659.126713Z-cleanup-loopback-aa-confirm-cb35e8\\output",
+    "--repeats",
+    "5",
+    "--dataset",
+    "manySmallFiles,mixed,bigFiles",
+    "--network-profile",
+    "loopback-localhost",
+    "--threads",
+    "1,4",
+    "--readers",
+    "8",
+    "--frames",
+    "64",
+    "--buffers",
+    "1024",
+    "--executor",
+    "default"
+  ],
+  "source": {
+    "commit": "95e902ce9593795c2a3bf1a595f8b85caa4247e3",
+    "source_dirty": true,
+    "source_sha256": "1e115f5ed2e38767d69d5c72f80a6279d03ae9fdf68f91deafb101eb380c3d7e",
+    "benchmark_harness_sha256": null,
+    "cargo_lock_sha256": "a9fafeb8792de3d3114b1d96cf40230ec352cca4f66079589f55a97898f4ec7e",
+    "rustc": "rustc 1.93.1 (01f6ddf75 2026-02-11)\nbinary: rustc\ncommit-hash: 01f6ddf7588f42ae2d7eb0a2f21d44e8e96674cf\ncommit-date: 2026-02-11\nhost: x86_64-pc-windows-msvc\nrelease: 1.93.1\nLLVM version: 21.1.8",
+    "host": {
+      "node": "DESKTOP-HTF56LL",
+      "system": "Windows",
+      "release": "10",
+      "machine": "AMD64",
+      "processor": "AMD64 Family 25 Model 97 Stepping 2, AuthenticAMD",
+      "logical_cpus": 32
+    }
+  },
+  "exit_code": 0,
+  "parameters": [
+    {
+      "complete": true,
+      "binary_sha256": {
+        "before": "0c2df973d46ef8bef8312862a41db8d60db2cf2745dbc4e243f3fdc933aecd12",
+        "after": "0c2df973d46ef8bef8312862a41db8d60db2cf2745dbc4e243f3fdc933aecd12"
+      },
+      "comparison_kind": "A/A",
+      "requested_readers": {
+        "before": 8,
+        "after": 8
+      },
+      "common_arguments": [
+        "--repeats",
+        "1",
+        "--shuffle-scenarios",
+        "--shuffle-seed",
+        "91",
+        "--dataset",
+        "manySmallFiles,mixed,bigFiles",
+        "--network-profile",
+        "loopback-localhost",
+        "--threads",
+        "1,4",
+        "--frames",
+        "64",
+        "--buffers",
+        "1024",
+        "--executor",
+        "default"
+      ],
+      "repeats_per_side": 5,
+      "policy": "AB then BA alternating; all samples retained; no automatic warmup or trimming",
+      "order": [
+        {
+          "pair": 1,
+          "side": "before",
+          "exit_code": 0
+        },
+        {
+          "pair": 1,
+          "side": "after",
+          "exit_code": 0
+        },
+        {
+          "pair": 2,
+          "side": "after",
+          "exit_code": 0
+        },
+        {
+          "pair": 2,
+          "side": "before",
+          "exit_code": 0
+        },
+        {
+          "pair": 3,
+          "side": "before",
+          "exit_code": 0
+        },
+        {
+          "pair": 3,
+          "side": "after",
+          "exit_code": 0
+        },
+        {
+          "pair": 4,
+          "side": "after",
+          "exit_code": 0
+        },
+        {
+          "pair": 4,
+          "side": "before",
+          "exit_code": 0
+        },
+        {
+          "pair": 5,
+          "side": "before",
+          "exit_code": 0
+        },
+        {
+          "pair": 5,
+          "side": "after",
+          "exit_code": 0
+        }
+      ]
+    }
+  ],
+  "evidence": [
+    {
+      "source": "output/before/run.log",
+      "sha256": "902d61346bea15e3617b4a05214d85f9a5e31889d68b691af6d9d0c7da32658b",
+      "bytes": 76339,
+      "extracted_sha256": "174477d2e094b040160e5365b80f99cffd11d2ca31d48cb38cc6f39137543426",
+      "saved": "raw/before/resource_samples.csv"
+    },
+    {
+      "source": "output/before/results_raw.csv",
+      "sha256": "cf6a7650bb040cbc3c49318d1babfcd8205d8da8082db3904ce9eac98902453f",
+      "bytes": 18453,
+      "saved": "raw/before/results_raw.csv"
+    },
+    {
+      "source": "output/after/run.log",
+      "sha256": "7f459eafd06ff787b7506e8ec54cb7a83d7cc805644467c3402ed0d9ccb3fc67",
+      "bytes": 76293,
+      "extracted_sha256": "f2949a08a90bdd9559f13828acbb67409be5f10dc9713531c8e13c730955a44f",
+      "saved": "raw/after/resource_samples.csv"
+    },
+    {
+      "source": "output/after/results_raw.csv",
+      "sha256": "62bb73039256610681533672e9f96dd8392cc78fad76162746b03634feaa0c03",
+      "bytes": 18458,
+      "saved": "raw/after/results_raw.csv"
+    }
+  ],
+  "output_environment": {
+    "FAST_DUMP_RESULTS_RUN_DIR": "E:\\projects\\cool_project\\fast-dump\\results\\local\\benchmarks\\20261025T021659.126713Z-cleanup-loopback-aa-confirm-cb35e8",
+    "FAST_DUMP_BENCH_MATRIX_DIR": "E:\\projects\\cool_project\\fast-dump\\results\\local\\benchmarks\\20261025T021659.126713Z-cleanup-loopback-aa-confirm-cb35e8\\matrix",
+    "CRITERION_HOME": "E:\\projects\\cool_project\\fast-dump\\results\\local\\benchmarks\\20261025T021659.126713Z-cleanup-loopback-aa-confirm-cb35e8\\criterion",
+    "FAST_DUMP_NETEM_DIR": "E:\\projects\\cool_project\\fast-dump\\results\\local\\benchmarks\\20261025T021659.126713Z-cleanup-loopback-aa-confirm-cb35e8\\netem"
+  },
+  "finished_utc": "2026-10-25T02:18:34.763760+00:00",
+  "fixture_identity_policy": "Actual explicit/logged fixture content is hashed after timing; generator source and matching file counts are never substituted for content identity."
+}

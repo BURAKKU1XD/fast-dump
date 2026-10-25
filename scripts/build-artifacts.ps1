@@ -60,7 +60,7 @@ function Get-ZigExe {
 }
 
 function Test-CargoZigbuildAvailable {
-    return $null -ne (Get-Command 'cargo-zigbuild.exe' -ErrorAction SilentlyContinue)
+    return $null -ne (Get-Command 'cargo-zigbuild' -ErrorAction SilentlyContinue)
 }
 
 function Get-TargetAvailability {
@@ -130,9 +130,13 @@ function Get-TargetAvailability {
     }
 }
 
+$originalPath = $env:Path
 Push-Location $repoRoot
 
 try {
+    $metadata = & cargo metadata --locked --offline --no-deps --format-version 1
+    if ($LASTEXITCODE -ne 0) { throw "cargo metadata failed" }
+    $cargoTargetDir = ($metadata | ConvertFrom-Json).target_directory
     $installedTargets = Get-InstalledTargets
     $hostTriple = Get-HostTriple
     $hasMuslToolchain = Test-MuslToolchainAvailable
@@ -175,17 +179,17 @@ try {
         Write-Host "==> Building $($spec.platform) ($($spec.triple))"
         if ($availability.method -eq 'zigbuild') {
             $zigDir = Split-Path -Parent $zigExe
-            $env:Path = "$zigDir;$env:Path"
-            & cargo zigbuild --release --target $spec.triple --bin fast-dump
+            $env:Path = $zigDir + [IO.Path]::PathSeparator + $originalPath
+            & cargo zigbuild --locked --release --target $spec.triple --bin fast-dump
         }
         else {
-            & cargo build --release --target $spec.triple --bin fast-dump
+            & cargo build --locked --release --target $spec.triple --bin fast-dump
         }
         if ($LASTEXITCODE -ne 0) {
             throw "build failed for $($spec.triple)"
         }
 
-        $builtPath = Join-Path $repoRoot "target\$($spec.triple)\release\$($spec.builtFile)"
+        $builtPath = Join-Path $cargoTargetDir "$($spec.triple)/release/$($spec.builtFile)"
         if (-not (Test-Path $builtPath)) {
             throw "expected build artifact is missing: $builtPath"
         }
@@ -205,15 +209,12 @@ try {
     Write-Host ''
     $results | Format-Table platform, target, status, artifact, note -AutoSize
 
-    $failed = @($results | Where-Object status -eq 'failed')
     $skipped = @($results | Where-Object status -eq 'skipped')
-    if ($failed.Count -gt 0) {
-        throw 'one or more target builds failed'
-    }
     if ($RequireAll -and $skipped.Count -gt 0) {
         throw 'not all supported targets are available in the current environment'
     }
 }
 finally {
+    $env:Path = $originalPath
     Pop-Location
 }

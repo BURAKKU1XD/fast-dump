@@ -1,0 +1,119 @@
+{
+  "schema_version": 1,
+  "id": "legacy-target-perf-files-20261023-baseline-rebuild-control-9789fadac421",
+  "kind": "benchmark",
+  "label": "target/perf-files-20261023/baseline-rebuild-control",
+  "status": "imported",
+  "started_utc": "2026-10-22T21:54:54.826039+00:00",
+  "time_source": "original_file_mtime",
+  "imported_utc": "2026-10-25T02:06:40.905780+00:00",
+  "import_sha256": "9789fadac421b769d5a8092ce5271e078537cfd2783bacdef233617e684aef3b",
+  "origin": "results/history/2026-10-24",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "binary_sha256": {
+      "before": "2219b37544897ce08045c804f576275f420f0a45cdb05784fc3cc2b6b7f216c6",
+      "after": "1e42dc24822b37c92d4e702060aa09cd9bcb34a1b0440fe343a8e2f78e7521ff"
+    },
+    "common_arguments": [
+      "--repeats",
+      "1",
+      "--shuffle-scenarios",
+      "--shuffle-seed",
+      "91",
+      "--dataset",
+      "manySmallFiles,bigFiles,mixed",
+      "--network-profile",
+      "loopback-localhost",
+      "--threads",
+      "3",
+      "--frames",
+      "64",
+      "--buffers",
+      "1024",
+      "--executor",
+      "default"
+    ],
+    "repeats_per_side": 3,
+    "policy": "AB then BA alternating; all samples retained; no automatic warmup or trimming",
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "exit_code": 0
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "target/perf-files-20261023/baseline-rebuild-control/before/run.log",
+      "sha256": "47fa463334c19f0fe49f23b652f80e7a057a171a26d4f5d0ebd6482d636b9dd0",
+      "bytes": 19662,
+      "extracted_sha256": "46d674bd88e84f5f2f1b6c703d9615d5e399f652df94ad3947dba33e40b8730d",
+      "saved": "raw/before/resource_samples.csv"
+    },
+    {
+      "source": "target/perf-files-20261023/baseline-rebuild-control/before/results_raw.csv",
+      "sha256": "d7384f3ca778557f46ea881b6df5fcae152f0679e9a50a081dcbaed21711d3c5",
+      "bytes": 6556,
+      "saved": "raw/before/results_raw.csv"
+    },
+    {
+      "source": "target/perf-files-20261023/baseline-rebuild-control/after/run.log",
+      "sha256": "d8a6c74afc5239aa2c9af532fb86a35de7b0f3a4216e40401d7e67f5a14f6531",
+      "bytes": 19627,
+      "extracted_sha256": "ed97c87535e9f141eaa991bd0cfd55a9f80ca61ac57fb4e607f1afb8713e4a69",
+      "saved": "raw/after/resource_samples.csv"
+    },
+    {
+      "source": "target/perf-files-20261023/baseline-rebuild-control/after/results_raw.csv",
+      "sha256": "c6b56e7faa4b62754ad0da1d0fc63297d7e511a78bdda434b99c00ff1ed23b17",
+      "bytes": 6545,
+      "saved": "raw/after/results_raw.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "target/perf-files-20261023/baseline-rebuild-control/paired-run.json",
+      "sha256": "e1fddb9fe216d1ffaa6e228f8a8d1284e13ea7f2687bfa8bd3802ad9d11a53e8",
+      "bytes": 5173
+    },
+    {
+      "source": "target/perf-files-20261023/baseline-rebuild-control/before/run.log",
+      "sha256": "47fa463334c19f0fe49f23b652f80e7a057a171a26d4f5d0ebd6482d636b9dd0",
+      "bytes": 19662
+    },
+    {
+      "source": "target/perf-files-20261023/baseline-rebuild-control/after/run.log",
+      "sha256": "d8a6c74afc5239aa2c9af532fb86a35de7b0f3a4216e40401d7e67f5a14f6531",
+      "bytes": 19627
+    }
+  ]
+}

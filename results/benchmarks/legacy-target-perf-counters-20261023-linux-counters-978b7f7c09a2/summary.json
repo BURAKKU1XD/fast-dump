@@ -1,0 +1,342 @@
+{
+  "schema_version": 1,
+  "entries": [
+    {
+      "family": "file",
+      "case": "noop",
+      "side": "before",
+      "scenario": {
+        "stage": "noop",
+        "readers": 1.0,
+        "allocations": false
+      },
+      "metrics": {
+        "elapsed_ms": {
+          "n": 3,
+          "mean": 0.0011666666666666668,
+          "median": 0.0005,
+          "min": 0.0003,
+          "max": 0.0027,
+          "p95": 0.00248,
+          "unit": "ms",
+          "direction": "lower"
+        },
+        "cpu_ms": {
+          "n": 3,
+          "mean": 0.013,
+          "median": 0.013,
+          "min": 0.013,
+          "max": 0.013,
+          "p95": 0.013,
+          "unit": "ms",
+          "direction": "lower"
+        },
+        "cpu_cycles": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "cycles",
+          "direction": "lower"
+        },
+        "rss_mib": {
+          "n": 3,
+          "mean": 21.2265625,
+          "median": 21.2265625,
+          "min": 21.2265625,
+          "max": 21.2265625,
+          "p95": 21.2265625,
+          "unit": "MiB",
+          "direction": "lower"
+        },
+        "allocations": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "requests",
+          "direction": "lower"
+        },
+        "allocated_bytes": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "bytes",
+          "direction": "lower"
+        },
+        "read_operations": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "operations",
+          "direction": "lower"
+        },
+        "read_bytes": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "bytes",
+          "direction": "lower"
+        }
+      },
+      "sample_count": 3,
+      "evidence": "raw",
+      "fixture": {
+        "entries": 0.0,
+        "bytes": 0.0,
+        "fingerprint": "0000000000000000",
+        "scope": "content"
+      },
+      "verified": true,
+      "counter_contract": {
+        "schema": 2,
+        "cycles": "unavailable",
+        "io": "linux-proc-io-corrected"
+      },
+      "notes": [],
+      "files": [
+        "raw/samples.csv"
+      ],
+      "experiment": "target/perf-counters-20261023/linux-counters",
+      "pair_context": "target/perf-counters-20261023/linux-counters"
+    },
+    {
+      "family": "file",
+      "case": "noop",
+      "side": "after",
+      "scenario": {
+        "stage": "noop",
+        "readers": 1.0,
+        "allocations": false
+      },
+      "metrics": {
+        "elapsed_ms": {
+          "n": 2,
+          "mean": 0.00025,
+          "median": 0.00025,
+          "min": 0.0002,
+          "max": 0.0003,
+          "p95": 0.00029499999999999996,
+          "unit": "ms",
+          "direction": "lower"
+        },
+        "cpu_ms": {
+          "n": 2,
+          "mean": 0.0115,
+          "median": 0.0115,
+          "min": 0.011,
+          "max": 0.012,
+          "p95": 0.01195,
+          "unit": "ms",
+          "direction": "lower"
+        },
+        "cpu_cycles": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "cycles",
+          "direction": "lower"
+        },
+        "rss_mib": {
+          "n": 2,
+          "mean": 21.2265625,
+          "median": 21.2265625,
+          "min": 21.2265625,
+          "max": 21.2265625,
+          "p95": 21.2265625,
+          "unit": "MiB",
+          "direction": "lower"
+        },
+        "allocations": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "requests",
+          "direction": "lower"
+        },
+        "allocated_bytes": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "bytes",
+          "direction": "lower"
+        },
+        "read_operations": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "operations",
+          "direction": "lower"
+        },
+        "read_bytes": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "bytes",
+          "direction": "lower"
+        }
+      },
+      "sample_count": 2,
+      "evidence": "raw",
+      "fixture": {
+        "entries": 0.0,
+        "bytes": 0.0,
+        "fingerprint": "0000000000000000",
+        "scope": "content"
+      },
+      "verified": true,
+      "counter_contract": {
+        "schema": 2,
+        "cycles": "unavailable",
+        "io": "linux-proc-io-corrected"
+      },
+      "notes": [],
+      "files": [
+        "raw/samples.csv"
+      ],
+      "experiment": "target/perf-counters-20261023/linux-counters",
+      "pair_context": "target/perf-counters-20261023/linux-counters"
+    },
+    {
+      "family": "file",
+      "case": "noop",
+      "side": "after",
+      "scenario": {
+        "stage": "noop",
+        "readers": 1.0,
+        "allocations": false
+      },
+      "metrics": {
+        "elapsed_ms": {
+          "n": 1,
+          "mean": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "p95": 0.0,
+          "unit": "ms",
+          "direction": "lower"
+        },
+        "cpu_ms": {
+          "n": 1,
+          "mean": 0.009,
+          "median": 0.009,
+          "min": 0.009,
+          "max": 0.009,
+          "p95": 0.009,
+          "unit": "ms",
+          "direction": "lower"
+        },
+        "cpu_cycles": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "cycles",
+          "direction": "lower"
+        },
+        "rss_mib": {
+          "n": 1,
+          "mean": 21.2265625,
+          "median": 21.2265625,
+          "min": 21.2265625,
+          "max": 21.2265625,
+          "p95": 21.2265625,
+          "unit": "MiB",
+          "direction": "lower"
+        },
+        "allocations": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "requests",
+          "direction": "lower"
+        },
+        "allocated_bytes": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "bytes",
+          "direction": "lower"
+        },
+        "read_operations": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "operations",
+          "direction": "lower"
+        },
+        "read_bytes": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "bytes",
+          "direction": "lower"
+        }
+      },
+      "sample_count": 1,
+      "evidence": "raw",
+      "fixture": {
+        "entries": 0.0,
+        "bytes": 0.0,
+        "fingerprint": "0000000000000000",
+        "scope": "content"
+      },
+      "verified": true,
+      "counter_contract": {
+        "schema": "2",
+        "cycles": "unavailable",
+        "io": "linux-proc-io-corrected"
+      },
+      "notes": [],
+      "files": [
+        "raw/samples.csv"
+      ],
+      "experiment": "target/perf-counters-20261023/linux-counters",
+      "pair_context": "target/perf-counters-20261023/linux-counters"
+    }
+  ],
+  "warnings": []
+}

@@ -8,7 +8,7 @@ use clap::{CommandFactory, Parser, ValueEnum};
 
 use super::results::{
     RawResultRow, ScenarioKey, aggregate_summary_rows, append_raw_result, completed_runs,
-    dataset_summary_rows, load_raw_results, print_dataset_markdown_tables, reset_results,
+    dataset_summary_rows, ensure_fresh_results, load_raw_results, print_dataset_markdown_tables,
     results_raw_path, results_summary_path, write_benchmark_plan, write_benchmark_report,
     write_summary_csv,
 };
@@ -238,15 +238,20 @@ fn run_matrix(args: MatrixArgs) -> Result<()> {
         bail!("--readers requires a fresh output directory, without --resume");
     }
 
-    let output_dir = std::env::var_os("FAST_DUMP_BENCH_MATRIX_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("target")
-                .join("bench-matrix")
-        });
-    if !args.resume {
-        reset_results(&output_dir)?;
+    let explicit_output = std::env::var_os("FAST_DUMP_BENCH_MATRIX_DIR").map(PathBuf::from);
+    if args.resume && explicit_output.is_none() {
+        bail!("--resume requires an explicit FAST_DUMP_BENCH_MATRIX_DIR");
+    }
+    let output_dir = match explicit_output {
+        Some(path) => path,
+        None => super::run_output::create_run_dir("matrix")?,
+    };
+    if args.resume {
+        if !results_raw_path(&output_dir).is_file() {
+            bail!("--resume requires existing results_raw.csv");
+        }
+    } else {
+        ensure_fresh_results(&output_dir)?;
     }
     let benchmark_plan_path = write_benchmark_plan(&output_dir)?;
 

@@ -1,0 +1,134 @@
+{
+  "schema_version": 1,
+  "id": "legacy-target-perf-job4-followup-20261023-evidence-job4-manySmallFi-6a136da8aa23",
+  "kind": "benchmark",
+  "label": "target/perf-job4-followup-20261023/evidence/job4-manySmallFiles-10g",
+  "status": "imported",
+  "started_utc": "2026-10-23T10:07:32.817926+00:00",
+  "time_source": "original_file_mtime",
+  "imported_utc": "2026-10-25T02:06:41.176186+00:00",
+  "import_sha256": "6a136da8aa2356b23f9330f01dae5b4062d7cad750aa4682573351cb095f964d",
+  "origin": "results/history/2026-10-24",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "binary_sha256": {
+      "before": "b74cf97b815e51fac00e2b52887f272cdf242faf8a36cb8972ae1bb82d5c77d8",
+      "after": "cc0a256449f66c4ee344d54cd36885ba13662df5e969f05e2295a18fcc72de4b"
+    },
+    "comparison_kind": "A/B",
+    "requested_readers": {
+      "before": 16,
+      "after": 16
+    },
+    "common_arguments": [
+      "--repeats",
+      "1",
+      "--shuffle-scenarios",
+      "--shuffle-seed",
+      "91",
+      "--source",
+      "E:\\projects\\cool_project\\fast-dump\\target\\bench-verify-20261022\\datasets\\manySmallFiles",
+      "--network-profile",
+      "link-10gbps",
+      "--threads",
+      "31",
+      "--frames",
+      "64",
+      "--buffers",
+      "1024",
+      "--executor",
+      "default"
+    ],
+    "repeats_per_side": 4,
+    "policy": "AB then BA alternating; all samples retained; no automatic warmup or trimming",
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "before",
+        "exit_code": 0
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "target/perf-job4-followup-20261023/evidence/job4-manySmallFiles-10g/before/run.log",
+      "sha256": "95f471c4a89d0d33a39f2a52b58c5afedb09fd31e344a6d80ea01cee096b0170",
+      "bytes": 11050,
+      "extracted_sha256": "98b736425b487ac300a795220d040c59d7cd2bc650b7ef2e79e2a7e37daa383f",
+      "saved": "raw/before/resource_samples.csv"
+    },
+    {
+      "source": "target/perf-job4-followup-20261023/evidence/job4-manySmallFiles-10g/before/results_raw.csv",
+      "sha256": "42160e9c08265027bbbc2c739dc2d854a84257b951d297fbf7383be5c8a201e5",
+      "bytes": 3763,
+      "saved": "raw/before/results_raw.csv"
+    },
+    {
+      "source": "target/perf-job4-followup-20261023/evidence/job4-manySmallFiles-10g/after/run.log",
+      "sha256": "ac88157f1dac495cfc96de3a0b67ebd3ffa05de7c34ce1f6ad5f614c785d35b6",
+      "bytes": 11040,
+      "extracted_sha256": "d1a5f7b6be08995dacb51b56151e4b677e21b62d85256147f6001604222ffce9",
+      "saved": "raw/after/resource_samples.csv"
+    },
+    {
+      "source": "target/perf-job4-followup-20261023/evidence/job4-manySmallFiles-10g/after/results_raw.csv",
+      "sha256": "84563380765a8bf57d4d0d0a90783c28f002187376420704a6f7317e2b3ac454",
+      "bytes": 3769,
+      "saved": "raw/after/results_raw.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "target/perf-job4-followup-20261023/evidence/job4-manySmallFiles-10g/paired-run.json",
+      "sha256": "7d49c015a0b9b7101d10061277c5733b0c0cdbb0d13ba352116983b9e55bc3fb",
+      "bytes": 7935
+    },
+    {
+      "source": "target/perf-job4-followup-20261023/evidence/job4-manySmallFiles-10g/before/run.log",
+      "sha256": "95f471c4a89d0d33a39f2a52b58c5afedb09fd31e344a6d80ea01cee096b0170",
+      "bytes": 11050
+    },
+    {
+      "source": "target/perf-job4-followup-20261023/evidence/job4-manySmallFiles-10g/after/run.log",
+      "sha256": "ac88157f1dac495cfc96de3a0b67ebd3ffa05de7c34ce1f6ad5f614c785d35b6",
+      "bytes": 11040
+    }
+  ]
+}

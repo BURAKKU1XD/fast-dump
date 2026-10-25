@@ -1,6 +1,12 @@
 #![allow(dead_code)]
 
 mod pipeline {
+    pub mod run_output {
+        include!(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/benches/support/run_output.rs"
+        ));
+    }
     pub mod results {
         include!(concat!(
             env!("CARGO_MANIFEST_DIR"),
@@ -293,4 +299,13 @@ fn aggregate_summary_rows_averages_new_schema_fields() {
     assert_eq!(summary.scenario.manifest_chunk_kb, 256);
     assert_eq!(summary.scenario.manifest_ack_records, 4096);
     assert_eq!(summary.scenario.manifest_ack_kb, 1024);
+}
+
+#[test]
+fn new_results_never_replace_existing_measurements() {
+    let dir = BenchDir::new("preserve-results");
+    let raw = dir.path().join("results_raw.csv");
+    std::fs::write(&raw, b"historical samples").unwrap();
+    assert!(pipeline::results::ensure_fresh_results(dir.path()).is_err());
+    assert_eq!(std::fs::read(&raw).unwrap(), b"historical samples");
 }

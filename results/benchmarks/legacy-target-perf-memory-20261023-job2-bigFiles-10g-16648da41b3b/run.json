@@ -1,0 +1,134 @@
+{
+  "schema_version": 1,
+  "id": "legacy-target-perf-memory-20261023-job2-bigFiles-10g-16648da41b3b",
+  "kind": "benchmark",
+  "label": "target/perf-memory-20261023/job2-bigFiles-10g",
+  "status": "imported",
+  "started_utc": "2026-10-23T10:08:39.076759+00:00",
+  "time_source": "original_file_mtime",
+  "imported_utc": "2026-10-25T02:06:41.782429+00:00",
+  "import_sha256": "16648da41b3b6b3f78a20218bf53b4d25e024547b6cca570aa78a935328bf893",
+  "origin": "results/history/2026-10-24",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "binary_sha256": {
+      "before": "b74cf97b815e51fac00e2b52887f272cdf242faf8a36cb8972ae1bb82d5c77d8",
+      "after": "07e498deb48d785cb20add7022b9d338762bda7209fd81593339c30ddf04478f"
+    },
+    "comparison_kind": "A/B",
+    "requested_readers": {
+      "before": 16,
+      "after": 16
+    },
+    "common_arguments": [
+      "--repeats",
+      "1",
+      "--shuffle-scenarios",
+      "--shuffle-seed",
+      "91",
+      "--source",
+      "E:\\projects\\cool_project\\fast-dump\\target\\bench-verify-20261022\\datasets\\bigFiles",
+      "--network-profile",
+      "link-10gbps",
+      "--threads",
+      "31",
+      "--frames",
+      "64",
+      "--buffers",
+      "1024",
+      "--executor",
+      "default"
+    ],
+    "repeats_per_side": 4,
+    "policy": "AB then BA alternating; all samples retained; no automatic warmup or trimming",
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "before",
+        "exit_code": 0
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "target/perf-memory-20261023/job2-bigFiles-10g/before/run.log",
+      "sha256": "e421930aff7affe514ff0ab2f63f9f5be1e0394df7690a9ae720efa6d03aff25",
+      "bytes": 9309,
+      "extracted_sha256": "31dcf919e4f42f36f24815ff47a74d556203a0fe950e88a411f68b9c6d64b410",
+      "saved": "raw/before/resource_samples.csv"
+    },
+    {
+      "source": "target/perf-memory-20261023/job2-bigFiles-10g/before/results_raw.csv",
+      "sha256": "0e8958ce04d8ca1868cda51b3ad4dddf4d09348eeced682cbb571685d76a03d4",
+      "bytes": 3726,
+      "saved": "raw/before/results_raw.csv"
+    },
+    {
+      "source": "target/perf-memory-20261023/job2-bigFiles-10g/after/run.log",
+      "sha256": "a1ab32450185dc1483feee203d34024cb4a4c8b7abcf07efb3c6e61c18ee8fe5",
+      "bytes": 10878,
+      "extracted_sha256": "335a285d2a5a5481d237e58e73fa75dba3238b0c294e8e7987ad07d0777a560d",
+      "saved": "raw/after/resource_samples.csv"
+    },
+    {
+      "source": "target/perf-memory-20261023/job2-bigFiles-10g/after/results_raw.csv",
+      "sha256": "a23f7a7de85418cab1975416f684fb7ac605090f19a4b8a99657b98ccf8e6c55",
+      "bytes": 3726,
+      "saved": "raw/after/results_raw.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "target/perf-memory-20261023/job2-bigFiles-10g/paired-run.json",
+      "sha256": "849e55d3d340dab47d6275fb653623c3c273c9f4663430498420e02968a41bdf",
+      "bytes": 7833
+    },
+    {
+      "source": "target/perf-memory-20261023/job2-bigFiles-10g/before/run.log",
+      "sha256": "e421930aff7affe514ff0ab2f63f9f5be1e0394df7690a9ae720efa6d03aff25",
+      "bytes": 9309
+    },
+    {
+      "source": "target/perf-memory-20261023/job2-bigFiles-10g/after/run.log",
+      "sha256": "a1ab32450185dc1483feee203d34024cb4a4c8b7abcf07efb3c6e61c18ee8fe5",
+      "bytes": 10878
+    }
+  ]
+}

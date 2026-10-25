@@ -3,6 +3,7 @@
 
 import argparse
 import csv
+from bench_output import default_output
 import hashlib
 import json
 import os
@@ -51,7 +52,7 @@ def main():
     parser.add_argument("--after", type=Path, required=True)
     parser.add_argument("--allow-identical-binaries", action="store_true",
                         help="allow identical SHA256 only for intentional A/A calibration")
-    parser.add_argument("--output", type=Path, default=os.environ.get("FAST_DUMP_BENCH_MATRIX_DIR"))
+    parser.add_argument("--output", type=Path, default=os.environ.get("FAST_DUMP_BENCH_MATRIX_DIR") or default_output("paired"))
     parser.add_argument("--repeats", type=int, default=5)
     parser.add_argument("--dataset", default="manySmallFiles,bigFiles,mixed")
     parser.add_argument("--source", type=Path, help="use an existing immutable fixture instead of generated datasets")
@@ -65,7 +66,6 @@ def main():
     parser.add_argument("--executor", default="default")
     parser.add_argument("--shuffle-seed", type=int, default=91)
     args = parser.parse_args()
-    require(args.output is not None, "Supply --output or FAST_DUMP_BENCH_MATRIX_DIR")
     require(args.repeats > 0, "--repeats must be positive")
     reader_counts = {side: getattr(args, side + '_readers') or args.readers for side in ('before', 'after')}
     require(all(value is None or value > 0 for value in (args.readers, args.before_readers, args.after_readers)), "Reader counts must be positive")

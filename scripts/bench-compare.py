@@ -273,7 +273,7 @@ def main(argv=None):
             result["elapsed_change_pct"] = (after_mean / before_mean - 1) * 100 if status == "matched" else None
             comparisons.append(result)
     output = Path(args.output).expanduser().resolve()
-    output.mkdir(parents=True, exist_ok=True)
+    output.mkdir(parents=True, exist_ok=False)
     csv_output, json_output = output / "comparison.csv", output / "comparison.json"
     # Сначала полностью проверяем все входы; ошибка не должна выдавать частичный отчёт.
     with csv_output.open("w", newline="", encoding="utf-8") as stream:

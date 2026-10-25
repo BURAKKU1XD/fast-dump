@@ -1,0 +1,249 @@
+{
+  "schema_version": 1,
+  "id": "legacy-target-perf-counters-20261023-windows-allocations-18b4bd3f7064",
+  "kind": "benchmark",
+  "label": "target/perf-counters-20261023/windows-allocations",
+  "status": "imported",
+  "started_utc": "2026-10-22T23:01:35.231425+00:00",
+  "time_source": "manifest",
+  "imported_utc": "2026-10-25T02:06:40.638085+00:00",
+  "import_sha256": "18b4bd3f7064d08380eef5d0598a7d7b42085c085f42e55852febdc89934b51a",
+  "origin": "results/history/2026-10-24",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "created_utc": "2026-10-22T23:01:35.231425+00:00",
+    "binary_sha256": {
+      "before": "170cb806a840d2987ee29ef2df0dd09bfddbc57ab1e972f42233ddc64ed46c73",
+      "after": "55d9bc3622f456d4ea552aba5d78079f48f0f1643a5077ee41975c06f962176d"
+    },
+    "platform": "Windows-10-10.0.19045-SP0",
+    "logical_cpus": 32,
+    "allocations_diagnostic": true,
+    "measurement_contract": {
+      "counters_schema": 2,
+      "cycle_source": "windows-process-cycle-time",
+      "io_source": "windows-process-io"
+    },
+    "counter_scope": {
+      "cpu_cycles": "windows_process_cycle_time",
+      "io_read_ops": "windows_process_io_accounting",
+      "io_write_ops": "windows_process_io_accounting",
+      "io_other_ops": "windows_process_io_accounting",
+      "io_read_bytes": "windows_process_io_accounting",
+      "io_write_bytes": "windows_process_io_accounting",
+      "io_other_bytes": "windows_process_io_accounting",
+      "io_read_ops_raw": "windows_process_io_accounting",
+      "io_read_bytes_raw": "windows_process_io_accounting",
+      "io_observer_read_ops": "process_snapshot_observer_reads",
+      "io_observer_read_bytes": "process_snapshot_observer_reads",
+      "storage_read_bytes": "unmeasured",
+      "storage_write_bytes": "unmeasured",
+      "page_faults": "windows_process_combined_page_faults",
+      "minor_faults": "unmeasured",
+      "major_faults": "unmeasured",
+      "voluntary_switches": "unmeasured",
+      "involuntary_switches": "unmeasured",
+      "allocs": "diagnostic_allocator_requests",
+      "alloc_bytes": "diagnostic_allocator_requests",
+      "reallocs": "diagnostic_allocator_requests",
+      "deallocs": "diagnostic_allocator_outcomes",
+      "alloc_successes": "diagnostic_allocator_outcomes",
+      "alloc_success_bytes": "diagnostic_allocator_outcomes",
+      "realloc_successes": "diagnostic_allocator_outcomes",
+      "realloc_success_bytes": "diagnostic_allocator_outcomes",
+      "alloc_failures": "diagnostic_allocator_outcomes",
+      "realloc_failures": "diagnostic_allocator_outcomes",
+      "dealloc_bytes": "diagnostic_allocator_outcomes",
+      "zeroed_bytes": "diagnostic_allocator_outcomes",
+      "elapsed_ns": "phase_wall_time",
+      "work_ns": "phase_wall_time",
+      "drop_ns": "phase_wall_time",
+      "cpu_ns": "process_cpu_time_all_threads",
+      "user_ns": "process_cpu_time_all_threads",
+      "kernel_ns": "process_cpu_time_all_threads"
+    },
+    "repeats": 3,
+    "policy": "AB/BA alternating pairs; no trimming, implicit warmup, or dropped first samples",
+    "scenarios": [
+      [
+        "noop",
+        1
+      ],
+      [
+        "scan",
+        1
+      ],
+      [
+        "read",
+        4
+      ],
+      [
+        "read",
+        32
+      ]
+    ],
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "stage": "noop",
+        "readers": 1
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "stage": "noop",
+        "readers": 1
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "stage": "noop",
+        "readers": 1
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "stage": "noop",
+        "readers": 1
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "stage": "noop",
+        "readers": 1
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "stage": "noop",
+        "readers": 1
+      },
+      {
+        "pair": 1,
+        "side": "before",
+        "stage": "scan",
+        "readers": 1
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "stage": "scan",
+        "readers": 1
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "stage": "scan",
+        "readers": 1
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "stage": "scan",
+        "readers": 1
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "stage": "scan",
+        "readers": 1
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "stage": "scan",
+        "readers": 1
+      },
+      {
+        "pair": 1,
+        "side": "before",
+        "stage": "read",
+        "readers": 4
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "stage": "read",
+        "readers": 4
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "stage": "read",
+        "readers": 4
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "stage": "read",
+        "readers": 4
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "stage": "read",
+        "readers": 4
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "stage": "read",
+        "readers": 4
+      },
+      {
+        "pair": 1,
+        "side": "before",
+        "stage": "read",
+        "readers": 32
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "stage": "read",
+        "readers": 32
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "stage": "read",
+        "readers": 32
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "stage": "read",
+        "readers": 32
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "stage": "read",
+        "readers": 32
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "stage": "read",
+        "readers": 32
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "target/perf-counters-20261023/windows-allocations/samples.csv",
+      "sha256": "9db35e2f3d3324b5de210dddd72f656a6562982f2897bd327bacc79528a1a8ac",
+      "bytes": 24782,
+      "saved": "raw/samples.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "target/perf-counters-20261023/windows-allocations/paired-run.json",
+      "sha256": "aaa14aaf5c4db18e2b18ac3fdfc3efd5ecf36bd9ccc0a847e6d7e86a5f07a6cc",
+      "bytes": 65317
+    }
+  ]
+}

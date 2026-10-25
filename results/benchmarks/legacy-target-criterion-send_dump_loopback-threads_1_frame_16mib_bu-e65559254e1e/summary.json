@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "entries": [
+    {
+      "family": "criterion",
+      "case": "send_dump_loopback/threads_1_frame_16mib_buffer_1024kib",
+      "side": "",
+      "scenario": {
+        "sampling_mode": "Flat",
+        "throughput": {
+          "Bytes": 143015936
+        }
+      },
+      "metrics": {
+        "time_per_iteration_ns": {
+          "n": 10,
+          "mean": 10106453120.0,
+          "median": 9966929300.0,
+          "min": 9815154300.0,
+          "max": 11032401900.0,
+          "p95": 10688417490.0,
+          "unit": "ns/iteration",
+          "direction": "lower",
+          "criterion_estimate": {
+            "confidence_interval": {
+              "confidence_level": 0.95,
+              "lower_bound": 9921785220.0,
+              "upper_bound": 10348348670.0
+            },
+            "point_estimate": 10106453120.0,
+            "standard_error": 110803387.15130934
+          }
+        }
+      },
+      "sample_count": 10,
+      "evidence": "raw",
+      "fixture": null,
+      "verified": null,
+      "counter_contract": null,
+      "notes": [
+        "Criterion samples contain total time and iteration count, not independent whole-session runs."
+      ],
+      "files": [
+        "raw/sample.json",
+        "raw/benchmark.json",
+        "raw/estimates.json"
+      ],
+      "experiment": "target/criterion/send_dump_loopback/threads_1_frame_16mib_buffer_1024kib",
+      "pair_context": null
+    }
+  ],
+  "warnings": []
+}

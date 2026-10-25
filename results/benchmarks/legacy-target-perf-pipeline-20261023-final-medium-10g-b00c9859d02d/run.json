@@ -1,0 +1,154 @@
+{
+  "schema_version": 1,
+  "id": "legacy-target-perf-pipeline-20261023-final-medium-10g-b00c9859d02d",
+  "kind": "benchmark",
+  "label": "target/perf-pipeline-20261023/final-medium-10g",
+  "status": "imported",
+  "started_utc": "2026-10-23T19:18:57.863451+00:00",
+  "time_source": "original_file_mtime",
+  "imported_utc": "2026-10-25T02:06:43.769059+00:00",
+  "import_sha256": "b00c9859d02d70769a638d9713fd46079b90d31b5b5a1f45f55c73a406bf1875",
+  "origin": "results/history/2026-10-24",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "binary_sha256": {
+      "before": "a10b08f13c07642af453f092583dd0fc9fc890dddbec4edce25ec89b073dc310",
+      "after": "70fc33efa7b0bc78640e5d79f5d802a6e2788d9ed1e3615401a628f2f72df629"
+    },
+    "comparison_kind": "A/B",
+    "requested_readers": {
+      "before": 16,
+      "after": 16
+    },
+    "common_arguments": [
+      "--repeats",
+      "1",
+      "--shuffle-scenarios",
+      "--shuffle-seed",
+      "91",
+      "--source",
+      "E:\\projects\\cool_project\\fast-dump\\target\\perf-next-20261023\\fixtures\\medium",
+      "--network-profile",
+      "link-10gbps",
+      "--threads",
+      "31",
+      "--frames",
+      "64",
+      "--buffers",
+      "1024",
+      "--executor",
+      "default"
+    ],
+    "repeats_per_side": 6,
+    "policy": "AB then BA alternating; all samples retained; no automatic warmup or trimming",
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 6,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 6,
+        "side": "before",
+        "exit_code": 0
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "target/perf-pipeline-20261023/final-medium-10g/before/run.log",
+      "sha256": "0d944e8a2c2f4e5eb5545b8676dee80cf6228f9f2f796c8e6a796c02134e6325",
+      "bytes": 19652,
+      "extracted_sha256": "9ed728199de901b82514fe677f30b8cfc78395872779909cba68d7857657c7c5",
+      "saved": "raw/before/resource_samples.csv"
+    },
+    {
+      "source": "target/perf-pipeline-20261023/final-medium-10g/before/results_raw.csv",
+      "sha256": "cd703fad7e8bef5a1ecfed053e3fcb207da0e23e71c662534cf128477551623d",
+      "bytes": 4858,
+      "saved": "raw/before/results_raw.csv"
+    },
+    {
+      "source": "target/perf-pipeline-20261023/final-medium-10g/after/run.log",
+      "sha256": "811c5ebfa68dfaab848461d03651fd391f5bef0cd11d1284a0e75a3d4f421692",
+      "bytes": 19679,
+      "extracted_sha256": "aa34eaa1c1e66252d0b7af1398012d40a59857a3e0aba5638e392d1183202bf2",
+      "saved": "raw/after/resource_samples.csv"
+    },
+    {
+      "source": "target/perf-pipeline-20261023/final-medium-10g/after/results_raw.csv",
+      "sha256": "9bc11e31b71b69af0561f75c6f86d79684c4292de30b63ee00d5a6d07084ce10",
+      "bytes": 4865,
+      "saved": "raw/after/results_raw.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "target/perf-pipeline-20261023/final-medium-10g/paired-run.json",
+      "sha256": "88722439cd9b77a1c788f1e8844778f868b98cfe2f455fbac12eb1d0d1426f03",
+      "bytes": 11092
+    },
+    {
+      "source": "target/perf-pipeline-20261023/final-medium-10g/before/run.log",
+      "sha256": "0d944e8a2c2f4e5eb5545b8676dee80cf6228f9f2f796c8e6a796c02134e6325",
+      "bytes": 19652
+    },
+    {
+      "source": "target/perf-pipeline-20261023/final-medium-10g/after/run.log",
+      "sha256": "811c5ebfa68dfaab848461d03651fd391f5bef0cd11d1284a0e75a3d4f421692",
+      "bytes": 19679
+    }
+  ]
+}

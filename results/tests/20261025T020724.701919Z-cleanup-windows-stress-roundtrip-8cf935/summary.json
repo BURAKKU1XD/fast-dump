@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "command": [
+    "cargo",
+    "test",
+    "--locked",
+    "--release",
+    "--test",
+    "integration",
+    "connectivity::roundtrip_fast::sender_and_receiver_roundtrip_random_files_and_verify_hashes",
+    "--",
+    "--exact",
+    "--ignored",
+    "--nocapture"
+  ],
+  "exit_code": 0,
+  "rust_test_suites": [
+    {
+      "status": "ok",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0
+    }
+  ],
+  "python_tests": null,
+  "entries": [],
+  "warnings": []
+}

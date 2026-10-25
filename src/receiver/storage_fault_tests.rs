@@ -1,5 +1,6 @@
 use std::io::Read;
 use std::net::{TcpListener, TcpStream};
+use std::thread;
 
 use super::*;
 use crate::network::protocol::SkipReason;
@@ -7,7 +8,7 @@ use crate::receiver::storage_faults::{self, Point};
 use crate::receiver::{ReceiverPaths, wal};
 
 fn paths(directory: &TestDirectory) -> ReceiverPaths {
-    ReceiverPaths::new(directory.0.clone(), "boundaries")
+    ReceiverPaths::new(directory.0.path().to_path_buf(), "boundaries")
 }
 
 fn prepare_group(receiver: &mut ReceiverSession, first: u64, last: u64) -> PendingState {
@@ -59,9 +60,13 @@ fn failed_wal_sync_does_not_publish_durable_progress() {
     let directory = TestDirectory::new();
     let run = RunControl::new(Some(std::sync::Arc::new(ProgressHub::new())));
     let control = run.session(Role::Receiver, "boundaries", "peer");
-    let mut receiver =
-        ReceiverSession::open_controlled(directory.0.clone(), "boundaries", 1, Some(&control))
-            .unwrap();
+    let mut receiver = ReceiverSession::open_controlled(
+        directory.0.path().to_path_buf(),
+        "boundaries",
+        1,
+        Some(&control),
+    )
+    .unwrap();
     let mut state = prepare_group(&mut receiver, 1, 2);
     let fault = storage_faults::arm(Point::WalSync, 0, 0);
     assert_commit_failure_without_ack(&mut receiver, &mut state);
@@ -267,7 +272,7 @@ fn tcp_pair() -> (TcpStream, TcpStream) {
 fn finish_with_storage_failure(directory: &TestDirectory, point: Point, successful_calls: usize) {
     let (mut control, server_control) = tcp_pair();
     let (_data, server_data) = tcp_pair();
-    let data_dir = directory.0.clone();
+    let data_dir = directory.0.path().to_path_buf();
     let (finished_tx, finished_rx) = bounded(1);
     let worker = thread::spawn(move || {
         let partial_bytes = usize::from(point == Point::ArchiveWrite) * 5;
@@ -379,7 +384,7 @@ fn failures_after_rename_preserve_completed_archive_and_send_no_finish_ack() {
                 .contains("missing.bin")
         );
         let final_bytes = fs::read(&paths.final_archive_path).unwrap();
-        let error = ReceiverSession::open(directory.0.clone(), "boundaries", 1)
+        let error = ReceiverSession::open(directory.0.path().to_path_buf(), "boundaries", 1)
             .err()
             .unwrap();
         assert!(

@@ -1,0 +1,454 @@
+{
+  "schema_version": 1,
+  "entries": [
+    {
+      "family": "file",
+      "case": "scan",
+      "side": "before",
+      "scenario": {
+        "stage": "scan",
+        "readers": 1.0,
+        "allocations": true
+      },
+      "metrics": {
+        "elapsed_ms": {
+          "n": 2,
+          "mean": 1067.75578,
+          "median": 1067.75578,
+          "min": 82.35985,
+          "max": 2053.15171,
+          "p95": 1954.612117,
+          "unit": "ms",
+          "direction": "lower"
+        },
+        "cpu_ms": {
+          "n": 2,
+          "mean": 941.0775000000001,
+          "median": 941.0775000000001,
+          "min": 278.033,
+          "max": 1604.122,
+          "p95": 1537.8175499999998,
+          "unit": "ms",
+          "direction": "lower"
+        },
+        "cpu_cycles": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "cycles",
+          "direction": "lower"
+        },
+        "rss_mib": {
+          "n": 2,
+          "mean": 21.10546875,
+          "median": 21.10546875,
+          "min": 21.10546875,
+          "max": 21.10546875,
+          "p95": 21.10546875,
+          "unit": "MiB",
+          "direction": "lower"
+        },
+        "allocations": {
+          "n": 2,
+          "mean": 610417.0,
+          "median": 610417.0,
+          "min": 610417.0,
+          "max": 610417.0,
+          "p95": 610417.0,
+          "unit": "requests",
+          "direction": "lower"
+        },
+        "allocated_bytes": {
+          "n": 2,
+          "mean": 61064100.0,
+          "median": 61064100.0,
+          "min": 61064100.0,
+          "max": 61064100.0,
+          "p95": 61064100.0,
+          "unit": "bytes",
+          "direction": "lower"
+        },
+        "read_operations": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "operations",
+          "direction": "lower"
+        },
+        "read_bytes": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "bytes",
+          "direction": "lower"
+        }
+      },
+      "sample_count": 2,
+      "evidence": "raw",
+      "fixture": {
+        "entries": 40000.0,
+        "bytes": 92160000.0,
+        "fingerprint": "e4058fff46a43bfd",
+        "scope": "entry_order"
+      },
+      "verified": true,
+      "counter_contract": {
+        "schema": 1,
+        "cycles": null,
+        "io": null
+      },
+      "notes": [],
+      "files": [
+        "raw/samples.csv"
+      ],
+      "experiment": "target/perf-files-20261023/linux-allocations",
+      "pair_context": "target/perf-files-20261023/linux-allocations"
+    },
+    {
+      "family": "file",
+      "case": "scan",
+      "side": "after",
+      "scenario": {
+        "stage": "scan",
+        "readers": 1.0,
+        "allocations": true
+      },
+      "metrics": {
+        "elapsed_ms": {
+          "n": 2,
+          "mean": 82.365487,
+          "median": 82.365487,
+          "min": 80.227224,
+          "max": 84.50375,
+          "p95": 84.2899237,
+          "unit": "ms",
+          "direction": "lower"
+        },
+        "cpu_ms": {
+          "n": 2,
+          "mean": 285.18100000000004,
+          "median": 285.18100000000004,
+          "min": 280.192,
+          "max": 290.17,
+          "p95": 289.6711,
+          "unit": "ms",
+          "direction": "lower"
+        },
+        "cpu_cycles": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "cycles",
+          "direction": "lower"
+        },
+        "rss_mib": {
+          "n": 2,
+          "mean": 21.10546875,
+          "median": 21.10546875,
+          "min": 21.10546875,
+          "max": 21.10546875,
+          "p95": 21.10546875,
+          "unit": "MiB",
+          "direction": "lower"
+        },
+        "allocations": {
+          "n": 2,
+          "mean": 444341.0,
+          "median": 444341.0,
+          "min": 444341.0,
+          "max": 444341.0,
+          "p95": 444341.0,
+          "unit": "requests",
+          "direction": "lower"
+        },
+        "allocated_bytes": {
+          "n": 2,
+          "mean": 55150960.0,
+          "median": 55150960.0,
+          "min": 55150960.0,
+          "max": 55150960.0,
+          "p95": 55150960.0,
+          "unit": "bytes",
+          "direction": "lower"
+        },
+        "read_operations": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "operations",
+          "direction": "lower"
+        },
+        "read_bytes": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "bytes",
+          "direction": "lower"
+        }
+      },
+      "sample_count": 2,
+      "evidence": "raw",
+      "fixture": {
+        "entries": 40000.0,
+        "bytes": 92160000.0,
+        "fingerprint": "e4058fff46a43bfd",
+        "scope": "entry_order"
+      },
+      "verified": true,
+      "counter_contract": {
+        "schema": 1,
+        "cycles": null,
+        "io": null
+      },
+      "notes": [],
+      "files": [
+        "raw/samples.csv"
+      ],
+      "experiment": "target/perf-files-20261023/linux-allocations",
+      "pair_context": "target/perf-files-20261023/linux-allocations"
+    },
+    {
+      "family": "file",
+      "case": "read",
+      "side": "before",
+      "scenario": {
+        "stage": "read",
+        "readers": 4.0,
+        "allocations": true
+      },
+      "metrics": {
+        "elapsed_ms": {
+          "n": 2,
+          "mean": 1515.2567495,
+          "median": 1515.2567495,
+          "min": 668.636257,
+          "max": 2361.877242,
+          "p95": 2277.21519275,
+          "unit": "ms",
+          "direction": "lower"
+        },
+        "cpu_ms": {
+          "n": 2,
+          "mean": 1764.7759999999998,
+          "median": 1764.7759999999998,
+          "min": 1332.499,
+          "max": 2197.053,
+          "p95": 2153.8253,
+          "unit": "ms",
+          "direction": "lower"
+        },
+        "cpu_cycles": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "cycles",
+          "direction": "lower"
+        },
+        "rss_mib": {
+          "n": 2,
+          "mean": 116.904296875,
+          "median": 116.904296875,
+          "min": 116.90234375,
+          "max": 116.90625,
+          "p95": 116.9060546875,
+          "unit": "MiB",
+          "direction": "lower"
+        },
+        "allocations": {
+          "n": 2,
+          "mean": 40037.0,
+          "median": 40037.0,
+          "min": 40037.0,
+          "max": 40037.0,
+          "p95": 40037.0,
+          "unit": "requests",
+          "direction": "lower"
+        },
+        "allocated_bytes": {
+          "n": 2,
+          "mean": 96328136.0,
+          "median": 96328136.0,
+          "min": 96328136.0,
+          "max": 96328136.0,
+          "p95": 96328136.0,
+          "unit": "bytes",
+          "direction": "lower"
+        },
+        "read_operations": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "operations",
+          "direction": "lower"
+        },
+        "read_bytes": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "bytes",
+          "direction": "lower"
+        }
+      },
+      "sample_count": 2,
+      "evidence": "raw",
+      "fixture": {
+        "entries": 40000.0,
+        "bytes": 92160000.0,
+        "fingerprint": "81b614ca532f28b4",
+        "scope": "content"
+      },
+      "verified": true,
+      "counter_contract": {
+        "schema": 1,
+        "cycles": null,
+        "io": null
+      },
+      "notes": [],
+      "files": [
+        "raw/samples.csv"
+      ],
+      "experiment": "target/perf-files-20261023/linux-allocations",
+      "pair_context": "target/perf-files-20261023/linux-allocations"
+    },
+    {
+      "family": "file",
+      "case": "read",
+      "side": "after",
+      "scenario": {
+        "stage": "read",
+        "readers": 4.0,
+        "allocations": true
+      },
+      "metrics": {
+        "elapsed_ms": {
+          "n": 2,
+          "mean": 221.790547,
+          "median": 221.790547,
+          "min": 215.896197,
+          "max": 227.684897,
+          "p95": 227.095462,
+          "unit": "ms",
+          "direction": "lower"
+        },
+        "cpu_ms": {
+          "n": 2,
+          "mean": 607.3145,
+          "median": 607.3145,
+          "min": 590.585,
+          "max": 624.044,
+          "p95": 622.37105,
+          "unit": "ms",
+          "direction": "lower"
+        },
+        "cpu_cycles": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "cycles",
+          "direction": "lower"
+        },
+        "rss_mib": {
+          "n": 2,
+          "mean": 117.57421875,
+          "median": 117.57421875,
+          "min": 117.53515625,
+          "max": 117.61328125,
+          "p95": 117.609375,
+          "unit": "MiB",
+          "direction": "lower"
+        },
+        "allocations": {
+          "n": 2,
+          "mean": 20037.0,
+          "median": 20037.0,
+          "min": 20037.0,
+          "max": 20037.0,
+          "p95": 20037.0,
+          "unit": "requests",
+          "direction": "lower"
+        },
+        "allocated_bytes": {
+          "n": 2,
+          "mean": 97047752.0,
+          "median": 97047752.0,
+          "min": 97047752.0,
+          "max": 97047752.0,
+          "p95": 97047752.0,
+          "unit": "bytes",
+          "direction": "lower"
+        },
+        "read_operations": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "operations",
+          "direction": "lower"
+        },
+        "read_bytes": {
+          "n": 0,
+          "mean": null,
+          "median": null,
+          "min": null,
+          "max": null,
+          "p95": null,
+          "unit": "bytes",
+          "direction": "lower"
+        }
+      },
+      "sample_count": 2,
+      "evidence": "raw",
+      "fixture": {
+        "entries": 40000.0,
+        "bytes": 92160000.0,
+        "fingerprint": "81b614ca532f28b4",
+        "scope": "content"
+      },
+      "verified": true,
+      "counter_contract": {
+        "schema": 1,
+        "cycles": null,
+        "io": null
+      },
+      "notes": [],
+      "files": [
+        "raw/samples.csv"
+      ],
+      "experiment": "target/perf-files-20261023/linux-allocations",
+      "pair_context": "target/perf-files-20261023/linux-allocations"
+    }
+  ],
+  "warnings": []
+}

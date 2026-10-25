@@ -1,0 +1,154 @@
+{
+  "schema_version": 1,
+  "id": "legacy-target-perf-job4-followup-20261023-streamed-10g-240e51e13438",
+  "kind": "benchmark",
+  "label": "target/perf-job4-followup-20261023/streamed-10g",
+  "status": "imported",
+  "started_utc": "2026-10-23T11:24:15.000479+00:00",
+  "time_source": "original_file_mtime",
+  "imported_utc": "2026-10-25T02:06:41.248950+00:00",
+  "import_sha256": "240e51e13438a5c938ce58a5b7a33348272a347c96227f863a84c9bdc5716318",
+  "origin": "results/history/2026-10-24",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "binary_sha256": {
+      "before": "b74cf97b815e51fac00e2b52887f272cdf242faf8a36cb8972ae1bb82d5c77d8",
+      "after": "cc0a256449f66c4ee344d54cd36885ba13662df5e969f05e2295a18fcc72de4b"
+    },
+    "comparison_kind": "A/B",
+    "requested_readers": {
+      "before": 16,
+      "after": 16
+    },
+    "common_arguments": [
+      "--repeats",
+      "1",
+      "--shuffle-scenarios",
+      "--shuffle-seed",
+      "91",
+      "--source",
+      "E:\\projects\\cool_project\\fast-dump\\target\\perf-next-20261023\\fixtures\\streamed-varied",
+      "--network-profile",
+      "link-10gbps",
+      "--threads",
+      "31",
+      "--frames",
+      "64",
+      "--buffers",
+      "1024",
+      "--executor",
+      "default"
+    ],
+    "repeats_per_side": 6,
+    "policy": "AB then BA alternating; all samples retained; no automatic warmup or trimming",
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 6,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 6,
+        "side": "before",
+        "exit_code": 0
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "target/perf-job4-followup-20261023/streamed-10g/before/run.log",
+      "sha256": "42f3123e75ebb18a51bc8180449297bbe69e1d176bf364dd6ef483647a3467cd",
+      "bytes": 16423,
+      "extracted_sha256": "4afe036849eafbe3cf27590c4ef7121a68f422c393956590eee0eedb9d82d6ee",
+      "saved": "raw/before/resource_samples.csv"
+    },
+    {
+      "source": "target/perf-job4-followup-20261023/streamed-10g/before/results_raw.csv",
+      "sha256": "de1dfd8b77d8919509618aba696441c7c705ddfb72115dbaa1bb27e9107c2c8d",
+      "bytes": 4825,
+      "saved": "raw/before/results_raw.csv"
+    },
+    {
+      "source": "target/perf-job4-followup-20261023/streamed-10g/after/run.log",
+      "sha256": "30f13f2bce2e54dbc1c4acdac67d0ec96ecf60587bb7394e0f626c8ccbc8ff66",
+      "bytes": 16406,
+      "extracted_sha256": "563f02616c2574fab88f31e5442fd8729c817df9b3e2c9417d3cb75dad679d5e",
+      "saved": "raw/after/resource_samples.csv"
+    },
+    {
+      "source": "target/perf-job4-followup-20261023/streamed-10g/after/results_raw.csv",
+      "sha256": "8a2bfeafc517e3f679c2fc71a868294bf6f0390f417981dde0cee121ae6af2d2",
+      "bytes": 4822,
+      "saved": "raw/after/results_raw.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "target/perf-job4-followup-20261023/streamed-10g/paired-run.json",
+      "sha256": "46fc6f793a5e719d1eafae21f451d9f999bc06aa7dacde05e4f8dc6ddfe52e29",
+      "bytes": 11298
+    },
+    {
+      "source": "target/perf-job4-followup-20261023/streamed-10g/before/run.log",
+      "sha256": "42f3123e75ebb18a51bc8180449297bbe69e1d176bf364dd6ef483647a3467cd",
+      "bytes": 16423
+    },
+    {
+      "source": "target/perf-job4-followup-20261023/streamed-10g/after/run.log",
+      "sha256": "30f13f2bce2e54dbc1c4acdac67d0ec96ecf60587bb7394e0f626c8ccbc8ff66",
+      "bytes": 16406
+    }
+  ]
+}

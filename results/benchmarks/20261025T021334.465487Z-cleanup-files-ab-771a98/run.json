@@ -1,0 +1,387 @@
+{
+  "schema_version": 1,
+  "id": "20261025T021334.465487Z-cleanup-files-ab-771a98",
+  "kind": "benchmark",
+  "label": "cleanup-files-ab",
+  "suite": null,
+  "status": "completed",
+  "started_utc": "2026-10-25T02:13:34.465767+00:00",
+  "command": [
+    "python",
+    "-u",
+    "scripts/bench-files-paired.py",
+    "--before",
+    "target/cleanup-perf/baseline/release/deps/file_pipeline-7f04594b0ed24baa.exe",
+    "--after",
+    "target/cleanup-perf/candidate/release/deps/file_pipeline-7f04594b0ed24baa.exe",
+    "--source",
+    "target/cleanup-perf/fixtures/manySmallFiles",
+    "--output",
+    "E:\\projects\\cool_project\\fast-dump\\results\\local\\benchmarks\\20261025T021334.465487Z-cleanup-files-ab-771a98\\output",
+    "--repeats",
+    "7",
+    "--stages",
+    "scan,read",
+    "--readers",
+    "1,8"
+  ],
+  "source": {
+    "commit": "95e902ce9593795c2a3bf1a595f8b85caa4247e3",
+    "source_dirty": true,
+    "source_sha256": "fc499a66f2e8507d43a78cea3c7bc36f1a15fcce47ef427a70a116956029aa99",
+    "benchmark_harness_sha256": "3d0331fc50a60b419b3db55748d9115eabe3cbcec12cac1e0e507cb4329fefd8",
+    "cargo_lock_sha256": "a9fafeb8792de3d3114b1d96cf40230ec352cca4f66079589f55a97898f4ec7e",
+    "rustc": "rustc 1.93.1 (01f6ddf75 2026-02-11)\nbinary: rustc\ncommit-hash: 01f6ddf7588f42ae2d7eb0a2f21d44e8e96674cf\ncommit-date: 2026-02-11\nhost: x86_64-pc-windows-msvc\nrelease: 1.93.1\nLLVM version: 21.1.8",
+    "host": {
+      "node": "DESKTOP-HTF56LL",
+      "system": "Windows",
+      "release": "10",
+      "machine": "AMD64",
+      "processor": "AMD64 Family 25 Model 97 Stepping 2, AuthenticAMD",
+      "logical_cpus": 32
+    }
+  },
+  "exit_code": 0,
+  "parameters": [
+    {
+      "complete": true,
+      "created_utc": "2026-10-25T02:13:34.763346+00:00",
+      "binary_sha256": {
+        "before": "d6dfee6c7cb0293c1130eea10b4c76ab76eeee2d1fb26999b17486471ac31dd7",
+        "after": "5516cdda5ed52890a0623cf528261100a47dcab02ff2fccf301d37865347b9a3"
+      },
+      "comparison_kind": "A/B",
+      "platform": "Windows-10-10.0.19045-SP0",
+      "logical_cpus": 32,
+      "allocations_diagnostic": false,
+      "measurement_contract": {
+        "counters_schema": 2,
+        "cycle_source": "windows-process-cycle-time",
+        "io_source": "windows-process-io"
+      },
+      "counter_scope": {
+        "cpu_cycles": "windows_process_cycle_time",
+        "io_read_ops": "windows_process_io_accounting",
+        "io_write_ops": "windows_process_io_accounting",
+        "io_other_ops": "windows_process_io_accounting",
+        "io_read_bytes": "windows_process_io_accounting",
+        "io_write_bytes": "windows_process_io_accounting",
+        "io_other_bytes": "windows_process_io_accounting",
+        "io_read_ops_raw": "windows_process_io_accounting",
+        "io_read_bytes_raw": "windows_process_io_accounting",
+        "io_observer_read_ops": "process_snapshot_observer_reads",
+        "io_observer_read_bytes": "process_snapshot_observer_reads",
+        "storage_read_bytes": "unmeasured",
+        "storage_write_bytes": "unmeasured",
+        "page_faults": "windows_process_combined_page_faults",
+        "minor_faults": "unmeasured",
+        "major_faults": "unmeasured",
+        "voluntary_switches": "unmeasured",
+        "involuntary_switches": "unmeasured",
+        "allocs": "diagnostic_allocator_requests",
+        "alloc_bytes": "diagnostic_allocator_requests",
+        "reallocs": "diagnostic_allocator_requests",
+        "deallocs": "diagnostic_allocator_outcomes",
+        "alloc_successes": "diagnostic_allocator_outcomes",
+        "alloc_success_bytes": "diagnostic_allocator_outcomes",
+        "realloc_successes": "diagnostic_allocator_outcomes",
+        "realloc_success_bytes": "diagnostic_allocator_outcomes",
+        "alloc_failures": "diagnostic_allocator_outcomes",
+        "realloc_failures": "diagnostic_allocator_outcomes",
+        "dealloc_bytes": "diagnostic_allocator_outcomes",
+        "zeroed_bytes": "diagnostic_allocator_outcomes",
+        "elapsed_ns": "phase_wall_time",
+        "work_ns": "phase_wall_time",
+        "drop_ns": "phase_wall_time",
+        "cpu_ns": "process_cpu_time_all_threads",
+        "user_ns": "process_cpu_time_all_threads",
+        "kernel_ns": "process_cpu_time_all_threads"
+      },
+      "repeats": 7,
+      "policy": "AB/BA alternating pairs; no trimming, implicit warmup, or dropped first samples",
+      "scenarios": [
+        [
+          "scan",
+          1
+        ],
+        [
+          "read",
+          1
+        ],
+        [
+          "read",
+          8
+        ]
+      ],
+      "order": [
+        {
+          "pair": 1,
+          "side": "before",
+          "stage": "scan",
+          "readers": 1
+        },
+        {
+          "pair": 1,
+          "side": "after",
+          "stage": "scan",
+          "readers": 1
+        },
+        {
+          "pair": 2,
+          "side": "after",
+          "stage": "scan",
+          "readers": 1
+        },
+        {
+          "pair": 2,
+          "side": "before",
+          "stage": "scan",
+          "readers": 1
+        },
+        {
+          "pair": 3,
+          "side": "before",
+          "stage": "scan",
+          "readers": 1
+        },
+        {
+          "pair": 3,
+          "side": "after",
+          "stage": "scan",
+          "readers": 1
+        },
+        {
+          "pair": 4,
+          "side": "after",
+          "stage": "scan",
+          "readers": 1
+        },
+        {
+          "pair": 4,
+          "side": "before",
+          "stage": "scan",
+          "readers": 1
+        },
+        {
+          "pair": 5,
+          "side": "before",
+          "stage": "scan",
+          "readers": 1
+        },
+        {
+          "pair": 5,
+          "side": "after",
+          "stage": "scan",
+          "readers": 1
+        },
+        {
+          "pair": 6,
+          "side": "after",
+          "stage": "scan",
+          "readers": 1
+        },
+        {
+          "pair": 6,
+          "side": "before",
+          "stage": "scan",
+          "readers": 1
+        },
+        {
+          "pair": 7,
+          "side": "before",
+          "stage": "scan",
+          "readers": 1
+        },
+        {
+          "pair": 7,
+          "side": "after",
+          "stage": "scan",
+          "readers": 1
+        },
+        {
+          "pair": 1,
+          "side": "before",
+          "stage": "read",
+          "readers": 1
+        },
+        {
+          "pair": 1,
+          "side": "after",
+          "stage": "read",
+          "readers": 1
+        },
+        {
+          "pair": 2,
+          "side": "after",
+          "stage": "read",
+          "readers": 1
+        },
+        {
+          "pair": 2,
+          "side": "before",
+          "stage": "read",
+          "readers": 1
+        },
+        {
+          "pair": 3,
+          "side": "before",
+          "stage": "read",
+          "readers": 1
+        },
+        {
+          "pair": 3,
+          "side": "after",
+          "stage": "read",
+          "readers": 1
+        },
+        {
+          "pair": 4,
+          "side": "after",
+          "stage": "read",
+          "readers": 1
+        },
+        {
+          "pair": 4,
+          "side": "before",
+          "stage": "read",
+          "readers": 1
+        },
+        {
+          "pair": 5,
+          "side": "before",
+          "stage": "read",
+          "readers": 1
+        },
+        {
+          "pair": 5,
+          "side": "after",
+          "stage": "read",
+          "readers": 1
+        },
+        {
+          "pair": 6,
+          "side": "after",
+          "stage": "read",
+          "readers": 1
+        },
+        {
+          "pair": 6,
+          "side": "before",
+          "stage": "read",
+          "readers": 1
+        },
+        {
+          "pair": 7,
+          "side": "before",
+          "stage": "read",
+          "readers": 1
+        },
+        {
+          "pair": 7,
+          "side": "after",
+          "stage": "read",
+          "readers": 1
+        },
+        {
+          "pair": 1,
+          "side": "before",
+          "stage": "read",
+          "readers": 8
+        },
+        {
+          "pair": 1,
+          "side": "after",
+          "stage": "read",
+          "readers": 8
+        },
+        {
+          "pair": 2,
+          "side": "after",
+          "stage": "read",
+          "readers": 8
+        },
+        {
+          "pair": 2,
+          "side": "before",
+          "stage": "read",
+          "readers": 8
+        },
+        {
+          "pair": 3,
+          "side": "before",
+          "stage": "read",
+          "readers": 8
+        },
+        {
+          "pair": 3,
+          "side": "after",
+          "stage": "read",
+          "readers": 8
+        },
+        {
+          "pair": 4,
+          "side": "after",
+          "stage": "read",
+          "readers": 8
+        },
+        {
+          "pair": 4,
+          "side": "before",
+          "stage": "read",
+          "readers": 8
+        },
+        {
+          "pair": 5,
+          "side": "before",
+          "stage": "read",
+          "readers": 8
+        },
+        {
+          "pair": 5,
+          "side": "after",
+          "stage": "read",
+          "readers": 8
+        },
+        {
+          "pair": 6,
+          "side": "after",
+          "stage": "read",
+          "readers": 8
+        },
+        {
+          "pair": 6,
+          "side": "before",
+          "stage": "read",
+          "readers": 8
+        },
+        {
+          "pair": 7,
+          "side": "before",
+          "stage": "read",
+          "readers": 8
+        },
+        {
+          "pair": 7,
+          "side": "after",
+          "stage": "read",
+          "readers": 8
+        }
+      ]
+    }
+  ],
+  "evidence": [
+    {
+      "source": "output/samples.csv",
+      "sha256": "061ef1e775bb61f0044fe0ef306686bebe0d56e690b13d68e3d9abc643c56d36",
+      "bytes": 38011,
+      "saved": "raw/samples.csv"
+    }
+  ],
+  "output_environment": {
+    "FAST_DUMP_RESULTS_RUN_DIR": "E:\\projects\\cool_project\\fast-dump\\results\\local\\benchmarks\\20261025T021334.465487Z-cleanup-files-ab-771a98",
+    "FAST_DUMP_BENCH_MATRIX_DIR": "E:\\projects\\cool_project\\fast-dump\\results\\local\\benchmarks\\20261025T021334.465487Z-cleanup-files-ab-771a98\\matrix",
+    "CRITERION_HOME": "E:\\projects\\cool_project\\fast-dump\\results\\local\\benchmarks\\20261025T021334.465487Z-cleanup-files-ab-771a98\\criterion",
+    "FAST_DUMP_NETEM_DIR": "E:\\projects\\cool_project\\fast-dump\\results\\local\\benchmarks\\20261025T021334.465487Z-cleanup-files-ab-771a98\\netem"
+  },
+  "finished_utc": "2026-10-25T02:14:49.988417+00:00"
+}

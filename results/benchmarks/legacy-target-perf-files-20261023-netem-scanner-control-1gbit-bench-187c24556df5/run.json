@@ -1,0 +1,139 @@
+{
+  "schema_version": 1,
+  "id": "legacy-target-perf-files-20261023-netem-scanner-control-1gbit-bench-187c24556df5",
+  "kind": "benchmark",
+  "label": "target/perf-files-20261023/netem/scanner-control-1gbit/bench",
+  "status": "imported",
+  "started_utc": "2026-10-22T22:06:30.001080+00:00",
+  "time_source": "original_file_mtime",
+  "imported_utc": "2026-10-25T02:06:41.069292+00:00",
+  "import_sha256": "187c24556df563665eba5050982f08d266f1a71540f92a014baa047270d5ff2b",
+  "origin": "results/history/2026-10-24",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "binary_sha256": {
+      "before": "15121f379fc4ee7e5b00ba5742b332a5ec6e09e2dc2ea667eab5697e822935d1",
+      "after": "a12350e11ae40f91c5e9a3923e1a9269c53abecb7f079cc59a41505f74448d22"
+    },
+    "common_arguments": [
+      "--repeats",
+      "1",
+      "--shuffle-scenarios",
+      "--shuffle-seed",
+      "91",
+      "--dataset",
+      "manySmallFiles,bigFiles,mixed",
+      "--network-profile",
+      "loopback-localhost",
+      "--threads",
+      "3",
+      "--frames",
+      "64",
+      "--buffers",
+      "1024",
+      "--executor",
+      "default"
+    ],
+    "repeats_per_side": 5,
+    "policy": "AB then BA alternating; all samples retained; no automatic warmup or trimming",
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "after",
+        "exit_code": 0
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "target/perf-files-20261023/netem/scanner-control-1gbit/bench/before/run.log",
+      "sha256": "b059d74814d64683c73054adb4fe0196c7ffad5ad058c9a32f7cf63458d4b2be",
+      "bytes": 33184,
+      "extracted_sha256": "8c83d71aad064c9fb73ce5507046c84828e3ad6bad499466ca096f4c40049517",
+      "saved": "raw/before/resource_samples.csv"
+    },
+    {
+      "source": "target/perf-files-20261023/netem/scanner-control-1gbit/bench/before/results_raw.csv",
+      "sha256": "064f016260c2a29de3238567b46406b91eba60da8433fd060916d4fa05d7d7c3",
+      "bytes": 9906,
+      "saved": "raw/before/results_raw.csv"
+    },
+    {
+      "source": "target/perf-files-20261023/netem/scanner-control-1gbit/bench/after/run.log",
+      "sha256": "f93973949ef250c8ae598f5f6fff0e7d7baf115423c689355c575d9dcc2da976",
+      "bytes": 33128,
+      "extracted_sha256": "3b1e7b05fe96c9bcbf7e6f1fd8729a04f4cb82dd2009f3feb37c52de4e4794a2",
+      "saved": "raw/after/resource_samples.csv"
+    },
+    {
+      "source": "target/perf-files-20261023/netem/scanner-control-1gbit/bench/after/results_raw.csv",
+      "sha256": "7401c0477a0f3de2ae21af73f77ab00c97b024c9fbea203526d60a2a93812dab",
+      "bytes": 9896,
+      "saved": "raw/after/results_raw.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "target/perf-files-20261023/netem/scanner-control-1gbit/bench/paired-run.json",
+      "sha256": "b530defd0ce7c3d2326d0556417f02f905a7767cdcceeaef5021c39083597994",
+      "bytes": 8193
+    },
+    {
+      "source": "target/perf-files-20261023/netem/scanner-control-1gbit/bench/before/run.log",
+      "sha256": "b059d74814d64683c73054adb4fe0196c7ffad5ad058c9a32f7cf63458d4b2be",
+      "bytes": 33184
+    },
+    {
+      "source": "target/perf-files-20261023/netem/scanner-control-1gbit/bench/after/run.log",
+      "sha256": "f93973949ef250c8ae598f5f6fff0e7d7baf115423c689355c575d9dcc2da976",
+      "bytes": 33128
+    }
+  ]
+}

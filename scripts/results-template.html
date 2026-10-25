@@ -1,0 +1,478 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>fast-dump · results</title>
+<style>
+:root{
+    color-scheme:light dark;
+    --bg:#10151d;
+    --panel:#18212d;
+    --line:#334155;
+    --text:#edf2f7;
+    --muted:#aab8ca;
+    --accent:#58c4c4;
+    --warn:#ffc078
+}
+*{
+    box-sizing:border-box
+}
+body{
+    margin:0;
+    background:var(--bg);
+    color:var(--text);
+    font:15px/1.5 system-ui,sans-serif
+}
+main{
+    max-width:1500px;
+    margin:auto;
+    padding:28px
+}
+h1{
+    margin:0;
+    font-size:27px
+}
+h2{
+    font-size:18px;
+    margin:0 0 12px
+}
+p{
+    margin:8px 0;
+    color:var(--muted)
+}
+a{
+    color:var(--accent)
+}
+header{
+    margin-bottom:24px
+}
+.controls{
+    display:flex;
+    gap:10px;
+    flex-wrap:wrap;
+    margin:16px 0
+}
+input,select,button{
+    font:inherit;
+    color:inherit;
+    background:var(--panel);
+    border:1px solid var(--line);
+    border-radius:6px;
+    padding:8px 12px
+}
+input{
+    min-width:260px;
+    flex:1
+}
+button{
+    cursor:pointer
+}
+button:hover{
+    border-color:var(--accent)
+}
+button[aria-pressed=true]{
+    background:#254953
+}
+label{
+    display:flex;
+    align-items:center;
+    gap:8px
+}
+.panel{
+    padding:18px;
+    background:var(--panel);
+    border:1px solid var(--line);
+    border-radius:9px;
+    margin:14px 0
+}
+.scroll{
+    overflow:auto
+}
+table{
+    border-collapse:collapse;
+    width:100%;
+    font-variant-numeric:tabular-nums
+}
+th,td{
+    text-align:left;
+    padding:10px;
+    border-bottom:1px solid var(--line);
+    vertical-align:top
+}
+th{
+    color:var(--muted);
+    font-weight:500;
+    white-space:nowrap
+}
+td.label{
+    min-width:250px;
+    max-width:440px;
+    overflow-wrap:anywhere
+}
+small{
+    color:var(--muted)
+}
+.badge{
+    font-size:12px;
+    padding:2px 6px;
+    border:1px solid var(--line);
+    border-radius:4px;
+    white-space:nowrap
+}
+.failed,.incomplete{
+    color:var(--warn)
+}
+.completed{
+    color:var(--accent)
+}
+.right{
+    text-align:right;
+    white-space:nowrap
+}
+.links{
+    display:flex;
+    gap:12px;
+    flex-wrap:wrap
+}
+.muted{
+    color:var(--muted)
+}
+#chart{
+    width:100%;
+    height:230px;
+    display:block
+}
+#comparison{
+    overflow-wrap:anywhere
+}
+.selected{
+    background:#233d4b
+}
+details{
+    margin-top:10px
+}
+pre{
+    white-space:pre-wrap;
+    word-break:break-word;
+    font-size:12px
+}
+.hidden{
+    display:none
+}
+@media(max-width:700px){
+    main{
+        padding:14px
+    }
+    th,td{
+        padding:7px
+    }
+    input{
+        width:100%;
+        min-width:0
+    }
+    .panel{
+        padding:12px
+    }
+}
+</style>
+<main>
+<header>
+<h1>fast-dump results</h1>
+<p>Recorded measurements, checks, and historical evidence. Generated __GENERATED_AT__.</p>
+</header>
+<nav class="controls">
+<button id="benchTab" aria-pressed="true">Benchmarks</button>
+<button id="testTab" aria-pressed="false">Tests</button>
+<button id="clear">Clear selection</button>
+</nav>
+<div class="controls">
+<input id="search" type="search" placeholder="Search label, scenario, commit, parameters…" aria-label="Search results">
+<select id="family" aria-label="Measurement family">
+<option value="">All measurement families</option>
+<option value="matrix">Transfer matrix</option>
+<option value="file">File pipeline</option>
+<option value="criterion">Criterion</option>
+<option value="report">Legacy reports</option>
+</select>
+<select id="status" aria-label="Run status">
+<option value="">All statuses</option>
+<option>completed</option>
+<option>imported</option>
+<option>failed</option>
+<option>incomplete</option>
+<option>running</option>
+<option>invalid</option>
+<option>superseded</option>
+</select>
+<select id="metric" aria-label="Metric">
+<option value="elapsed_ms">Elapsed · ms</option>
+<option value="throughput_mib_s">Throughput · MiB/s</option>
+<option value="time_per_iteration_ns">Criterion · ns/iteration</option>
+<option value="cpu_ms">CPU · ms</option>
+<option value="cpu_cycles">CPU cycles</option>
+<option value="cpu_pct">CPU · %</option>
+<option value="rss_mib">Peak RSS · MiB</option>
+<option value="allocations">Allocation requests</option>
+<option value="allocated_bytes">Allocation bytes</option>
+<option value="read_operations">Read operations</option>
+<option value="read_bytes">Read bytes</option>
+<option value="first_bundle_ms">First bundle · ms</option>
+</select>
+</div>
+<p id="counts">
+</p>
+<section class="panel" id="comparison">
+<h2>Compare measurements</h2>
+<p>Select A and B in the table. Unknown or differing conditions remain visible without an automatic speedup.</p>
+</section>
+<section class="panel" id="chartPanel">
+<h2 id="chartTitle">History</h2>
+<p id="chartNote">Select a measurement to chart comparable verified results.</p>
+<svg id="chart" viewBox="0 0 1000 230" role="img" aria-label="Measurement history chart">
+</svg>
+</section>
+<section class="panel scroll">
+<table>
+<thead id="head">
+</thead>
+<tbody id="rows">
+</tbody>
+</table>
+<p id="more">
+</p>
+<button id="loadMore">Show more</button>
+</section>
+<p>Raw observations are retained without trimming. Blank metrics mean unmeasured. Test command duration is not a performance benchmark. Local logs are optional; tracked evidence remains usable after cloning.</p>
+</main>
+<script id="results-data" type="application/json">__RESULTS_DATA__</script>
+<script>
+'use strict';
+const runs=JSON.parse(document.getElementById('results-data').textContent);
+const $=id=>document.getElementById(id), all=[];
+let kind='benchmark',selected=[],limit=100;
+const stable = value => JSON.stringify(value, (_, item) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) return item;
+    return Object.fromEntries(Object.keys(item).sort().map(key => [key, item[key]]));
+});
+const cleanScenario = entry => Object.fromEntries(
+    Object.entries(entry.scenario || {}).filter(([key]) => key !== 'side')
+);
+function el(tag,text,cls){
+    const n=document.createElement(tag);
+    if(text!==undefined)n.textContent=text;
+    if(cls)n.className=cls;
+    return n;
+}
+function link(text,path){
+    const n=el('a',text);
+    if(path&&!/^(?:\/|[a-z]+:)/i.test(path)&&!path.split('/').includes('..'))n.href=path.split('/').map(encodeURIComponent).join('/');
+    return n;
+}
+function fmt(v){
+    return v===null||v===undefined?'—':Number(v).toLocaleString(undefined,{
+        maximumFractionDigits:3
+    });
+}
+function stat(item){
+    return (item.entry.metrics || {})[$('metric').value] || {};
+}
+for(const run of runs){
+    const entries=run.summary?.entries||[];
+    if(entries.length){
+        for(const entry of entries)all.push({run, entry, index:all.length});
+    }else{
+        all.push({
+            run,
+            entry:{family:'report', case:'', metrics:{}, notes:run.summary?.warnings||[]},
+            index:all.length
+        });
+    }
+}
+function compare(a,b){
+    const x=a.entry,y=b.entry,reasons=[];
+    for(const r of [a.run,b.run])if(!['completed','imported'].includes(r.status))reasons.push('run incomplete or failed');
+    for(const f of ['family','case','counter_contract'])if(stable(x[f]??null)!==stable(y[f]??null))reasons.push(f+' differs');
+    const sa=cleanScenario(x),sb=cleanScenario(y);
+    if(stable(sa)!==stable(sb))reasons.push('scenario differs');
+    if(x.evidence!=='raw'||y.evidence!=='raw')reasons.push('raw samples unavailable');
+    const paired=a.run.id===b.run.id&&x.side&&y.side&&x.side!==y.side&&x.pair_context&&x.pair_context===y.pair_context&&x.experiment===y.experiment;
+    if(!paired){
+        const ha=a.run.source?.host,hb=b.run.source?.host;
+        if(!ha||stable(ha)!==stable(hb))reasons.push('same host not established');
+    }
+    if(x.family!=='criterion'){
+        if(!x.fixture||!y.fixture||stable(x.fixture)!==stable(y.fixture))reasons.push('fixture differs or unknown');
+        else if(!x.fixture.fingerprint&&!paired)reasons.push('fixture content identity unknown');
+        if(x.verified!==true||y.verified!==true)reasons.push('verification unavailable or failed');
+    }
+    if(x.family==='matrix'&&(!sa.protocol_runtime||sa.readers===null||sa.readers===undefined))reasons.push('protocol or reader configuration unknown');
+    if(x.family==='criterion'&&!paired){
+        const s=a.run.source?.benchmark_harness_sha256;
+        if(!s||s!==b.run.source?.benchmark_harness_sha256)reasons.push('Criterion fixture/harness identity unknown');
+    }
+    const m=stat(a),n=stat(b);
+    if(m.unit!==n.unit||m.direction!==n.direction)reasons.push('metric scope differs');
+    if(m.n!==x.sample_count||n.n!==y.sample_count)reasons.push('incomplete metric coverage');
+    if(m.mean===null||m.mean===undefined||n.mean===null||n.mean===undefined||m.mean===0)reasons.push('metric unavailable or zero baseline');
+    return {
+        reasons:[...new Set(reasons)],ratio:reasons.length?null:n.mean/m.mean
+    };
+}
+function choose(index){
+    if(selected.includes(index))selected=selected.filter(i=>i!==index);
+    else selected=selected.length<2?[...selected,index]:[selected[1],index];
+    render();
+}
+function renderComparison(){
+    const panel=$('comparison');
+    panel.replaceChildren(el('h2','Compare measurements'));
+    if(!selected.length){
+        panel.append(el('p','Select A and B in the table. Unknown or differing conditions remain visible without an automatic speedup.'));
+        return;
+    }
+    for(let n=0; n<selected.length; n++){
+        const item=all[selected[n]],m=stat(item);
+        panel.append(el('p',`${n?'B':'A'} · ${item.run.label} · ${item.entry.case} ${item.entry.side||''} · ${fmt(m.mean)} ${m.unit||''} · n=${fmt(m.n)}/${fmt(item.entry.sample_count)}`));
+    }
+    if(selected.length===2){
+        const result=compare(all[selected[0]],all[selected[1]]);
+        panel.append(el('p',result.ratio===null?'No automatic ratio: '+result.reasons.join('; '):`B/A = ${fmt(result.ratio)} · change ${fmt((result.ratio-1)*100)}%. ${stat(all[selected[0]]).direction==='higher'?'Higher':'Lower'} is better.`));
+    }
+    const details=el('details'),title=el('summary','Parameters and provenance');
+    details.append(title);
+    for(const index of selected){
+        const item=all[index];
+        details.append(el('pre',JSON.stringify({
+            label:item.run.label,scenario:item.entry.scenario,fixture:item.entry.fixture,source:item.run.source,parameters:item.run.parameters,notes:item.entry.notes
+        }, null, 2)));
+    }
+    panel.append(details);
+}
+function drawChart(){
+    const svg=$('chart');
+    svg.replaceChildren();
+    if(!selected.length){
+        $('chartNote').textContent='Select a measurement to chart comparable verified results.';
+        return;
+    }
+    const picked=all[selected[0]],metric=$('metric').value;
+    const matches=all.filter(i=>Number.isFinite(i.entry.metrics?.[metric]?.mean)&&(i.index===picked.index||compare(picked,i).reasons.length===0)).slice(0,100).reverse();
+    $('chartTitle').textContent=`History · ${picked.entry.case} · ${metric}`;
+    $('chartNote').textContent='Selected reference and comparable verified measurements only. Unknown or differing conditions remain in the table. Hover points for dates and labels.';
+    if(!matches.length)return;
+    const values=matches.map(i=>i.entry.metrics[metric].mean),minimum=Math.min(...values),maximum=Math.max(...values),span=maximum-minimum||Math.max(maximum*.1,1);
+    const create=(tag,attrs,text)=>{
+        const node=document.createElementNS('http://www.w3.org/2000/svg',tag);
+        for(const [k,v]of Object.entries(attrs))node.setAttribute(k,String(v));
+        if(text!==undefined)node.textContent=text;
+        svg.append(node);
+        return node;
+    };
+    create('line',{
+        x1:90,y1:190,x2:970,y2:190,stroke:'#64748b'
+    });
+    create('text',{
+        x:2,y:32,fill:'#aab8ca','font-size':13
+    }, fmt(maximum));
+    create('text',{
+        x:2,y:190,fill:'#aab8ca','font-size':13
+    }, fmt(minimum));
+    matches.forEach((item,i)=>{
+        const x=100+(matches.length===1?.5:i/(matches.length-1))*850,y=185-(values[i]-minimum)/span*150;
+        const point=create('circle',{
+            cx:x,cy:y,r:5,fill:item.index===selected[0]?'#ffc078':'#58c4c4'
+        }),title=document.createElementNS('http://www.w3.org/2000/svg','title');
+        title.textContent=`${item.run.started_utc||'unknown date'} · ${item.run.label} · ${fmt(values[i])}`;
+        point.append(title);
+        point.addEventListener('click',()=>choose(item.index));
+    });
+    create('text',{
+        x:90,y:220,fill:'#aab8ca','font-size':12
+    }, (matches[0].run.started_utc||'unknown').slice(0,10));
+    create('text',{
+        x:860,y:220,fill:'#aab8ca','font-size':12
+    }, (matches.at(-1).run.started_utc||'unknown').slice(0,10));
+}
+function render(){
+    const query=$('search').value.toLowerCase(),family=$('family').value,status=$('status').value;
+    const filtered=all.filter(i=>(i.run.kind==='test'?'test':'benchmark')===kind&&(!family||i.entry.family===family)&&(!status||i.run.status===status)&&(!query||stable([i.run.label,i.run.source?.commit,i.entry.case,i.entry.scenario,i.run.parameters]).toLowerCase().includes(query)));
+    $('counts').textContent=`${filtered.length} records · ${new Set(filtered.map(i=>i.run.id)).size} runs`;
+    $('benchTab').setAttribute('aria-pressed',kind==='benchmark');
+    $('testTab').setAttribute('aria-pressed',kind==='test');
+    $('chartPanel').classList.toggle('hidden',kind==='test');
+    $('comparison').classList.toggle('hidden',kind==='test');
+    $('head').replaceChildren();
+    const header=el('tr');
+    for(const name of kind==='test'?['Date / status','Check','Result','Evidence']:['Select','Date / status','Measurement','Mean','n / evidence','Evidence'])header.append(el('th',name));
+    $('head').append(header);
+    $('rows').replaceChildren();
+    for(const item of filtered.slice(0,limit)){
+        const run=item.run,e=item.entry,tr=el('tr');
+        if(selected.includes(item.index))tr.className='selected';
+        if(kind!=='test'){
+            const cell=el('td'),button=el('button',selected.includes(item.index)?(selected.indexOf(item.index)?'B':'A'):'Select');
+            button.addEventListener('click',()=>choose(item.index));
+            cell.append(button);
+            tr.append(cell);
+        }
+        const date=el('td');
+        date.append(el('div',(run.started_utc||'Unknown').slice(0,19).replace('T',' ')),el('span',run.status,'badge '+run.status));
+        tr.append(date);
+        const label=el('td',undefined,'label');
+        label.append(el('div',run.label),el('small',`${e.family==='report'?'':e.family+' · '}${e.case||''} ${e.side||''}`));
+        tr.append(label);
+        if(kind==='test'){
+            const summary=run.summary||{};
+            const python=typeof summary.python_tests==='object'?summary.python_tests?.passed:summary.python_tests;
+            const checks=Array.isArray(summary.checks)?summary.checks:Object.values(summary.checks||{}).flat();
+            const details=[`Exit ${run.exit_code??'unknown'}`];
+            if(python!==null&&python!==undefined)details.push(`${python} Python tests`);
+            if(checks.length)details.push(`${checks.length} checks, ${checks.filter(check=>check.exit_code!==0).length} failed / unknown`);
+            const rust=summary.rust_test_suites||[];
+            if(rust.length)details.push(`${rust.reduce((sum,suite)=>sum+suite.passed,0)} Rust tests passed`);
+            tr.append(el('td',details.join(' · ')));
+        }
+        else{
+            const m=stat(item);
+            tr.append(el('td',fmt(m.mean)+(m.unit?' '+m.unit:''),'right'),el('td',`${fmt(m.n)} / ${fmt(e.sample_count)} · ${e.evidence||'report only'}`));
+        }
+        const files=el('td'),links=el('div',undefined,'links');
+        links.append(link('Metadata',run.path+'/run.json'),link('Summary',run.path+'/summary.json'));
+        if(run.log)links.append(link('Log',run.log));
+        for(const path of (e.files||[]).slice(0,3))links.append(link(path.split('/').at(-1),run.path+'/'+path));
+        if(!(e.files||[]).length)for(const evidence of (run.evidence||[]).slice(0,3))links.append(link(evidence.saved.split('/').at(-1),run.path+'/'+evidence.saved));
+        files.append(links);
+        tr.append(files);
+        $('rows').append(tr);
+    }
+    $('more').textContent=filtered.length>limit?`Showing ${limit} of ${filtered.length}`:'';
+    $('loadMore').hidden=filtered.length<=limit;
+    renderComparison();
+    drawChart();
+}
+for(const id of ['search','family','status','metric'])$(id).addEventListener('input',()=>{
+    limit=100;
+    render();
+});
+$('benchTab').onclick=()=>{
+    kind='benchmark';
+    limit=100;
+    render();
+};
+$('testTab').onclick=()=>{
+    kind='test';
+    $('family').value='';
+    limit=100;
+    render();
+};
+$('clear').onclick=()=>{
+    selected=[];
+    render();
+};
+$('loadMore').onclick=()=>{
+    limit+=100;
+    render();
+};
+render();
+</script>
+</html>

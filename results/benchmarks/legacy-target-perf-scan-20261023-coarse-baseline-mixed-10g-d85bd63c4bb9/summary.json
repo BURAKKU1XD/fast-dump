@@ -1,0 +1,414 @@
+{
+  "schema_version": 1,
+  "entries": [
+    {
+      "family": "matrix",
+      "case": "custom",
+      "side": "before",
+      "scenario": {
+        "dataset": "custom",
+        "protocol_runtime": "v4",
+        "network_profile": "link-10gbps",
+        "executor": "default",
+        "threads": "31",
+        "frame_target_mb": "64",
+        "read_buffer_kb": "1024",
+        "large_file_single_frame_threshold_mib": "16",
+        "manifest_chunk_kb": "512",
+        "manifest_ack_records": "4096",
+        "manifest_ack_kb": "8192",
+        "readers": 16,
+        "side": "before"
+      },
+      "metrics": {
+        "elapsed_ms": {
+          "n": 8,
+          "mean": 750.015675,
+          "median": 748.85315,
+          "min": 704.4262,
+          "max": 820.9403,
+          "p95": 800.253935,
+          "unit": "ms",
+          "direction": "lower"
+        },
+        "throughput_mib_s": {
+          "n": 8,
+          "mean": 1167.3110227500001,
+          "median": 1167.0891735,
+          "min": 1064.599528,
+          "max": 1240.687323,
+          "p95": 1229.1399592,
+          "unit": "MiB/s",
+          "direction": "higher"
+        },
+        "cpu_pct": {
+          "n": 8,
+          "mean": 12.120648375,
+          "median": 11.934878000000001,
+          "min": 10.548069,
+          "max": 14.760988,
+          "p95": 14.0768458,
+          "unit": "%",
+          "direction": "lower"
+        },
+        "rss_mib": {
+          "n": 8,
+          "mean": 426.178710875,
+          "median": 425.5,
+          "min": 420.226562,
+          "max": 434.625,
+          "p95": 432.75605459999997,
+          "unit": "MiB",
+          "direction": "lower"
+        },
+        "first_bundle_ms": {
+          "n": 8,
+          "mean": 45.7177375,
+          "median": 44.4423,
+          "min": 39.8897,
+          "max": 59.8146,
+          "p95": 55.09572499999999,
+          "unit": "ms",
+          "direction": "lower"
+        },
+        "cpu_cycles": {
+          "n": 8,
+          "mean": 7369560405.25,
+          "median": 7353286507.0,
+          "min": 6964500935.0,
+          "max": 7703481476.0,
+          "p95": 7673022564.3,
+          "unit": "cycles",
+          "direction": "lower"
+        },
+        "cpu_user_ns": {
+          "n": 8,
+          "mean": 1222656250.0,
+          "median": 1210937500.0,
+          "min": 1093750000.0,
+          "max": 1390625000.0,
+          "p95": 1357812500.0,
+          "unit": "ns",
+          "direction": "lower"
+        },
+        "cpu_kernel_ns": {
+          "n": 8,
+          "mean": 1828125000.0,
+          "median": 1726562500.0,
+          "min": 1468750000.0,
+          "max": 2296875000.0,
+          "p95": 2269531250.0,
+          "unit": "ns",
+          "direction": "lower"
+        },
+        "io_read_ops": {
+          "n": 8,
+          "mean": 11577.0,
+          "median": 11577.0,
+          "min": 11577.0,
+          "max": 11577.0,
+          "p95": 11577.0,
+          "unit": "operations",
+          "direction": "lower"
+        },
+        "io_read_bytes": {
+          "n": 8,
+          "mean": 916426752.0,
+          "median": 916426752.0,
+          "min": 916426752.0,
+          "max": 916426752.0,
+          "p95": 916426752.0,
+          "unit": "bytes",
+          "direction": "lower"
+        },
+        "receiver_write_io_ns": {
+          "n": 8,
+          "mean": 147034587.5,
+          "median": 146779300.0,
+          "min": 136155700.0,
+          "max": 160259100.0,
+          "p95": 158535735.0,
+          "unit": "ns",
+          "direction": "lower"
+        },
+        "receiver_periodic_sync_ns": {
+          "n": 8,
+          "mean": 104803812.5,
+          "median": 89739950.0,
+          "min": 83083300.0,
+          "max": 207811500.0,
+          "p95": 171859184.99999994,
+          "unit": "ns",
+          "direction": "lower"
+        },
+        "receiver_periodic_sync_calls": {
+          "n": 8,
+          "mean": 4.0,
+          "median": 4.0,
+          "min": 4.0,
+          "max": 4.0,
+          "p95": 4.0,
+          "unit": "calls",
+          "direction": "lower"
+        },
+        "receiver_clean_sync_skips": {
+          "n": 8,
+          "mean": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "p95": 0.0,
+          "unit": "calls",
+          "direction": "lower"
+        },
+        "tx_gbps": {
+          "n": 8,
+          "mean": 4.16173325,
+          "median": 4.1609425,
+          "min": 3.795543,
+          "max": 4.423337,
+          "p95": 4.3821679,
+          "unit": "Gbit/s",
+          "direction": "higher"
+        },
+        "rx_gbps": {
+          "n": 8,
+          "mean": 2.13702067571156e-06,
+          "median": 2.1366145309078944e-06,
+          "min": 1.9489845972965393e-06,
+          "max": 2.2713522012667897e-06,
+          "p95": 2.2502122009833937e-06,
+          "unit": "Gbit/s",
+          "direction": "higher"
+        }
+      },
+      "sample_count": 8,
+      "reported_repeats": null,
+      "evidence": "raw",
+      "fixture": {
+        "entries": 10134.0,
+        "bytes": 916426752.0,
+        "fingerprint": null
+      },
+      "verified": true,
+      "static_fixture_clean": true,
+      "counter_contract": null,
+      "notes": [
+        "Fixture content fingerprint unavailable; historical comparisons require context."
+      ],
+      "files": [
+        "raw/before/resource_samples.csv",
+        "raw/before/results_raw.csv",
+        "raw/after/resource_samples.csv",
+        "raw/after/results_raw.csv"
+      ],
+      "experiment": "target/perf-scan-20261023/coarse-baseline-mixed-10g",
+      "pair_context": "target/perf-scan-20261023/coarse-baseline-mixed-10g"
+    },
+    {
+      "family": "matrix",
+      "case": "custom",
+      "side": "after",
+      "scenario": {
+        "dataset": "custom",
+        "protocol_runtime": "v4",
+        "network_profile": "link-10gbps",
+        "executor": "default",
+        "threads": "31",
+        "frame_target_mb": "64",
+        "read_buffer_kb": "1024",
+        "large_file_single_frame_threshold_mib": "16",
+        "manifest_chunk_kb": "512",
+        "manifest_ack_records": "4096",
+        "manifest_ack_kb": "8192",
+        "readers": 16,
+        "side": "after"
+      },
+      "metrics": {
+        "elapsed_ms": {
+          "n": 8,
+          "mean": 657.7000625,
+          "median": 658.05825,
+          "min": 595.6537,
+          "max": 749.0803,
+          "p95": 728.308955,
+          "unit": "ms",
+          "direction": "lower"
+        },
+        "throughput_mib_s": {
+          "n": 8,
+          "mean": 1335.881790625,
+          "median": 1328.2298845,
+          "min": 1166.727594,
+          "max": 1467.249605,
+          "p95": 1456.6496103499999,
+          "unit": "MiB/s",
+          "direction": "higher"
+        },
+        "cpu_pct": {
+          "n": 8,
+          "mean": 14.311781,
+          "median": 14.5726895,
+          "min": 11.041772,
+          "max": 16.082003,
+          "p95": 15.83509305,
+          "unit": "%",
+          "direction": "lower"
+        },
+        "rss_mib": {
+          "n": 8,
+          "mean": 432.997558625,
+          "median": 431.80859399999997,
+          "min": 426.957031,
+          "max": 441.738281,
+          "p95": 440.98906224999996,
+          "unit": "MiB",
+          "direction": "lower"
+        },
+        "first_bundle_ms": {
+          "n": 8,
+          "mean": 57.220275,
+          "median": 53.50165,
+          "min": 51.7724,
+          "max": 69.6252,
+          "p95": 67.36728,
+          "unit": "ms",
+          "direction": "lower"
+        },
+        "cpu_cycles": {
+          "n": 8,
+          "mean": 7785841120.875,
+          "median": 7821968891.0,
+          "min": 7017125471.0,
+          "max": 8185727519.0,
+          "p95": 8168746398.55,
+          "unit": "cycles",
+          "direction": "lower"
+        },
+        "cpu_user_ns": {
+          "n": 8,
+          "mean": 1257812500.0,
+          "median": 1250000000.0,
+          "min": 1015625000.0,
+          "max": 1500000000.0,
+          "p95": 1467187500.0,
+          "unit": "ns",
+          "direction": "lower"
+        },
+        "cpu_kernel_ns": {
+          "n": 8,
+          "mean": 1912109375.0,
+          "median": 1914062500.0,
+          "min": 1656250000.0,
+          "max": 2078125000.0,
+          "p95": 2067187500.0,
+          "unit": "ns",
+          "direction": "lower"
+        },
+        "io_read_ops": {
+          "n": 8,
+          "mean": 11577.0,
+          "median": 11577.0,
+          "min": 11577.0,
+          "max": 11577.0,
+          "p95": 11577.0,
+          "unit": "operations",
+          "direction": "lower"
+        },
+        "io_read_bytes": {
+          "n": 8,
+          "mean": 916426752.0,
+          "median": 916426752.0,
+          "min": 916426752.0,
+          "max": 916426752.0,
+          "p95": 916426752.0,
+          "unit": "bytes",
+          "direction": "lower"
+        },
+        "receiver_write_io_ns": {
+          "n": 8,
+          "mean": 148611325.0,
+          "median": 151009550.0,
+          "min": 133479400.0,
+          "max": 155864300.0,
+          "p95": 155808230.0,
+          "unit": "ns",
+          "direction": "lower"
+        },
+        "receiver_periodic_sync_ns": {
+          "n": 8,
+          "mean": 101718487.5,
+          "median": 91264300.0,
+          "min": 81780100.0,
+          "max": 184926400.0,
+          "p95": 154670789.99999994,
+          "unit": "ns",
+          "direction": "lower"
+        },
+        "receiver_periodic_sync_calls": {
+          "n": 8,
+          "mean": 4.0,
+          "median": 4.0,
+          "min": 4.0,
+          "max": 4.0,
+          "p95": 4.0,
+          "unit": "calls",
+          "direction": "lower"
+        },
+        "receiver_clean_sync_skips": {
+          "n": 8,
+          "mean": 0.0,
+          "median": 0.0,
+          "min": 0.0,
+          "max": 0.0,
+          "p95": 0.0,
+          "unit": "calls",
+          "direction": "lower"
+        },
+        "tx_gbps": {
+          "n": 8,
+          "mean": 4.762726875,
+          "median": 4.735446,
+          "min": 4.159653,
+          "max": 5.231083,
+          "p95": 5.19329175,
+          "unit": "Gbit/s",
+          "direction": "higher"
+        },
+        "rx_gbps": {
+          "n": 8,
+          "mean": 2.338197878596272e-06,
+          "median": 2.3645138717629395e-06,
+          "min": 1.9021836836714928e-06,
+          "max": 2.686124504892692e-06,
+          "p95": 2.6667188733364944e-06,
+          "unit": "Gbit/s",
+          "direction": "higher"
+        }
+      },
+      "sample_count": 8,
+      "reported_repeats": null,
+      "evidence": "raw",
+      "fixture": {
+        "entries": 10134.0,
+        "bytes": 916426752.0,
+        "fingerprint": null
+      },
+      "verified": true,
+      "static_fixture_clean": true,
+      "counter_contract": null,
+      "notes": [
+        "Fixture content fingerprint unavailable; historical comparisons require context."
+      ],
+      "files": [
+        "raw/before/resource_samples.csv",
+        "raw/before/results_raw.csv",
+        "raw/after/resource_samples.csv",
+        "raw/after/results_raw.csv"
+      ],
+      "experiment": "target/perf-scan-20261023/coarse-baseline-mixed-10g",
+      "pair_context": "target/perf-scan-20261023/coarse-baseline-mixed-10g"
+    }
+  ],
+  "warnings": []
+}

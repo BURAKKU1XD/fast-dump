@@ -1,0 +1,134 @@
+{
+  "schema_version": 1,
+  "id": "legacy-target-perf-memory-20261023-queue1-mixed-1g-a0f2e1baa100",
+  "kind": "benchmark",
+  "label": "target/perf-memory-20261023/queue1-mixed-1g",
+  "status": "imported",
+  "started_utc": "2026-10-23T10:13:08.512382+00:00",
+  "time_source": "original_file_mtime",
+  "imported_utc": "2026-10-25T02:06:42.016523+00:00",
+  "import_sha256": "a0f2e1baa100a3cbf23676229a9e713e25cd6e86af08909eb09073650b666cb5",
+  "origin": "results/history/2026-10-24",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "binary_sha256": {
+      "before": "b74cf97b815e51fac00e2b52887f272cdf242faf8a36cb8972ae1bb82d5c77d8",
+      "after": "dd639aa8cd7d09f862f50bf29217012a86a0e0aaab627e1b44882e337c4f0eb3"
+    },
+    "comparison_kind": "A/B",
+    "requested_readers": {
+      "before": 16,
+      "after": 16
+    },
+    "common_arguments": [
+      "--repeats",
+      "1",
+      "--shuffle-scenarios",
+      "--shuffle-seed",
+      "91",
+      "--source",
+      "E:\\projects\\cool_project\\fast-dump\\target\\bench-verify-20261022\\datasets\\mixed",
+      "--network-profile",
+      "link-1gbps",
+      "--threads",
+      "31",
+      "--frames",
+      "64",
+      "--buffers",
+      "1024",
+      "--executor",
+      "default"
+    ],
+    "repeats_per_side": 4,
+    "policy": "AB then BA alternating; all samples retained; no automatic warmup or trimming",
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "before",
+        "exit_code": 0
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "target/perf-memory-20261023/queue1-mixed-1g/before/run.log",
+      "sha256": "3578f3c2ef749568abd3c469c5202309ddb2f58582d419a8170fe7ac2bb3a9d9",
+      "bytes": 10898,
+      "extracted_sha256": "076f228c84854608f39af169dc2a9e37cf61deed4430ec321f1f2f27707f09bf",
+      "saved": "raw/before/resource_samples.csv"
+    },
+    {
+      "source": "target/perf-memory-20261023/queue1-mixed-1g/before/results_raw.csv",
+      "sha256": "136452a9cdd1ad48eb5973a1011c28107aa081ddc9ac9dd5d4b596f3d4edc684",
+      "bytes": 3791,
+      "saved": "raw/before/results_raw.csv"
+    },
+    {
+      "source": "target/perf-memory-20261023/queue1-mixed-1g/after/run.log",
+      "sha256": "ad39b3da2d2f98cf45a6a15868af3e233ab68ef65c04a63366f87e1192c3e365",
+      "bytes": 9286,
+      "extracted_sha256": "27b6425d94602c2b4c6a26c713053afd2145477ffae86fd9d0e38a7d6c509f1f",
+      "saved": "raw/after/resource_samples.csv"
+    },
+    {
+      "source": "target/perf-memory-20261023/queue1-mixed-1g/after/results_raw.csv",
+      "sha256": "3a32d6cd7240404909a2837f3a56c3330d9ea04234b37ca730dc1d7e0236c23e",
+      "bytes": 3794,
+      "saved": "raw/after/results_raw.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "target/perf-memory-20261023/queue1-mixed-1g/paired-run.json",
+      "sha256": "c2bd37882e3d67896ac0e19136c455f698ed2718a8b3ca5c1c50e23a7c7e71c0",
+      "bytes": 7789
+    },
+    {
+      "source": "target/perf-memory-20261023/queue1-mixed-1g/before/run.log",
+      "sha256": "3578f3c2ef749568abd3c469c5202309ddb2f58582d419a8170fe7ac2bb3a9d9",
+      "bytes": 10898
+    },
+    {
+      "source": "target/perf-memory-20261023/queue1-mixed-1g/after/run.log",
+      "sha256": "ad39b3da2d2f98cf45a6a15868af3e233ab68ef65c04a63366f87e1192c3e365",
+      "bytes": 9286
+    }
+  ]
+}

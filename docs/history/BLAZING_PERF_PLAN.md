@@ -1,3 +1,6 @@
+> Historical document. See the [current runtime](../runtime.md) and
+> [protocol v4](../../src/network/protocol.md) for the active contract.
+
 # BLAZING PERF Plan
 
 План ускорения `fast-dump` после полного cutover на текущий runtime `v3`.

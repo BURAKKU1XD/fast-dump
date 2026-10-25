@@ -1,0 +1,124 @@
+{
+  "schema_version": 1,
+  "id": "legacy-target-perf-next-20261023-paired-large-9ad3bac20e18",
+  "kind": "benchmark",
+  "label": "target/perf-next-20261023/paired-large",
+  "status": "imported",
+  "started_utc": "2026-10-23T00:34:59.531118+00:00",
+  "time_source": "original_file_mtime",
+  "imported_utc": "2026-10-25T02:06:43.421798+00:00",
+  "import_sha256": "9ad3bac20e1824be6f74ccefe48c394a0bac9a58049bfa925e956206b1d4b84b",
+  "origin": "results/history/2026-10-24",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "binary_sha256": {
+      "before": "3e28949e47a7e31894cca504f2f8e228b2a6b2a9f1a9aacc4b3cc20e790e19b5",
+      "after": "516907df5657c5af7b1e4ace716aaf0982329e03d0746f549191592f67a83ca1"
+    },
+    "comparison_kind": "A/B",
+    "requested_readers": {
+      "before": 32,
+      "after": 32
+    },
+    "common_arguments": [
+      "--repeats",
+      "1",
+      "--shuffle-scenarios",
+      "--shuffle-seed",
+      "91",
+      "--dataset",
+      "bigFiles,mixed",
+      "--network-profile",
+      "link-1gbps,link-10gbps",
+      "--threads",
+      "31",
+      "--frames",
+      "64",
+      "--buffers",
+      "1024",
+      "--executor",
+      "default"
+    ],
+    "repeats_per_side": 3,
+    "policy": "AB then BA alternating; all samples retained; no automatic warmup or trimming",
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "exit_code": 0
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "target/perf-next-20261023/paired-large/before/run.log",
+      "sha256": "16598befea150acfa88ad29f3a0ee655d84bc4b51805fd1510624278e9d6a11f",
+      "bytes": 20847,
+      "extracted_sha256": "0f06e320a5756d58be0c545c2a61eb966611166e270f446908b12e4bfc0101c5",
+      "saved": "raw/before/resource_samples.csv"
+    },
+    {
+      "source": "target/perf-next-20261023/paired-large/before/results_raw.csv",
+      "sha256": "d6ad235824cafdf8d9b45eba4f0a8929776e4a8dcf36e3af3e0a4f5b718c9fbc",
+      "bytes": 8212,
+      "saved": "raw/before/results_raw.csv"
+    },
+    {
+      "source": "target/perf-next-20261023/paired-large/after/run.log",
+      "sha256": "f30e9e1a4be3e3289dd1b4d89eaec715cf323acea80a954693a9f8e0517e9faa",
+      "bytes": 21415,
+      "extracted_sha256": "8772fcdc837af282e8ff70d4ec39361cd1d635e83101cd64326a6db0dd0cb7f8",
+      "saved": "raw/after/resource_samples.csv"
+    },
+    {
+      "source": "target/perf-next-20261023/paired-large/after/results_raw.csv",
+      "sha256": "ff1602cf71a359daf485f319d722754c0f53b7d92716f0f7232c56dfb80804d0",
+      "bytes": 8210,
+      "saved": "raw/after/results_raw.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "target/perf-next-20261023/paired-large/paired-run.json",
+      "sha256": "e21c11a40ad0d60cb902f8089db97aad30460e070265cd29b523184f5e73a243",
+      "bytes": 5722
+    },
+    {
+      "source": "target/perf-next-20261023/paired-large/before/run.log",
+      "sha256": "16598befea150acfa88ad29f3a0ee655d84bc4b51805fd1510624278e9d6a11f",
+      "bytes": 20847
+    },
+    {
+      "source": "target/perf-next-20261023/paired-large/after/run.log",
+      "sha256": "f30e9e1a4be3e3289dd1b4d89eaec715cf323acea80a954693a9f8e0517e9faa",
+      "bytes": 21415
+    }
+  ]
+}

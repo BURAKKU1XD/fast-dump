@@ -1,0 +1,154 @@
+{
+  "schema_version": 1,
+  "id": "legacy-target-perf-memory-20261023-final-medium-1g-58b92d650e71",
+  "kind": "benchmark",
+  "label": "target/perf-memory-20261023/final-medium-1g",
+  "status": "imported",
+  "started_utc": "2026-10-23T10:16:56.482277+00:00",
+  "time_source": "original_file_mtime",
+  "imported_utc": "2026-10-25T02:06:41.665798+00:00",
+  "import_sha256": "58b92d650e71e9bcbb704e4d7fe0043fca132c2f07f835ec5b46fb54df36753a",
+  "origin": "results/history/2026-10-24",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "binary_sha256": {
+      "before": "d7dce4575ee4290e5fa72faeca0ecfb92ae5e609e5de797fb5f1a51587ab4bab",
+      "after": "b74cf97b815e51fac00e2b52887f272cdf242faf8a36cb8972ae1bb82d5c77d8"
+    },
+    "comparison_kind": "A/B",
+    "requested_readers": {
+      "before": 16,
+      "after": 16
+    },
+    "common_arguments": [
+      "--repeats",
+      "1",
+      "--shuffle-scenarios",
+      "--shuffle-seed",
+      "91",
+      "--source",
+      "E:\\projects\\cool_project\\fast-dump\\target\\perf-next-20261023\\fixtures\\medium",
+      "--network-profile",
+      "link-1gbps",
+      "--threads",
+      "31",
+      "--frames",
+      "64",
+      "--buffers",
+      "1024",
+      "--executor",
+      "default"
+    ],
+    "repeats_per_side": 6,
+    "policy": "AB then BA alternating; all samples retained; no automatic warmup or trimming",
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 6,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 6,
+        "side": "before",
+        "exit_code": 0
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "target/perf-memory-20261023/final-medium-1g/before/run.log",
+      "sha256": "58b799c92c9697b490229386df9e7814a126f4ef4cea779d92e2844c93e65a65",
+      "bytes": 16254,
+      "extracted_sha256": "afb5ce86921a01ce3792be9e2d818efc2053cfd40225412c2bb930520165db6b",
+      "saved": "raw/before/resource_samples.csv"
+    },
+    {
+      "source": "target/perf-memory-20261023/final-medium-1g/before/results_raw.csv",
+      "sha256": "3801e90d77bec3e7184502da4fc72881b078de107849524ad6ba4f1cc281b58d",
+      "bytes": 4872,
+      "saved": "raw/before/results_raw.csv"
+    },
+    {
+      "source": "target/perf-memory-20261023/final-medium-1g/after/run.log",
+      "sha256": "35f162678581cba685d7c552f055977e173a3497d4a24365cbffdc7aac60c52d",
+      "bytes": 16236,
+      "extracted_sha256": "31da613fef70921810ae885e7d9c73fd5aab9280814afe01ffe2feb2416a1b76",
+      "saved": "raw/after/resource_samples.csv"
+    },
+    {
+      "source": "target/perf-memory-20261023/final-medium-1g/after/results_raw.csv",
+      "sha256": "12f64d26df36341779defba1fa7c1b0430493daff0db9f5223cac41f6ccea6de",
+      "bytes": 4870,
+      "saved": "raw/after/results_raw.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "target/perf-memory-20261023/final-medium-1g/paired-run.json",
+      "sha256": "1fbdfe8af5c1f864d4f100b67d7d2e21ebedf047f31ae9434997b7264fad3794",
+      "bytes": 11101
+    },
+    {
+      "source": "target/perf-memory-20261023/final-medium-1g/before/run.log",
+      "sha256": "58b799c92c9697b490229386df9e7814a126f4ef4cea779d92e2844c93e65a65",
+      "bytes": 16254
+    },
+    {
+      "source": "target/perf-memory-20261023/final-medium-1g/after/run.log",
+      "sha256": "35f162678581cba685d7c552f055977e173a3497d4a24365cbffdc7aac60c52d",
+      "bytes": 16236
+    }
+  ]
+}

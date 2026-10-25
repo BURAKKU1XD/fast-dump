@@ -25,20 +25,23 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
 
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
       - name: Cache cargo artifacts
         uses: Swatinem/rust-cache@v2
 
       - name: Run ignored file-count and payload stress test
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force -Path target/stress-artifacts | Out-Null
           $testName = 'connectivity::roundtrip_fast::sender_and_receiver_roundtrip_random_files_and_verify_hashes'
           $tests = cargo test --locked --release --test integration -- --list --ignored 2>&1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if ($tests -notcontains "${testName}: test") {
             throw "Stress test is missing: $testName"
           }
-          cargo test --locked --release --test integration $testName -- --exact --ignored --nocapture 2>&1 | Tee-Object -FilePath target/stress-artifacts/roundtrip.log
+          python scripts/results.py record --kind test --label stress-roundtrip -- cargo test --locked --release --test integration $testName -- --exact --ignored --nocapture
           $exitCode = $LASTEXITCODE
           if ($exitCode -ne 0) {
             exit $exitCode
@@ -53,7 +56,7 @@ jobs:
           if ($tests -notcontains "${testName}: test") {
             throw "Stress test is missing: $testName"
           }
-          cargo test --locked --release --test integration $testName -- --exact --ignored --nocapture 2>&1 | Tee-Object -FilePath target/stress-artifacts/recovery.log
+          python scripts/results.py record --kind test --label stress-recovery -- cargo test --locked --release --test integration $testName -- --exact --ignored --nocapture
           $exitCode = $LASTEXITCODE
           if ($exitCode -ne 0) {
             exit $exitCode
@@ -68,7 +71,7 @@ jobs:
           if ($tests -notcontains "${testName}: test") {
             throw "Stress test is missing: $testName"
           }
-          cargo test --locked --release --lib $testName -- --exact --ignored --nocapture 2>&1 | Tee-Object -FilePath target/stress-artifacts/lifecycle.log
+          python scripts/results.py record --kind test --label stress-lifecycle -- cargo test --locked --release --lib $testName -- --exact --ignored --nocapture
           $exitCode = $LASTEXITCODE
           if ($exitCode -ne 0) {
             exit $exitCode
@@ -79,4 +82,6 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: stress-log-${{ matrix.os }}
-          path: target/stress-artifacts/*.log
+          path: |
+            results/tests/
+            results/local/tests/

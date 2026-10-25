@@ -1,0 +1,144 @@
+{
+  "schema_version": 1,
+  "id": "legacy-target-perf-next-20261023-paired-final-defaults-4aad9a398d64",
+  "kind": "benchmark",
+  "label": "target/perf-next-20261023/paired-final-defaults",
+  "status": "imported",
+  "started_utc": "2026-10-23T00:48:31.032252+00:00",
+  "time_source": "original_file_mtime",
+  "imported_utc": "2026-10-25T02:06:43.338609+00:00",
+  "import_sha256": "4aad9a398d641b9aa379a35dd3745b052d32d7d32f6f399620c3dc1f0cd84748",
+  "origin": "results/history/2026-10-24",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "binary_sha256": {
+      "before": "3e28949e47a7e31894cca504f2f8e228b2a6b2a9f1a9aacc4b3cc20e790e19b5",
+      "after": "bde0a501ba8f3ac46e4590d527f0db158489f93602007a99e23a263148d6358e"
+    },
+    "comparison_kind": "A/B",
+    "requested_readers": {
+      "before": 32,
+      "after": 16
+    },
+    "common_arguments": [
+      "--repeats",
+      "1",
+      "--shuffle-scenarios",
+      "--shuffle-seed",
+      "91",
+      "--dataset",
+      "manySmallFiles,bigFiles,mixed",
+      "--network-profile",
+      "link-1gbps,link-10gbps",
+      "--threads",
+      "31",
+      "--frames",
+      "64",
+      "--buffers",
+      "1024",
+      "--executor",
+      "default"
+    ],
+    "repeats_per_side": 5,
+    "policy": "AB then BA alternating; all samples retained; no automatic warmup or trimming",
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "after",
+        "exit_code": 0
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "target/perf-next-20261023/paired-final-defaults/before/run.log",
+      "sha256": "d65eb83b87059c05ef4c5619e0bdafeb64381b9392975044dbbea83a354b3006",
+      "bytes": 50816,
+      "extracted_sha256": "c2b7d1754d212973dfe9209425d8a55c581220aa50b3033743858a2cd0e415af",
+      "saved": "raw/before/resource_samples.csv"
+    },
+    {
+      "source": "target/perf-next-20261023/paired-final-defaults/before/results_raw.csv",
+      "sha256": "54948fc8f09106856bdc3880c4e30deba61a5df5f0cf12ecd8fca147b1b1a5c7",
+      "bytes": 18323,
+      "saved": "raw/before/results_raw.csv"
+    },
+    {
+      "source": "target/perf-next-20261023/paired-final-defaults/after/run.log",
+      "sha256": "4eab36ca0d5f4de2f1ee1692dcbe814b2913a7de13e775b147a8973a1e89286f",
+      "bytes": 53856,
+      "extracted_sha256": "c5f59a9e9788532a52f49661e4c8ba2e18c2b0be6c82731583581854a10fbbf3",
+      "saved": "raw/after/resource_samples.csv"
+    },
+    {
+      "source": "target/perf-next-20261023/paired-final-defaults/after/results_raw.csv",
+      "sha256": "b18f3046e2874ac4779892e768db4a6c29f0ee86be6ab900ef285e5924bb1e1d",
+      "bytes": 18324,
+      "saved": "raw/after/results_raw.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "target/perf-next-20261023/paired-final-defaults/paired-run.json",
+      "sha256": "7d34c6b10b283ce3f680d83902eac7553e00185a210eda030a7dcdcfbf975950",
+      "bytes": 9071
+    },
+    {
+      "source": "target/perf-next-20261023/paired-final-defaults/before/run.log",
+      "sha256": "d65eb83b87059c05ef4c5619e0bdafeb64381b9392975044dbbea83a354b3006",
+      "bytes": 50816
+    },
+    {
+      "source": "target/perf-next-20261023/paired-final-defaults/after/run.log",
+      "sha256": "4eab36ca0d5f4de2f1ee1692dcbe814b2913a7de13e775b147a8973a1e89286f",
+      "bytes": 53856
+    }
+  ]
+}

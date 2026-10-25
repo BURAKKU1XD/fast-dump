@@ -1,0 +1,134 @@
+{
+  "schema_version": 1,
+  "id": "legacy-target-perf-memory-20261023-queue1-manySmallFiles-1g-5a94e1aaea08",
+  "kind": "benchmark",
+  "label": "target/perf-memory-20261023/queue1-manySmallFiles-1g",
+  "status": "imported",
+  "started_utc": "2026-10-23T10:13:55.819577+00:00",
+  "time_source": "original_file_mtime",
+  "imported_utc": "2026-10-25T02:06:41.963725+00:00",
+  "import_sha256": "5a94e1aaea083bf6a495a51987e4c224f3d6d51f3e4a5a2027784b643441e3e8",
+  "origin": "results/history/2026-10-24",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "binary_sha256": {
+      "before": "b74cf97b815e51fac00e2b52887f272cdf242faf8a36cb8972ae1bb82d5c77d8",
+      "after": "dd639aa8cd7d09f862f50bf29217012a86a0e0aaab627e1b44882e337c4f0eb3"
+    },
+    "comparison_kind": "A/B",
+    "requested_readers": {
+      "before": 16,
+      "after": 16
+    },
+    "common_arguments": [
+      "--repeats",
+      "1",
+      "--shuffle-scenarios",
+      "--shuffle-seed",
+      "91",
+      "--source",
+      "E:\\projects\\cool_project\\fast-dump\\target\\bench-verify-20261022\\datasets\\manySmallFiles",
+      "--network-profile",
+      "link-1gbps",
+      "--threads",
+      "31",
+      "--frames",
+      "64",
+      "--buffers",
+      "1024",
+      "--executor",
+      "default"
+    ],
+    "repeats_per_side": 4,
+    "policy": "AB then BA alternating; all samples retained; no automatic warmup or trimming",
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "before",
+        "exit_code": 0
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "target/perf-memory-20261023/queue1-manySmallFiles-1g/before/run.log",
+      "sha256": "c3a3d84cb7855869efc655b888a395b025d474a2b73212b661ce201089096078",
+      "bytes": 11055,
+      "extracted_sha256": "648edca106860cfba0c4fb3ea4e9ed4773b4aa57770aa7d35d5f6fba25e117d0",
+      "saved": "raw/before/resource_samples.csv"
+    },
+    {
+      "source": "target/perf-memory-20261023/queue1-manySmallFiles-1g/before/results_raw.csv",
+      "sha256": "33bf868a85135a88911809961940cbc7df40aeb8abb5bd2f5a54714b2dcefe8c",
+      "bytes": 3782,
+      "saved": "raw/before/results_raw.csv"
+    },
+    {
+      "source": "target/perf-memory-20261023/queue1-manySmallFiles-1g/after/run.log",
+      "sha256": "35c34c148fd8d8d2da641b1cd0697a87c70445de0c09536cce58cf885cfa7ada",
+      "bytes": 11047,
+      "extracted_sha256": "64f10ded7cff07fb4f798dbc280c4361e152535c4a1c8263dcd611bb812cab8d",
+      "saved": "raw/after/resource_samples.csv"
+    },
+    {
+      "source": "target/perf-memory-20261023/queue1-manySmallFiles-1g/after/results_raw.csv",
+      "sha256": "26f15b4ae6b6fef768e7c09105cceb5ae9b7f056e7c550b5dbdc0bb717783fb4",
+      "bytes": 3783,
+      "saved": "raw/after/results_raw.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "target/perf-memory-20261023/queue1-manySmallFiles-1g/paired-run.json",
+      "sha256": "ad19e1300a5f71e38312b70ee1a4cc6cd66a85776a3b23e19a467512002ad229",
+      "bytes": 7942
+    },
+    {
+      "source": "target/perf-memory-20261023/queue1-manySmallFiles-1g/before/run.log",
+      "sha256": "c3a3d84cb7855869efc655b888a395b025d474a2b73212b661ce201089096078",
+      "bytes": 11055
+    },
+    {
+      "source": "target/perf-memory-20261023/queue1-manySmallFiles-1g/after/run.log",
+      "sha256": "35c34c148fd8d8d2da641b1cd0697a87c70445de0c09536cce58cf885cfa7ada",
+      "bytes": 11047
+    }
+  ]
+}

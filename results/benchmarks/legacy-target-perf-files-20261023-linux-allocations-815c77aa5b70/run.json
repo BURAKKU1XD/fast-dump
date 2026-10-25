@@ -1,0 +1,102 @@
+{
+  "schema_version": 1,
+  "id": "legacy-target-perf-files-20261023-linux-allocations-815c77aa5b70",
+  "kind": "benchmark",
+  "label": "target/perf-files-20261023/linux-allocations",
+  "status": "imported",
+  "started_utc": "2026-10-22T21:46:25.146045+00:00",
+  "time_source": "manifest",
+  "imported_utc": "2026-10-25T02:06:41.013513+00:00",
+  "import_sha256": "815c77aa5b70a0c781ed7062697d61187421e3941988a9aa465678850e47add5",
+  "origin": "results/history/2026-10-24",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "created_utc": "2026-10-22T21:46:25.146045+00:00",
+    "binary_sha256": {
+      "before": "dc2ecacfc703454c7c16ffdc5a53d6827638647906e919d6693aa6e1d3ba817a",
+      "after": "18f9b6206bff75e4db476e8f9d07ee53acb153f78891bc821a1eca099e02d056"
+    },
+    "platform": "Linux-6.18.54.1-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+    "logical_cpus": 4,
+    "allocations_diagnostic": true,
+    "repeats": 2,
+    "policy": "AB/BA alternating pairs; no trimming, implicit warmup, or dropped first samples",
+    "scenarios": [
+      [
+        "scan",
+        1
+      ],
+      [
+        "read",
+        4
+      ]
+    ],
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "stage": "scan",
+        "readers": 1
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "stage": "scan",
+        "readers": 1
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "stage": "scan",
+        "readers": 1
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "stage": "scan",
+        "readers": 1
+      },
+      {
+        "pair": 1,
+        "side": "before",
+        "stage": "read",
+        "readers": 4
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "stage": "read",
+        "readers": 4
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "stage": "read",
+        "readers": 4
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "stage": "read",
+        "readers": 4
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "target/perf-files-20261023/linux-allocations/samples.csv",
+      "sha256": "9469b48eae820f9fa360a7979f0fd58c718ac8d3fc6011e25da61c98ae7e284b",
+      "bytes": 3200,
+      "saved": "raw/samples.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "target/perf-files-20261023/linux-allocations/paired-run.json",
+      "sha256": "c43ffaf5685e7fc866baa12a56bffb342b0a75f37f1677855b15f8feec88c76d",
+      "bytes": 14739
+    }
+  ]
+}

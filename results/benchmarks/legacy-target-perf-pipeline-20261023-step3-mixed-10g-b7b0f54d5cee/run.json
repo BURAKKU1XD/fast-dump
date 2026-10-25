@@ -1,0 +1,174 @@
+{
+  "schema_version": 1,
+  "id": "legacy-target-perf-pipeline-20261023-step3-mixed-10g-b7b0f54d5cee",
+  "kind": "benchmark",
+  "label": "target/perf-pipeline-20261023/step3-mixed-10g",
+  "status": "imported",
+  "started_utc": "2026-10-23T18:57:53.709703+00:00",
+  "time_source": "original_file_mtime",
+  "imported_utc": "2026-10-25T02:06:43.965964+00:00",
+  "import_sha256": "b7b0f54d5ceec297928cd36d85eea6f6c5b5d2e5253e051498856445f9210020",
+  "origin": "results/history/2026-10-24",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "binary_sha256": {
+      "before": "3658ea63e26cd984bcb77a386a69b6213cdf9f42342e1040d8514605a8e8b7c0",
+      "after": "f874fc1dc75f50ec2ee4f44bd406e02c76e35945f4dcb4a5e29789ac08ef67f7"
+    },
+    "comparison_kind": "A/B",
+    "requested_readers": {
+      "before": 16,
+      "after": 16
+    },
+    "common_arguments": [
+      "--repeats",
+      "1",
+      "--shuffle-scenarios",
+      "--shuffle-seed",
+      "91",
+      "--source",
+      "E:\\projects\\cool_project\\fast-dump\\target\\bench-verify-20261022\\datasets\\mixed",
+      "--network-profile",
+      "link-10gbps",
+      "--threads",
+      "31",
+      "--frames",
+      "64",
+      "--buffers",
+      "1024",
+      "--executor",
+      "default"
+    ],
+    "repeats_per_side": 8,
+    "policy": "AB then BA alternating; all samples retained; no automatic warmup or trimming",
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 6,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 6,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 7,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 7,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 8,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 8,
+        "side": "before",
+        "exit_code": 0
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "target/perf-pipeline-20261023/step3-mixed-10g/before/run.log",
+      "sha256": "40028d2f367d12370df87574490e326a750ddbe9b0521645b9a0d4ba71c63f8e",
+      "bytes": 26401,
+      "extracted_sha256": "8a9f9094c3ca4ac69779c308103ddc10ef6e7d91f1945836592c04588aa2e914",
+      "saved": "raw/before/resource_samples.csv"
+    },
+    {
+      "source": "target/perf-pipeline-20261023/step3-mixed-10g/before/results_raw.csv",
+      "sha256": "49be5829bf6dfae084c5b1a32794a6b5939f6e90d2af71aae093c5a961bdd307",
+      "bytes": 6044,
+      "saved": "raw/before/results_raw.csv"
+    },
+    {
+      "source": "target/perf-pipeline-20261023/step3-mixed-10g/after/run.log",
+      "sha256": "dcd39ecfbc7e8eee2d5e1c3698c964706fc83aff5c9c9a9bc93e3fbe6d09c915",
+      "bytes": 26398,
+      "extracted_sha256": "72dc6ba74e1161a90713dcc7846f3fd16e0447251c0088ab919409620faac197",
+      "saved": "raw/after/resource_samples.csv"
+    },
+    {
+      "source": "target/perf-pipeline-20261023/step3-mixed-10g/after/results_raw.csv",
+      "sha256": "c67296f6b0943943a7d6ed27111cd6365e064f709f852a573b7aed1f376f6575",
+      "bytes": 6058,
+      "saved": "raw/after/results_raw.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "target/perf-pipeline-20261023/step3-mixed-10g/paired-run.json",
+      "sha256": "7e0626bd11b75e468c07aad1e2a549e15187ca6fe5ebe1e3e92d5b84403c4bb2",
+      "bytes": 14428
+    },
+    {
+      "source": "target/perf-pipeline-20261023/step3-mixed-10g/before/run.log",
+      "sha256": "40028d2f367d12370df87574490e326a750ddbe9b0521645b9a0d4ba71c63f8e",
+      "bytes": 26401
+    },
+    {
+      "source": "target/perf-pipeline-20261023/step3-mixed-10g/after/run.log",
+      "sha256": "dcd39ecfbc7e8eee2d5e1c3698c964706fc83aff5c9c9a9bc93e3fbe6d09c915",
+      "bytes": 26398
+    }
+  ]
+}

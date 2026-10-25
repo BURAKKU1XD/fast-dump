@@ -1,0 +1,134 @@
+{
+  "schema_version": 1,
+  "id": "legacy-target-perf-memory-20261023-earlyfree-manySmallFiles-10g-a18891aa4e50",
+  "kind": "benchmark",
+  "label": "target/perf-memory-20261023/earlyfree-manySmallFiles-10g",
+  "status": "imported",
+  "started_utc": "2026-10-23T10:06:06.658929+00:00",
+  "time_source": "original_file_mtime",
+  "imported_utc": "2026-10-25T02:06:41.550399+00:00",
+  "import_sha256": "a18891aa4e5012eb4c59203f7806e89810383e129c78bbc62e84b946e23f3def",
+  "origin": "results/history/2026-10-24",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "binary_sha256": {
+      "before": "d7dce4575ee4290e5fa72faeca0ecfb92ae5e609e5de797fb5f1a51587ab4bab",
+      "after": "b74cf97b815e51fac00e2b52887f272cdf242faf8a36cb8972ae1bb82d5c77d8"
+    },
+    "comparison_kind": "A/B",
+    "requested_readers": {
+      "before": 16,
+      "after": 16
+    },
+    "common_arguments": [
+      "--repeats",
+      "1",
+      "--shuffle-scenarios",
+      "--shuffle-seed",
+      "91",
+      "--source",
+      "E:\\projects\\cool_project\\fast-dump\\target\\bench-verify-20261022\\datasets\\manySmallFiles",
+      "--network-profile",
+      "link-10gbps",
+      "--threads",
+      "31",
+      "--frames",
+      "64",
+      "--buffers",
+      "1024",
+      "--executor",
+      "default"
+    ],
+    "repeats_per_side": 4,
+    "policy": "AB then BA alternating; all samples retained; no automatic warmup or trimming",
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "before",
+        "exit_code": 0
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "target/perf-memory-20261023/earlyfree-manySmallFiles-10g/before/run.log",
+      "sha256": "b891b57f5d062766a5e5f3092143ab91e5558a72f44ad412b02003909f8a55b4",
+      "bytes": 11110,
+      "extracted_sha256": "dad6dac876767991602cc2da99c56900dae8f1252d6605aa49dee910009489c0",
+      "saved": "raw/before/resource_samples.csv"
+    },
+    {
+      "source": "target/perf-memory-20261023/earlyfree-manySmallFiles-10g/before/results_raw.csv",
+      "sha256": "1a179119d7b0fa4a69be1c6e4266a4ce97a0b791c81981f0ef37660063036313",
+      "bytes": 3767,
+      "saved": "raw/before/results_raw.csv"
+    },
+    {
+      "source": "target/perf-memory-20261023/earlyfree-manySmallFiles-10g/after/run.log",
+      "sha256": "64202364518e8f370f3a81243fecec8e96eb848c3eebc56f26c84ab182bb37c2",
+      "bytes": 11102,
+      "extracted_sha256": "f54834715b414bec4c7e6c8e4f4877d918e466dd5f1d95f1464956469ba4eca4",
+      "saved": "raw/after/resource_samples.csv"
+    },
+    {
+      "source": "target/perf-memory-20261023/earlyfree-manySmallFiles-10g/after/results_raw.csv",
+      "sha256": "d452d8754df527aab85c14d81aebcda05ab22bdd33ed4d50fba2045e3a6e2618",
+      "bytes": 3767,
+      "saved": "raw/after/results_raw.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "target/perf-memory-20261023/earlyfree-manySmallFiles-10g/paired-run.json",
+      "sha256": "0d5d0218a960dd82fc3217e2127cdea43e1caceee033189018d6320c94858fd5",
+      "bytes": 7983
+    },
+    {
+      "source": "target/perf-memory-20261023/earlyfree-manySmallFiles-10g/before/run.log",
+      "sha256": "b891b57f5d062766a5e5f3092143ab91e5558a72f44ad412b02003909f8a55b4",
+      "bytes": 11110
+    },
+    {
+      "source": "target/perf-memory-20261023/earlyfree-manySmallFiles-10g/after/run.log",
+      "sha256": "64202364518e8f370f3a81243fecec8e96eb848c3eebc56f26c84ab182bb37c2",
+      "bytes": 11102
+    }
+  ]
+}

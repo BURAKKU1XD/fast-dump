@@ -16,49 +16,16 @@ Mainline wire protocol for the current bundle-first runtime.
 
 ## Transport
 
-The terminal dashboard, `--no-gui`, and local cancellation do not add wire
-messages or change version `4`. Binary Ctrl+C stops new work and closes both
-channels, then joins owned workers/readers. Cancellation does not send `Finish`
-or record a terminal skip. Recovery still uses only durable bundle boundaries;
-an already-started archive/WAL commit or finalization follows the existing
-durability order. A completed archive can therefore exist after a lost final
-ACK and is never overwritten by a subsequent attempt.
-
-Local session retries (`--retries`, `--retry-delay-secs`) use the same v4
-handshake and durable resume flow, without new messages. Plain CLI defaults to
-zero retries; GUI defaults to ten additional attempts ten seconds apart.
-Explicit zero disables retries. Sender and receiver Connect first close/join
-the failed attempt, then wait interruptibly before establishing a fresh session.
-Receiver Listen already serves subsequent sessions and is not restarted.
-Only typed transient socket I/O failures qualify, not malformed decoded bodies,
-local storage failures, or known peer rejections. Receiver initialization errors
-are reported best-effort using the existing `Error` message; a lost error reply
-can still be observed as a disconnect. A retry after a lost final ACK must reject
-an already-completed archive rather than overwrite it or infer success.
-
-Connection establishment and initialization-lock waiting are interruptible by
-local cancellation. The existing handshake timeouts remain; cancellation does
-not introduce a general session idle deadline. Dashboard bytes are local
-observations: sent payload includes attempts, sender durable size follows
-validated ACKs, and receiver durable size follows archive/WAL sync. Receiver
-`Written` counts successful archive appends, including writes later rolled back,
-but excludes discarded late/orphan data. Aborted completed attempts are removed
-from its received-entry counter.
-
-The dashboard's per-stage pipeline states are local observations, without wire
-messages. They distinguish preparation, compression, queue/buffer waits, socket
-I/O, peer ACK waits, archive writes, and durable sync. State durations measure
-elapsed wall time rather than CPU time; socket I/O includes blocking inside the
-operation. A long wait alone is not a detected network failure. These diagnostics
-do not change idle deadlines, retry decisions, packet limits, or commit ordering.
-
-Sender source-processing diagnostics are also local: current tar entry path,
-`size_at_open` (zero for symlinks), payload bytes accepted by tar/zstd, and their
-five-second rate.
-The cumulative payload counter includes retries but excludes read-ahead,
-tar headers/padding, and symlink metadata. Per-file progress resets on an attempt
-and clears when the entry ends. Buffered input acceptance is not compression
-completion or durable progress; compressed network speed remains separate.
+Local [presentation](../../docs/cli.md) and
+[cancellation/retry policy](../../docs/runtime.md#session-ownership-cancellation-and-retries)
+add no wire messages. Cancellation closes both channels without sending `Finish`
+or recording a terminal skip; an already-started durable commit or finalization
+follows the ordering below. Retries establish a fresh v4 session and resume only
+from durable boundaries. After a lost final ACK, an already-completed archive is
+rejected rather than overwritten or inferred successful. Known initialization
+errors use the existing `Error` message best-effort; a lost reply can appear as a
+disconnect. Local diagnostics do not alter packet limits, idle deadlines, retry
+decisions, or commit ordering.
 
 `v4` opens two TCP channels per dump session against the same address.
 
@@ -190,116 +157,30 @@ so normal tar readers see all entries across bundle boundaries.
 
 ## Sender Preparation
 
-Linux senders classify source filesystems by type. They prune procfs, sysfs,
-debugfs, tracefs, cgroup v1/v2, resctrl, configfs, binfmt_misc, securityfs,
-selinuxfs, smackfs, bpffs, nsfs, efivarfs, mqueue, devpts, fusectl, rpc_pipefs,
-and nfsd before enumerating a directory. Nested mounts below a pruned directory
-are also omitted. A source root on an excluded filesystem is rejected.
-Every new regular-file handle, including retries, is checked before payload
-reads to cover individual bind-mounted system files. Excluded handles become
-immediate `UnsupportedEntry` skips, without retrying the exclusion. Classification
-I/O failures are errors rather than an allow decision. Unknown filesystem types,
-normal FUSE/network filesystems, OverlayFS, tmpfs/ramfs/hugetlbfs, and ordinary
-large/sparse files remain eligible. Windows selection is unchanged.
+The [runtime contract](../../docs/runtime.md#source-preparation-and-bounded-data-flow)
+defines source selection, ordered scanning/read-ahead, memory limits, compression
+context reuse, and worker ownership. These local choices preserve the following
+interoperability requirements:
 
-A pruned directory produces one existing `SkippedEntry` with reason
-`UnsupportedEntry` and ordinal `0`. Its path names only the excluded directory;
-unvisited descendants receive no ordinals or skip records. Filesystem names and
-explanations are local diagnostics, not new wire fields. `SkipEntries`/`SkipAck`
-durability and the issues report remain unchanged. Records retain exact-path
-semantics; a later mount-layout change can introduce new descendant candidates.
-Pruning can shift later ordinals relative to older sender versions. Existing
-committed ordinal/path validation must reject an incompatible resume without
-resetting acknowledged state. Use a new dump ID for an older root-dump test;
-no wire-version, WAL, or catalog migration is introduced.
-
-Up to `2` workers on Windows and `8` on other platforms scan independent
-subtrees. Entries and work ordinals retain deterministic depth-first order with
-each directory sorted by normalized relative path. Each directory is fully
-enumerated and sorted, then scanner channels carry batches of at most `1024`
-entries on Windows and `64` on other platforms, with at most two queued batches
-per channel. These limits count entries, not metadata bytes; variable-length
-paths, producer/consumer batches, and sorted directories retained by active DFS
-walks require additional memory. Scanner concurrency is independent of the
-physical-core file-reader count.
-Ordinary trees start feeding readers before the complete scan finishes. A native
-basename containing a backslash or requiring lossy Unicode conversion triggers
-full collection of its containing subtree before any of that subtree is
-published. This preserves suppression of regular/symlink paths colliding with
-unsupported entries after normalization. Public scan entries and all work
-ordinals remain unchanged, including entries suppressed from pending work.
-The committed resume prefix is validated before pending files are opened.
-
-File read-ahead is bounded to four entries per reader and consumed in that
-same order. The requested count is the detected physical-core count, clamped
-to the CLI's reader bounds (default minimum `1`, maximum the detected core count).
-Library defaults use the same count; there is no fixed `32`-reader ceiling.
-Detection is cached and includes all Windows processor groups. Linux counts
-cores allowed by CPU affinity and caps the result by available logical
-parallelism for CPU quotas. Unavailable topology falls back to available
-logical parallelism, minimum `1`. Equal explicit CLI bounds select a fixed
-count. The actual worker count is capped at `ceil(pending entries / 32)` to
-amortize startup. Initial lookahead reads at most `32 * requested readers`
-pending entries to resolve that cap without collecting the entire tree.
-A resulting count of `1` uses serial reading. The parallel
-window holds four entries per actual reader (`64` for `16`, `704` for `176`).
-A separate shared `8 MiB` budget limits prefetched payload
-pending delivery, independently of the reader count. Workers process up to four
-adjacent entries per job, reserving their opened-handle sizes and sharing one
-immutable buffer. Files up to the configured materialization threshold may be
-prefetched if the whole payload fits; no single payload or batch buffer exceeds
-`8 MiB`. A reservation is released after the batch's last successful prefetched
-entry is delivered to the planner, or when cancellation drops the buffer.
-Already-delivered slices remain charged until that last delivery. The planner's
-materialized bundle is separate; a buffer spanning bundle boundaries can retain
-up to `8 MiB` of already-consumed payload until its remaining entries are released.
-Workers never wait for byte-budget capacity: they return bounded open handles
-for the planner to materialize or stream. Sharing does not change entry order,
-per-file attempt limits, or the bytes described by `size_at_open`.
-
-Bundle `1` uses an aggregation target of `min(configured target, 4 MiB)`;
-subsequent bundles use the configured target (`64 MiB` by CLI default). Files
-remain whole and can individually exceed the aggregation target. The configured
-target still determines whether a regular file is materialized or streamed.
-Resume after a committed bundle uses the normal configured target.
-
-After each materialized entry is successfully appended to tar/zstd, its source
-payload is released while its descriptor remains available for the bundle plan.
-A shared slab is freed after its last slice is released, including slices carried
-to the next bundle.
-
-Compression may use synchronous zstd or multiple workers within a frame.
-The sender selects its zstd level before the session through `--level` or the
-GUI setup field; both default to `3`. The level is local compressor configuration,
-does not add a wire field, and needs no matching receiver option.
-Materialized bundles and streamed files share one sender context across
-successfully completed frames, but each attempt starts an independent frame.
-After unfinished, failed, or aborted compression, the sender recreates the
-context with the same settings before the next attempt, avoiding stale worker
-state from an abandoned frame. The chunk pool remains reusable. This failure
-recovery changes no CLI fields or wire messages. `BundlePlan` is sent
-before compression; zstd writes directly into the final chunks, which can be
-transmitted before compression finishes. No complete compressed bundle is held
-for later sending; `BundleCommit` carries the final compressed length and hash.
-
-Planner handoff uses a zero-capacity rendezvous. At most the current materialized
-bundle, the next materialized bundle, and one whole file carried forward retain
-source payload, each at most the configured bundle target. Read-ahead, retained
-shared slabs, metadata, and zstd workspace are additional costs. The unchanged
-four-bundle acknowledgement window does not retain sent payloads.
-
-Both input paths overlap compression and network writes through a two-chunk
-queue. Four `4 MiB` compressed buffers are allocated on first use and reused
-across bundles and attempts. One separate `1 MiB` source-read buffer is allocated
-only on first streamed-file use and reused thereafter. Each attempt starts a
-scoped producer, which is cancelled and joined before abort/retry or returning
-a network error. These choices preserve packet fields, entry order, and durable
-resume boundaries.
-
-Scanner profiling measures elapsed scan duration excluding batch-send
-backpressure, not CPU time. Time to first bundle measures task/plan availability
-before compression completes, payload delivery, or acknowledgement. Scan, read,
-compression, and send durations overlap and cannot be added as sequential stages.
+- Work ordinals follow deterministic depth-first traversal, sorting each
+  directory by normalized relative path. Validate the committed ordinal/path
+  prefix before opening pending files. Unsupported native-path collisions do
+  not change public scan entries or work ordinals.
+- Each pruned Linux system-filesystem directory produces one `SkippedEntry`
+  with reason `UnsupportedEntry` and ordinal `0`. Its path identifies only that
+  directory; unvisited descendants receive no ordinals or records. Filesystem
+  names and explanations are local diagnostics. `SkipEntries`/`SkipAck` durability
+  and exact-path semantics remain unchanged. Reevaluate mounts on later scans;
+  incompatible committed-prefix validation fails without resetting progress.
+- Entries remain whole. Encoded plans obey the control-body limit; a descriptor
+  that cannot fit is rejected rather than skipped or split.
+- Each attempt starts an independent zstd frame. Send `BundlePlan` before
+  compression; transmit completed chunks as compression proceeds.
+  `BundleCommit` carries the final compressed length and hash.
+- Compression level and worker count are sender-local settings. They add no wire
+  fields and require no matching receiver options.
+- Local pipeline timings and counters add no messages and do not represent
+  durable progress; only validated ACKs establish the sender's durable boundary.
 
 ## Receiver Rules
 
@@ -316,26 +197,18 @@ compression, and send durations overlap and cannot be added as sequential stages
   preceding bundles, even when control messages arrived ahead of their data.
 - Late `BundleData` for an aborted attempt is ignored by `(bundle_no, attempt_no)`.
 
-The data reader allocates reusable buffers lazily, with at most ten buffers of
-up to `4 MiB` each (`40 MiB` payload storage). This covers its bounded queue,
-the current/orphan chunk, and its next read. Each packet carries its actual
-payload length separately from retained storage length; only those payload
-bytes are written and hashed. Buffers return after consumption or discarded
-late/orphan data, without blocking cancellation. This is a local implementation
-choice and does not alter packet framing or limits.
+Each data packet carries its actual payload length; only those bytes are written
+and hashed. Buffer reuse and lifecycle are specified by the
+[runtime contract](../../docs/runtime.md#source-preparation-and-bounded-data-flow).
 
 Receiver still commits bundles in bundle order. Windowing exists on sender side:
 the sender may continue sending later bundles while earlier durable acks are still
 unread.
 
-The receiver owns both network readers through session exit. It shuts down the
-channels, cancels blocked I/O and buffer-pool waits, disconnects queues, and joins
-both readers on success or error. Windows additionally uses `CancelIoEx` for
-already-pending Winsock reads. A separate bounded failure notification wakes
-orphan-plan waiting without draining additional payload. After `Finish`, control
-errors and unexpected further controls interrupt waiting for pending data.
-These are local lifecycle rules; packet formats, durable boundaries, and CLI
-fields are unchanged. There is no general deadline for a silent connected peer.
+Session exit closes both channels and joins their readers. After `Finish`,
+control errors and unexpected further controls interrupt waiting for pending
+data. There is no general deadline for a silent connected peer; detailed shutdown
+requirements are in the [runtime contract](../../docs/runtime.md#session-ownership-cancellation-and-retries).
 
 ## Group Commit
 
@@ -375,11 +248,6 @@ barrier only while no subsequent write, creation, or truncation remains dirty;
 in that case the duplicate archive sync call is skipped. New writes and all
 truncations restore the dirty state before the filesystem operation. Only a
 successful sync clears it; WAL records are still synced before `BundleAck`.
-
-Receiver profiling retains the existing aggregate write/sync fields and adds
-`bundle_write_io`, `bundle_periodic_sync`, and `bundle_sync_skipped` to distinguish
-write I/O, periodic sync work, and avoided clean commit-sync calls. These local
-measurements do not add protocol fields or change sender CLI stdout.
 
 ## Resume State
 

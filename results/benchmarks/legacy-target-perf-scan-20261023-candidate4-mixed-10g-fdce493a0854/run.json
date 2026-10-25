@@ -1,0 +1,174 @@
+{
+  "schema_version": 1,
+  "id": "legacy-target-perf-scan-20261023-candidate4-mixed-10g-fdce493a0854",
+  "kind": "benchmark",
+  "label": "target/perf-scan-20261023/candidate4-mixed-10g",
+  "status": "imported",
+  "started_utc": "2026-10-23T20:28:01.201286+00:00",
+  "time_source": "original_file_mtime",
+  "imported_utc": "2026-10-25T02:06:44.273348+00:00",
+  "import_sha256": "fdce493a0854af628a0b55d90b4052da5d192ccefba6b0311e3612b0a3e2101a",
+  "origin": "results/history/2026-10-24",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "binary_sha256": {
+      "before": "da67604e5471ffd0ed024dcfbafe0d7968b4d3262ff3c8cda15bb900e24510c2",
+      "after": "449adca4b8f815242b497502656ec804d8247fcc1ed8adeb135a35869d5dae20"
+    },
+    "comparison_kind": "A/B",
+    "requested_readers": {
+      "before": 16,
+      "after": 16
+    },
+    "common_arguments": [
+      "--repeats",
+      "1",
+      "--shuffle-scenarios",
+      "--shuffle-seed",
+      "91",
+      "--source",
+      "E:\\projects\\cool_project\\fast-dump\\target\\bench-verify-20261022\\datasets\\mixed",
+      "--network-profile",
+      "link-10gbps",
+      "--threads",
+      "31",
+      "--frames",
+      "64",
+      "--buffers",
+      "1024",
+      "--executor",
+      "default"
+    ],
+    "repeats_per_side": 8,
+    "policy": "AB then BA alternating; all samples retained; no automatic warmup or trimming",
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 6,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 6,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 7,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 7,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 8,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 8,
+        "side": "before",
+        "exit_code": 0
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "target/perf-scan-20261023/candidate4-mixed-10g/before/run.log",
+      "sha256": "07575bb106a109c6dc421843e98ad7f93537c9b01ed697e1c0fc31d69d30e56e",
+      "bytes": 26458,
+      "extracted_sha256": "e31f0a4c64e18b69c823d5eef7a7d1ab24a63c88f89349cb1cfa6968eb471167",
+      "saved": "raw/before/resource_samples.csv"
+    },
+    {
+      "source": "target/perf-scan-20261023/candidate4-mixed-10g/before/results_raw.csv",
+      "sha256": "b4c876bf30020127db650520280ad9831027191dd5e7e5be3e9f49a848462c55",
+      "bytes": 6058,
+      "saved": "raw/before/results_raw.csv"
+    },
+    {
+      "source": "target/perf-scan-20261023/candidate4-mixed-10g/after/run.log",
+      "sha256": "2193f17e718ca6a21e7680f7817d28528a800f007604af79c1e1ed08f7155be6",
+      "bytes": 26433,
+      "extracted_sha256": "cadcda76ac37d89bf7a8e0fbe6318f5837b59aff3ce0428c208f630e00d471c0",
+      "saved": "raw/after/resource_samples.csv"
+    },
+    {
+      "source": "target/perf-scan-20261023/candidate4-mixed-10g/after/results_raw.csv",
+      "sha256": "a47a4883fe7316947750521894b3c7ea6628a65a38d1090f3912f9c22b6caf0a",
+      "bytes": 6059,
+      "saved": "raw/after/results_raw.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "target/perf-scan-20261023/candidate4-mixed-10g/paired-run.json",
+      "sha256": "5a211fcb4b4dcbb5600a1157ff15150534a485b82171adf617fe821340375f21",
+      "bytes": 14440
+    },
+    {
+      "source": "target/perf-scan-20261023/candidate4-mixed-10g/before/run.log",
+      "sha256": "07575bb106a109c6dc421843e98ad7f93537c9b01ed697e1c0fc31d69d30e56e",
+      "bytes": 26458
+    },
+    {
+      "source": "target/perf-scan-20261023/candidate4-mixed-10g/after/run.log",
+      "sha256": "2193f17e718ca6a21e7680f7817d28528a800f007604af79c1e1ed08f7155be6",
+      "bytes": 26433
+    }
+  ]
+}

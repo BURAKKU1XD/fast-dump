@@ -1,0 +1,440 @@
+{
+  "schema_version": 1,
+  "date": "2026-10-25",
+  "baseline_commit": "95e902ce9593795c2a3bf1a595f8b85caa4247e3",
+  "scope": [
+    "Private Rust module extraction preserving production function bodies and public contracts",
+    "Documentation, repository hygiene and CI",
+    "Persistent raw measurements, provenance and offline result viewer",
+    "Verified removal of disposable local build and dump payloads"
+  ],
+  "contract": {
+    "protocol": 4,
+    "minimum_rust": "1.89",
+    "platforms": [
+      "Windows",
+      "Linux"
+    ],
+    "dependency_changes": false
+  },
+  "verification": [
+    {
+      "label": "cleanup-src-default",
+      "run": "tests/20261025T020238.214324Z-cleanup-src-default-1862cb",
+      "exit_code": 0,
+      "passed": 319,
+      "ignored": 6
+    },
+    {
+      "label": "cleanup-src-all-features",
+      "run": "tests/20261025T020258.213656Z-cleanup-src-all-features-ba1ae1",
+      "exit_code": 0,
+      "passed": 325,
+      "ignored": 6
+    },
+    {
+      "label": "cleanup-src-clippy",
+      "run": "tests/20261025T020329.711868Z-cleanup-src-clippy-5c7f8e",
+      "exit_code": 0,
+      "passed": null,
+      "ignored": null
+    },
+    {
+      "label": "cleanup-src-benches",
+      "run": "tests/20261025T020332.915766Z-cleanup-src-benches-3e1a01",
+      "exit_code": 0,
+      "passed": null,
+      "ignored": null
+    },
+    {
+      "label": "cleanup-src-fmt",
+      "run": "tests/20261025T020335.665866Z-cleanup-src-fmt-93ed93",
+      "exit_code": 0,
+      "passed": null,
+      "ignored": null
+    },
+    {
+      "label": "linux-stable-all-features-fixed",
+      "run": "tests/20261025T020504.973873Z-linux-stable-all-features-fixed-ce8639",
+      "exit_code": 0,
+      "passed": 334,
+      "ignored": 7
+    },
+    {
+      "label": "linux-msrv-all-features",
+      "run": "tests/20261025T020541.436468Z-linux-msrv-all-features-9240d0",
+      "exit_code": 0,
+      "passed": 334,
+      "ignored": 7
+    },
+    {
+      "label": "windows-msrv-complete",
+      "run": "tests/20261025T020657.693244Z-windows-msrv-complete-4b0920",
+      "exit_code": 0,
+      "passed": 325,
+      "ignored": 6
+    },
+    {
+      "label": "cleanup-windows-release",
+      "run": "tests/20261025T020550.060100Z-cleanup-windows-release-cd9846",
+      "exit_code": 0,
+      "passed": 325,
+      "ignored": 6
+    },
+    {
+      "label": "cleanup-windows-stress-roundtrip",
+      "run": "tests/20261025T020724.701919Z-cleanup-windows-stress-roundtrip-8cf935",
+      "exit_code": 0,
+      "passed": 1,
+      "ignored": 0
+    },
+    {
+      "label": "cleanup-windows-stress-recovery",
+      "run": "tests/20261025T020747.363628Z-cleanup-windows-stress-recovery-364fc3",
+      "exit_code": 0,
+      "passed": 1,
+      "ignored": 0
+    },
+    {
+      "label": "cleanup-windows-stress-lifecycle",
+      "run": "tests/20261025T020847.490984Z-cleanup-windows-stress-lifecycle-5a6cff",
+      "exit_code": 0,
+      "passed": 1,
+      "ignored": 0
+    },
+    {
+      "label": "linux-clippy",
+      "run": "tests/20261025T020832.667758Z-linux-clippy-8c3983",
+      "exit_code": 0,
+      "passed": null,
+      "ignored": null
+    },
+    {
+      "label": "linux-msrv-benches",
+      "run": "tests/20261025T020856.516411Z-linux-msrv-benches-83490d",
+      "exit_code": 0,
+      "passed": null,
+      "ignored": null
+    },
+    {
+      "label": "cleanup-python-final",
+      "run": "tests/20261025T021946.424605Z-cleanup-python-final-5f617f",
+      "exit_code": 0,
+      "passed": 55,
+      "ignored": null
+    },
+    {
+      "label": "cleanup-browser-final",
+      "run": "tests/20261025T022521.939958Z-cleanup-browser-final-c61eac",
+      "exit_code": 0,
+      "passed": 6,
+      "checks": [
+        {
+          "name": "file_url_render",
+          "passed": true
+        },
+        {
+          "name": "search_family_status_filters",
+          "passed": true
+        },
+        {
+          "name": "compatible_pair_ratio_and_history",
+          "passed": true
+        },
+        {
+          "name": "incompatible_pair_no_ratio",
+          "passed": true
+        },
+        {
+          "name": "unmeasured_zero_of_seven_no_ratio_or_chart",
+          "passed": true
+        },
+        {
+          "name": "tests_tab_search_and_local_evidence",
+          "passed": true
+        }
+      ],
+      "browser": "Chrome/156.0.8078.47",
+      "javascript_exceptions": [],
+      "local_report": "local/tests/browser/final/report.json"
+    }
+  ],
+  "performance": {
+    "host": {
+      "node": "DESKTOP-HTF56LL",
+      "system": "Windows",
+      "release": "10",
+      "machine": "AMD64",
+      "processor": "AMD64 Family 25 Model 97 Stepping 2, AuthenticAMD",
+      "logical_cpus": 32
+    },
+    "compiler": "rustc 1.93.1 (01f6ddf75 2026-02-11)\nbinary: rustc\ncommit-hash: 01f6ddf7588f42ae2d7eb0a2f21d44e8e96674cf\ncommit-date: 2026-02-11\nhost: x86_64-pc-windows-msvc\nrelease: 1.93.1\nLLVM version: 21.1.8",
+    "policy": "Alternating AB/BA, all samples retained, no warmup trimming. Archive or source content verification performed outside timing.",
+    "scope": "Windows local loopback with generated manySmallFiles/mixed/bigFiles fixtures, compression threads 1 and 4, readers 8; file scan/read on the shared manySmallFiles fixture with readers 1 and 8.",
+    "conclusion": "No slowdown observed in these A/B runs. Loopback A/A exceeded 5 percent variation, including the confirmation, so the environment cannot resolve small performance changes and no speedup is claimed.",
+    "loopback_ab": {
+      "run": "benchmarks/20261025T021142.342917Z-cleanup-loopback-ab-384b44",
+      "samples_per_side_per_scenario": 5,
+      "comparisons": [
+        {
+          "dataset": "bigFiles",
+          "threads": 1,
+          "before_n": 5,
+          "after_n": 5,
+          "before_mean_ms": 458.04772,
+          "after_mean_ms": 460.39264000000003,
+          "elapsed_change_pct": 0.5119379264675761
+        },
+        {
+          "dataset": "bigFiles",
+          "threads": 4,
+          "before_n": 5,
+          "after_n": 5,
+          "before_mean_ms": 468.99442,
+          "after_mean_ms": 442.57162,
+          "elapsed_change_pct": -5.633926305562442
+        },
+        {
+          "dataset": "manySmallFiles",
+          "threads": 1,
+          "before_n": 5,
+          "after_n": 5,
+          "before_mean_ms": 622.50502,
+          "after_mean_ms": 631.46626,
+          "elapsed_change_pct": 1.4395450176450053
+        },
+        {
+          "dataset": "manySmallFiles",
+          "threads": 4,
+          "before_n": 5,
+          "after_n": 5,
+          "before_mean_ms": 538.74174,
+          "after_mean_ms": 524.1075,
+          "elapsed_change_pct": -2.716373897444835
+        },
+        {
+          "dataset": "mixed",
+          "threads": 1,
+          "before_n": 5,
+          "after_n": 5,
+          "before_mean_ms": 462.77714,
+          "after_mean_ms": 459.98588,
+          "elapsed_change_pct": -0.6031542526063305
+        },
+        {
+          "dataset": "mixed",
+          "threads": 4,
+          "before_n": 5,
+          "after_n": 5,
+          "before_mean_ms": 480.18256,
+          "after_mean_ms": 476.7338,
+          "elapsed_change_pct": -0.7182185042289069
+        }
+      ]
+    },
+    "files_ab": {
+      "run": "benchmarks/20261025T021334.465487Z-cleanup-files-ab-771a98",
+      "samples_per_side_per_scenario": 7,
+      "comparisons": [
+        {
+          "stage": "scan",
+          "readers": 1,
+          "elapsed_change_pct": -0.02328961295913201
+        },
+        {
+          "stage": "read",
+          "readers": 1,
+          "elapsed_change_pct": -9.344661641717789
+        },
+        {
+          "stage": "read",
+          "readers": 8,
+          "elapsed_change_pct": -5.115497547076409
+        }
+      ]
+    },
+    "loopback_aa_initial": {
+      "run": "benchmarks/legacy-run-754143394f95",
+      "samples_per_side_per_scenario": 5,
+      "comparisons": [
+        {
+          "dataset": "bigFiles",
+          "threads": 1,
+          "before_n": 5,
+          "after_n": 5,
+          "before_mean_ms": 498.50588,
+          "after_mean_ms": 508.84406,
+          "elapsed_change_pct": 2.0738331110557784
+        },
+        {
+          "dataset": "bigFiles",
+          "threads": 4,
+          "before_n": 5,
+          "after_n": 5,
+          "before_mean_ms": 461.97432,
+          "after_mean_ms": 489.2876,
+          "elapsed_change_pct": 5.912293999372098
+        },
+        {
+          "dataset": "manySmallFiles",
+          "threads": 1,
+          "before_n": 5,
+          "after_n": 5,
+          "before_mean_ms": 778.45196,
+          "after_mean_ms": 669.06516,
+          "elapsed_change_pct": -14.051836930309737
+        },
+        {
+          "dataset": "manySmallFiles",
+          "threads": 4,
+          "before_n": 5,
+          "after_n": 5,
+          "before_mean_ms": 549.0477,
+          "after_mean_ms": 571.23228,
+          "elapsed_change_pct": 4.040556039120102
+        },
+        {
+          "dataset": "mixed",
+          "threads": 1,
+          "before_n": 5,
+          "after_n": 5,
+          "before_mean_ms": 496.46506,
+          "after_mean_ms": 488.08692,
+          "elapsed_change_pct": -1.6875588384809959
+        },
+        {
+          "dataset": "mixed",
+          "threads": 4,
+          "before_n": 5,
+          "after_n": 5,
+          "before_mean_ms": 562.9017,
+          "after_mean_ms": 527.7071,
+          "elapsed_change_pct": -6.252352764257074
+        }
+      ]
+    },
+    "loopback_aa_confirmation": {
+      "run": "benchmarks/20261025T021659.126713Z-cleanup-loopback-aa-confirm-cb35e8",
+      "samples_per_side_per_scenario": 5,
+      "comparisons": [
+        {
+          "dataset": "bigFiles",
+          "threads": 1,
+          "before_n": 5,
+          "after_n": 5,
+          "before_mean_ms": 459.73936000000003,
+          "after_mean_ms": 454.33326,
+          "elapsed_change_pct": -1.1759054086646015
+        },
+        {
+          "dataset": "bigFiles",
+          "threads": 4,
+          "before_n": 5,
+          "after_n": 5,
+          "before_mean_ms": 470.00818,
+          "after_mean_ms": 434.77866000000006,
+          "elapsed_change_pct": -7.495512099385149
+        },
+        {
+          "dataset": "manySmallFiles",
+          "threads": 1,
+          "before_n": 5,
+          "after_n": 5,
+          "before_mean_ms": 622.31402,
+          "after_mean_ms": 619.2175,
+          "elapsed_change_pct": -0.4975815907216852
+        },
+        {
+          "dataset": "manySmallFiles",
+          "threads": 4,
+          "before_n": 5,
+          "after_n": 5,
+          "before_mean_ms": 530.7326,
+          "after_mean_ms": 527.9513,
+          "elapsed_change_pct": -0.5240492104687133
+        },
+        {
+          "dataset": "mixed",
+          "threads": 1,
+          "before_n": 5,
+          "after_n": 5,
+          "before_mean_ms": 458.0575,
+          "after_mean_ms": 486.07078,
+          "elapsed_change_pct": 6.1156688843649665
+        },
+        {
+          "dataset": "mixed",
+          "threads": 4,
+          "before_n": 5,
+          "after_n": 5,
+          "before_mean_ms": 498.69219999999996,
+          "after_mean_ms": 494.0201,
+          "elapsed_change_pct": -0.9368704784233572
+        }
+      ]
+    },
+    "files_aa": {
+      "run": "benchmarks/legacy-run-5457eb4f3509",
+      "samples_per_side_per_scenario": 7,
+      "comparisons": [
+        {
+          "stage": "scan",
+          "readers": 1,
+          "elapsed_change_pct": 0.3014172984158625
+        },
+        {
+          "stage": "read",
+          "readers": 1,
+          "elapsed_change_pct": -0.5823779205274549
+        },
+        {
+          "stage": "read",
+          "readers": 8,
+          "elapsed_change_pct": 2.2056818017855306
+        }
+      ]
+    }
+  },
+  "artifact_cleanup": {
+    "status": "completed",
+    "removed_files": 97873,
+    "removed_bytes": 27870786540,
+    "historical_and_existing_artifacts": {
+      "files": 36026,
+      "bytes": 19974814902
+    },
+    "temporary_validation_artifacts": {
+      "files": 61847,
+      "bytes": 7895971638
+    },
+    "preserved_evidence_files": 52,
+    "preserved_evidence_bytes": 1010380,
+    "plan": "local/imports/cleanup-2026-10-25/deletion-plan.json",
+    "plan_sha256": "58300afac89f64e406af9cee626bfbd2f2d71062d93a0478e4e596071c448d4a",
+    "execution_report": "local/imports/cleanup-2026-10-25/execution-report.json",
+    "session_receipts": [
+      "local/imports/cleanup-2026-10-25/session-artifacts-removed.json",
+      "local/imports/cleanup-2026-10-25/browser-artifacts-removed.json"
+    ],
+    "retained_history": "history/",
+    "historical_manifests": "Preserved unchanged as evidence of the original archive, before cleanup.",
+    "remaining_generated_files_under_target_or_releases": 0,
+    "retained_empty_directories": [
+      {
+        "path": "releases/local",
+        "reason": "Windows reports the empty directory is in use. The existing fast-dump process was left running."
+      }
+    ]
+  },
+  "history": {
+    "benchmark_runs": 381,
+    "raw_observations": 7821,
+    "test_runs": 24,
+    "viewer": "index.html",
+    "regenerate": [
+      "python",
+      "scripts/results.py",
+      "index"
+    ]
+  }
+}

@@ -3,6 +3,7 @@
 
 import argparse
 import csv
+from bench_output import default_output
 import ctypes
 import hashlib
 import json
@@ -112,8 +113,12 @@ def windows_process_cpu(process):
 
 
 def invoke(command, log):
+    environment = os.environ.copy()
+    # Дополнительный вывод child принадлежит этой паре, а не новому эксперименту.
+    environment['FAST_DUMP_RESULTS_RUN_DIR'] = str(log.parent)
     started = time.perf_counter_ns()
-    with log.open('wb') as stream, subprocess.Popen(command, stdout=stream, stderr=subprocess.STDOUT) as process:
+    with log.open('wb') as stream, subprocess.Popen(command, stdout=stream, stderr=subprocess.STDOUT,
+                                                  env=environment) as process:
         if os.name == 'posix':
             _, status, usage = os.wait4(process.pid, 0)
             process.returncode = os.waitstatus_to_exitcode(status)
@@ -241,7 +246,7 @@ def main():
     parser.add_argument('--allow-identical-binaries', action='store_true',
                         help='allow identical SHA256 only for intentional A/A calibration')
     parser.add_argument('--source', type=Path, required=True)
-    parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--output', type=Path, default=default_output('files-paired'))
     parser.add_argument('--repeats', type=int, default=7)
     parser.add_argument('--stages', default='scan,read')
     parser.add_argument('--readers', default='1,4,8,32')

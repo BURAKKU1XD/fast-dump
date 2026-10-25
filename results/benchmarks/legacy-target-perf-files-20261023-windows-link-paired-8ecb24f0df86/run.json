@@ -1,0 +1,139 @@
+{
+  "schema_version": 1,
+  "id": "legacy-target-perf-files-20261023-windows-link-paired-8ecb24f0df86",
+  "kind": "benchmark",
+  "label": "target/perf-files-20261023/windows-link-paired",
+  "status": "imported",
+  "started_utc": "2026-10-22T21:53:03.853106+00:00",
+  "time_source": "original_file_mtime",
+  "imported_utc": "2026-10-25T02:06:41.122133+00:00",
+  "import_sha256": "8ecb24f0df86198850b8e98d3d517c078cce4fbc09af133c43a2991f6c1371f0",
+  "origin": "results/history/2026-10-24",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "binary_sha256": {
+      "before": "ce5064dbfde23fb819e537246c310e291171b62b0575ca2c9e75607f9c6d9e96",
+      "after": "2b9fb1eac251e875dd474c514915fa5b1a8f8dec6fa7936f507f645dbf58daa9"
+    },
+    "common_arguments": [
+      "--repeats",
+      "1",
+      "--shuffle-scenarios",
+      "--shuffle-seed",
+      "91",
+      "--dataset",
+      "manySmallFiles,bigFiles,mixed",
+      "--network-profile",
+      "link-1gbps,link-10gbps",
+      "--threads",
+      "4",
+      "--frames",
+      "64",
+      "--buffers",
+      "1024",
+      "--executor",
+      "default"
+    ],
+    "repeats_per_side": 5,
+    "policy": "AB then BA alternating; all samples retained; no automatic warmup or trimming",
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "after",
+        "exit_code": 0
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "target/perf-files-20261023/windows-link-paired/before/run.log",
+      "sha256": "faf67ff78dc49e88c05995f6f6e4f41a5bdc21335213dd0c3ff2fbc4f6edff95",
+      "bytes": 49582,
+      "extracted_sha256": "dec43edc5c74c4530543c6ec2986ebc33eb6f293e6ab15c0f8347c255c266094",
+      "saved": "raw/before/resource_samples.csv"
+    },
+    {
+      "source": "target/perf-files-20261023/windows-link-paired/before/results_raw.csv",
+      "sha256": "c9fb82fac642cdb1d3546e218a996114efc295f67324d50285f50c31a64b7ce5",
+      "bytes": 18286,
+      "saved": "raw/before/results_raw.csv"
+    },
+    {
+      "source": "target/perf-files-20261023/windows-link-paired/after/run.log",
+      "sha256": "c51c06b522697fb6d1fec2c7d117b608caaaef46d5dc2db3c659524abf5f402e",
+      "bytes": 49525,
+      "extracted_sha256": "4f8ddcc450b2a38293ff125cc325ae621546df28851f0ead51bd57502395d48b",
+      "saved": "raw/after/resource_samples.csv"
+    },
+    {
+      "source": "target/perf-files-20261023/windows-link-paired/after/results_raw.csv",
+      "sha256": "bf14a887c819616bdb6e42a4301a4837f1b06020e9b58981242d04a15a4ca01e",
+      "bytes": 18281,
+      "saved": "raw/after/results_raw.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "target/perf-files-20261023/windows-link-paired/paired-run.json",
+      "sha256": "c529792004b250e6fd231b472ed450c0653073cceb4fe8f81fcb2cd71912d4eb",
+      "bytes": 8534
+    },
+    {
+      "source": "target/perf-files-20261023/windows-link-paired/before/run.log",
+      "sha256": "faf67ff78dc49e88c05995f6f6e4f41a5bdc21335213dd0c3ff2fbc4f6edff95",
+      "bytes": 49582
+    },
+    {
+      "source": "target/perf-files-20261023/windows-link-paired/after/run.log",
+      "sha256": "c51c06b522697fb6d1fec2c7d117b608caaaef46d5dc2db3c659524abf5f402e",
+      "bytes": 49525
+    }
+  ]
+}

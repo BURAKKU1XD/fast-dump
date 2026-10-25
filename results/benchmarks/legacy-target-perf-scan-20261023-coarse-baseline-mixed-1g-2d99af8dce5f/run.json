@@ -1,0 +1,154 @@
+{
+  "schema_version": 1,
+  "id": "legacy-target-perf-scan-20261023-coarse-baseline-mixed-1g-2d99af8dce5f",
+  "kind": "benchmark",
+  "label": "target/perf-scan-20261023/coarse-baseline-mixed-1g",
+  "status": "imported",
+  "started_utc": "2026-10-23T20:30:38.207276+00:00",
+  "time_source": "original_file_mtime",
+  "imported_utc": "2026-10-25T02:06:44.340504+00:00",
+  "import_sha256": "2d99af8dce5fa6e459aed395b6027dcff1ac03772118689ec39b4ee936f1e271",
+  "origin": "results/history/2026-10-24",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "binary_sha256": {
+      "before": "da67604e5471ffd0ed024dcfbafe0d7968b4d3262ff3c8cda15bb900e24510c2",
+      "after": "38970f8290efd8d30a023ed3421957b716516bc4f8e9363de087591677172167"
+    },
+    "comparison_kind": "A/B",
+    "requested_readers": {
+      "before": 16,
+      "after": 16
+    },
+    "common_arguments": [
+      "--repeats",
+      "1",
+      "--shuffle-scenarios",
+      "--shuffle-seed",
+      "91",
+      "--source",
+      "E:\\projects\\cool_project\\fast-dump\\target\\bench-verify-20261022\\datasets\\mixed",
+      "--network-profile",
+      "link-1gbps",
+      "--threads",
+      "31",
+      "--frames",
+      "64",
+      "--buffers",
+      "1024",
+      "--executor",
+      "default"
+    ],
+    "repeats_per_side": 6,
+    "policy": "AB then BA alternating; all samples retained; no automatic warmup or trimming",
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 6,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 6,
+        "side": "before",
+        "exit_code": 0
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "target/perf-scan-20261023/coarse-baseline-mixed-1g/before/run.log",
+      "sha256": "f05f700eec8090a8829cf2d2f7c06461a39bd0a679faadbb89ae989d42904463",
+      "bytes": 19902,
+      "extracted_sha256": "dcf8629615b0dfd55be594421fde4734ef524cc80f7e815671b37bcf5cd1ebf7",
+      "saved": "raw/before/resource_samples.csv"
+    },
+    {
+      "source": "target/perf-scan-20261023/coarse-baseline-mixed-1g/before/results_raw.csv",
+      "sha256": "7c5e339a28e96332398b6bbac4c2d4824d6b368fdce6e68afeeee764c809fccf",
+      "bytes": 4929,
+      "saved": "raw/before/results_raw.csv"
+    },
+    {
+      "source": "target/perf-scan-20261023/coarse-baseline-mixed-1g/after/run.log",
+      "sha256": "2a502fbcb24180c5065fc103f4ffd0ca0911c233d0a3a9de54327222c7fd518a",
+      "bytes": 19864,
+      "extracted_sha256": "25ce1fef6f4a298d83222f59991368f86820b2b1625813b8a9e6f92405422cb9",
+      "saved": "raw/after/resource_samples.csv"
+    },
+    {
+      "source": "target/perf-scan-20261023/coarse-baseline-mixed-1g/after/results_raw.csv",
+      "sha256": "3cc117871e6710f238e4e4071080e3471d27de112b91cbff28bb33f1975d2a66",
+      "bytes": 4916,
+      "saved": "raw/after/results_raw.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "target/perf-scan-20261023/coarse-baseline-mixed-1g/paired-run.json",
+      "sha256": "8d50ddea065800e58136af1f78a257777e82f1e90e57822d572997fd91bae5d5",
+      "bytes": 11161
+    },
+    {
+      "source": "target/perf-scan-20261023/coarse-baseline-mixed-1g/before/run.log",
+      "sha256": "f05f700eec8090a8829cf2d2f7c06461a39bd0a679faadbb89ae989d42904463",
+      "bytes": 19902
+    },
+    {
+      "source": "target/perf-scan-20261023/coarse-baseline-mixed-1g/after/run.log",
+      "sha256": "2a502fbcb24180c5065fc103f4ffd0ca0911c233d0a3a9de54327222c7fd518a",
+      "bytes": 19864
+    }
+  ]
+}

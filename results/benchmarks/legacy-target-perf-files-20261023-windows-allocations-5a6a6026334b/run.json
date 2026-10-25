@@ -1,0 +1,130 @@
+{
+  "schema_version": 1,
+  "id": "legacy-target-perf-files-20261023-windows-allocations-5a6a6026334b",
+  "kind": "benchmark",
+  "label": "target/perf-files-20261023/windows-allocations",
+  "status": "imported",
+  "started_utc": "2026-10-22T21:45:44.335856+00:00",
+  "time_source": "manifest",
+  "imported_utc": "2026-10-25T02:06:41.105449+00:00",
+  "import_sha256": "5a6a6026334b2a13209f6665f371bb99975579dbe75f8da8f6b1d6305dbf6ecc",
+  "origin": "results/history/2026-10-24",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "created_utc": "2026-10-22T21:45:44.335856+00:00",
+    "binary_sha256": {
+      "before": "b608859c5de703b2dc89e48d4a289dbd56c4eb640bac95ced7a2684bd375f0c7",
+      "after": "c704468cc330ee2283c0ff0b229acea869e4616f0b779e006f3649cb02359aeb"
+    },
+    "platform": "Windows-10-10.0.19045-SP0",
+    "logical_cpus": 32,
+    "allocations_diagnostic": true,
+    "repeats": 2,
+    "policy": "AB/BA alternating pairs; no trimming, implicit warmup, or dropped first samples",
+    "scenarios": [
+      [
+        "scan",
+        1
+      ],
+      [
+        "read",
+        4
+      ],
+      [
+        "read",
+        32
+      ]
+    ],
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "stage": "scan",
+        "readers": 1
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "stage": "scan",
+        "readers": 1
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "stage": "scan",
+        "readers": 1
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "stage": "scan",
+        "readers": 1
+      },
+      {
+        "pair": 1,
+        "side": "before",
+        "stage": "read",
+        "readers": 4
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "stage": "read",
+        "readers": 4
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "stage": "read",
+        "readers": 4
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "stage": "read",
+        "readers": 4
+      },
+      {
+        "pair": 1,
+        "side": "before",
+        "stage": "read",
+        "readers": 32
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "stage": "read",
+        "readers": 32
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "stage": "read",
+        "readers": 32
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "stage": "read",
+        "readers": 32
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "target/perf-files-20261023/windows-allocations/samples.csv",
+      "sha256": "f321f95c2ab4b8c8cbec4c3f5cbe443f3117bed5c0f70830ab3e594c520fd7c0",
+      "bytes": 4453,
+      "saved": "raw/samples.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "target/perf-files-20261023/windows-allocations/paired-run.json",
+      "sha256": "e0a507446f4fceb456d6369418221f2d6b6fbc13396cc602862ac385d7038e34",
+      "bytes": 21387
+    }
+  ]
+}

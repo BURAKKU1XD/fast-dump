@@ -1,3 +1,6 @@
+> Historical document. See the [current runtime](../runtime.md) and
+> [protocol v4](../../src/network/protocol.md) for the active contract.
+
 # V4 Cutover Plan
 
 Status on 2026-04-14: cutover completed. This document is kept as the planning

@@ -1,0 +1,132 @@
+{
+  "schema_version": 1,
+  "id": "legacy-target-perf-link-20261022-runs-paired-1g-bench-7a62700cca1c",
+  "kind": "benchmark",
+  "label": "target/perf-link-20261022/runs/paired-1g/bench",
+  "status": "imported",
+  "started_utc": "2026-10-22T20:59:12.039006+00:00",
+  "time_source": "original_file_mtime",
+  "imported_utc": "2026-10-25T02:06:41.501298+00:00",
+  "import_sha256": "7a62700cca1c108b0d69fa682a77c7560ff18fa7ad5e52983cd42e0b3f5410da",
+  "origin": "results/history/2026-10-24",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "binary_sha256": {
+      "before": "3bdad95d643c07b7692d7f1fcc99237782340ede878208513e5e68cd74d22b85",
+      "after": "2219b37544897ce08045c804f576275f420f0a45cdb05784fc3cc2b6b7f216c6"
+    },
+    "common_arguments": [
+      "--repeats",
+      "1",
+      "--shuffle-scenarios",
+      "--shuffle-seed",
+      "91",
+      "--dataset",
+      "manySmallFiles,bigFiles,mixed",
+      "--network-profile",
+      "loopback-localhost",
+      "--threads",
+      "3",
+      "--frames",
+      "64",
+      "--buffers",
+      "1024",
+      "--executor",
+      "default"
+    ],
+    "repeats_per_side": 5,
+    "policy": "AB then BA alternating; all samples retained; no automatic warmup or trimming",
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "after",
+        "exit_code": 0
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "target/perf-link-20261022/runs/paired-1g/bench/before/results_raw.csv",
+      "sha256": "92233af8fc06f302ddec1d9a7b592f39180837a4e2c8e22677c85c4cb5cfab17",
+      "bytes": 9913,
+      "saved": "raw/before/results_raw.csv"
+    },
+    {
+      "source": "target/perf-link-20261022/runs/paired-1g/bench/after/run.log",
+      "sha256": "283db1a5b41e6c7fd49a300ff20381775ef4963ee58f4b0d95ab1b8f32b2d095",
+      "bytes": 32091,
+      "extracted_sha256": "f296d609e0dc87894501494c72c0358f64ebb1b5bed8edc30966eaf4d5159f4e",
+      "saved": "raw/after/resource_samples.csv"
+    },
+    {
+      "source": "target/perf-link-20261022/runs/paired-1g/bench/after/results_raw.csv",
+      "sha256": "58126273d799bfa028059c779e3dd51e0c72cebda838380f78166162b1396236",
+      "bytes": 9909,
+      "saved": "raw/after/results_raw.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "target/perf-link-20261022/runs/paired-1g/bench/paired-run.json",
+      "sha256": "ad8930de984f13ba47f643355bf4571520edf9cf114cbd03391afcbb2acf3a2a",
+      "bytes": 7955
+    },
+    {
+      "source": "target/perf-link-20261022/runs/paired-1g/bench/before/run.log",
+      "sha256": "812815037e7f3944bbc7534221dd8d77e3e90dc095167e30cd87f921e1c1d5d7",
+      "bytes": 36209
+    },
+    {
+      "source": "target/perf-link-20261022/runs/paired-1g/bench/after/run.log",
+      "sha256": "283db1a5b41e6c7fd49a300ff20381775ef4963ee58f4b0d95ab1b8f32b2d095",
+      "bytes": 32091
+    }
+  ]
+}

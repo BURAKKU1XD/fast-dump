@@ -1,0 +1,124 @@
+{
+  "schema_version": 1,
+  "id": "legacy-target-perf-disk-20261023-calibration-aa-warm-3e921a415d4f",
+  "kind": "benchmark",
+  "label": "target/perf-disk-20261023/calibration-aa-warm",
+  "status": "imported",
+  "started_utc": "2026-10-23T09:05:23.505473+00:00",
+  "time_source": "original_file_mtime",
+  "imported_utc": "2026-10-25T02:06:40.684955+00:00",
+  "import_sha256": "3e921a415d4fadad86ed678e81b4453ce761fdb6934c50181c40d06322ab9ffc",
+  "origin": "results/history/2026-10-24",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "binary_sha256": {
+      "before": "a5e73368205b82f739c999aea749b6b0a5d61ef662a8cb20fe1f1a407fc0431a",
+      "after": "a5e73368205b82f739c999aea749b6b0a5d61ef662a8cb20fe1f1a407fc0431a"
+    },
+    "comparison_kind": "A/A",
+    "requested_readers": {
+      "before": 16,
+      "after": 16
+    },
+    "common_arguments": [
+      "--repeats",
+      "1",
+      "--shuffle-scenarios",
+      "--shuffle-seed",
+      "91",
+      "--dataset",
+      "manySmallFiles,bigFiles,mixed",
+      "--network-profile",
+      "link-10gbps",
+      "--threads",
+      "31",
+      "--frames",
+      "64",
+      "--buffers",
+      "1024",
+      "--executor",
+      "default"
+    ],
+    "repeats_per_side": 3,
+    "policy": "AB then BA alternating; all samples retained; no automatic warmup or trimming",
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "exit_code": 0
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "target/perf-disk-20261023/calibration-aa-warm/before/run.log",
+      "sha256": "417e1d6763383b0fd7cbcbdcfe8fd388b210ef786676f55fac5ed862b82af31b",
+      "bytes": 22330,
+      "extracted_sha256": "651fb18f99579cd56caff1f4edf2aaa4c45cb3e12c8a1da3765a87d524b056c4",
+      "saved": "raw/before/resource_samples.csv"
+    },
+    {
+      "source": "target/perf-disk-20261023/calibration-aa-warm/before/results_raw.csv",
+      "sha256": "fa589592384ebcf8fe7baa27fe606c62bd233ccc26311dace25d275645191d93",
+      "bytes": 6578,
+      "saved": "raw/before/results_raw.csv"
+    },
+    {
+      "source": "target/perf-disk-20261023/calibration-aa-warm/after/run.log",
+      "sha256": "7a02b11ebabe1f343c44744ed186f8e6dfc8ebd3c8d326476f8e21a4be0f332b",
+      "bytes": 22302,
+      "extracted_sha256": "ca9a380d085b5bee38fbe661aa2cc2ff5e5cc56a66115928d6d398608b3be1eb",
+      "saved": "raw/after/resource_samples.csv"
+    },
+    {
+      "source": "target/perf-disk-20261023/calibration-aa-warm/after/results_raw.csv",
+      "sha256": "4c1925f418a66f4c518888a8bee9ddd56d32f1afca3d645d57eeabefed15d0e0",
+      "bytes": 6569,
+      "saved": "raw/after/results_raw.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "target/perf-disk-20261023/calibration-aa-warm/paired-run.json",
+      "sha256": "37ad2612caa4de360125a2dbb7f9649cc561be7dcd278bed1e390ea2de64e4b2",
+      "bytes": 5793
+    },
+    {
+      "source": "target/perf-disk-20261023/calibration-aa-warm/before/run.log",
+      "sha256": "417e1d6763383b0fd7cbcbdcfe8fd388b210ef786676f55fac5ed862b82af31b",
+      "bytes": 22330
+    },
+    {
+      "source": "target/perf-disk-20261023/calibration-aa-warm/after/run.log",
+      "sha256": "7a02b11ebabe1f343c44744ed186f8e6dfc8ebd3c8d326476f8e21a4be0f332b",
+      "bytes": 22302
+    }
+  ]
+}

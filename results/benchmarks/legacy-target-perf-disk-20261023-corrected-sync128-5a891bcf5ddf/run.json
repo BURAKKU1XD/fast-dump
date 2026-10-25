@@ -1,0 +1,154 @@
+{
+  "schema_version": 1,
+  "id": "legacy-target-perf-disk-20261023-corrected-sync128-5a891bcf5ddf",
+  "kind": "benchmark",
+  "label": "target/perf-disk-20261023/corrected-sync128",
+  "status": "imported",
+  "started_utc": "2026-10-23T09:34:26.636386+00:00",
+  "time_source": "original_file_mtime",
+  "imported_utc": "2026-10-25T02:06:40.701016+00:00",
+  "import_sha256": "5a891bcf5ddf19aff6ad9b910b8d01918240c1096c417e2e1b63bc96fedca4f4",
+  "origin": "results/history/2026-10-24",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "binary_sha256": {
+      "before": "d7dce4575ee4290e5fa72faeca0ecfb92ae5e609e5de797fb5f1a51587ab4bab",
+      "after": "2d343ae11ee6117632931c254ec887bebcc78adb3bf90f7ae592b367d0226633"
+    },
+    "comparison_kind": "A/B",
+    "requested_readers": {
+      "before": 16,
+      "after": 16
+    },
+    "common_arguments": [
+      "--repeats",
+      "1",
+      "--shuffle-scenarios",
+      "--shuffle-seed",
+      "91",
+      "--dataset",
+      "bigFiles,mixed",
+      "--network-profile",
+      "link-10gbps",
+      "--threads",
+      "31",
+      "--frames",
+      "64",
+      "--buffers",
+      "1024",
+      "--executor",
+      "default"
+    ],
+    "repeats_per_side": 6,
+    "policy": "AB then BA alternating; all samples retained; no automatic warmup or trimming",
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 6,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 6,
+        "side": "before",
+        "exit_code": 0
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "target/perf-disk-20261023/corrected-sync128/before/run.log",
+      "sha256": "bb78a2fa000ef9fe26b58b92c1a6dfb3f8b145fdc6640e5830f2cf598e15e395",
+      "bytes": 27919,
+      "extracted_sha256": "746fba6d1656670fbdf1ac0b7b45f3ccede1c967e1eea246cc2d9b334d92a283",
+      "saved": "raw/before/resource_samples.csv"
+    },
+    {
+      "source": "target/perf-disk-20261023/corrected-sync128/before/results_raw.csv",
+      "sha256": "1bb7f8745d1573c7cc85efa060c0dcf3151a5f4326f2c61414af76cd28e7714e",
+      "bytes": 8206,
+      "saved": "raw/before/results_raw.csv"
+    },
+    {
+      "source": "target/perf-disk-20261023/corrected-sync128/after/run.log",
+      "sha256": "403849678d0213b09e539a49fe76cac4cae7e77ce3e94ac8334d6ca54cbdb9b5",
+      "bytes": 27848,
+      "extracted_sha256": "de2cd9ded4da3e6acb005d354ea0e0800949f573299a9b33b3ba6e465ccc66c5",
+      "saved": "raw/after/resource_samples.csv"
+    },
+    {
+      "source": "target/perf-disk-20261023/corrected-sync128/after/results_raw.csv",
+      "sha256": "da3c30f9360179ba3618642ffc1f25c5f43505c7f696e43657bf32e554b78794",
+      "bytes": 8209,
+      "saved": "raw/after/results_raw.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "target/perf-disk-20261023/corrected-sync128/paired-run.json",
+      "sha256": "9367a4bde598866ea4a60764397b6bcb6e427f1e24bc8608079051bf33ce6e88",
+      "bytes": 10310
+    },
+    {
+      "source": "target/perf-disk-20261023/corrected-sync128/before/run.log",
+      "sha256": "bb78a2fa000ef9fe26b58b92c1a6dfb3f8b145fdc6640e5830f2cf598e15e395",
+      "bytes": 27919
+    },
+    {
+      "source": "target/perf-disk-20261023/corrected-sync128/after/run.log",
+      "sha256": "403849678d0213b09e539a49fe76cac4cae7e77ce3e94ac8334d6ca54cbdb9b5",
+      "bytes": 27848
+    }
+  ]
+}

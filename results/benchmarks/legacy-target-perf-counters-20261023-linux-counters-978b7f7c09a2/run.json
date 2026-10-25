@@ -1,0 +1,143 @@
+{
+  "schema_version": 1,
+  "id": "legacy-target-perf-counters-20261023-linux-counters-978b7f7c09a2",
+  "kind": "benchmark",
+  "label": "target/perf-counters-20261023/linux-counters",
+  "status": "incomplete",
+  "started_utc": "2026-10-22T23:01:11.297420+00:00",
+  "time_source": "manifest",
+  "imported_utc": "2026-10-25T02:06:40.621538+00:00",
+  "import_sha256": "978b7f7c09a2355b07b5218459f1ac825077b864b91f2fcc726e2bb9a5fa1ba5",
+  "origin": "results/history/2026-10-24",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": false,
+    "created_utc": "2026-10-22T23:01:11.297420+00:00",
+    "binary_sha256": {
+      "before": "3f4514c8efc00c564dba7abffecffe00e10407a95a1bf5531eea8e3a807489ab",
+      "after": "6aa6d1a50b3dd27f78f0a6838583ffaffbb942c28d61ed8208c0643a3fee9f9a"
+    },
+    "platform": "Linux-6.18.54.1-microsoft-standard-WSL2-x86_64-with-glibc2.39",
+    "logical_cpus": 4,
+    "allocations_diagnostic": false,
+    "measurement_contract": {
+      "counters_schema": 2,
+      "cycle_source": "unavailable",
+      "io_source": "linux-proc-io-corrected"
+    },
+    "counter_scope": {
+      "cpu_cycles": "unmeasured",
+      "io_read_ops": "linux_proc_io_read_family_syscalls_corrected",
+      "io_write_ops": "linux_proc_io_write_family_syscalls",
+      "io_other_ops": "unmeasured",
+      "io_read_bytes": "linux_proc_io_logical_read_bytes_corrected",
+      "io_write_bytes": "linux_proc_io_logical_write_bytes",
+      "io_other_bytes": "unmeasured",
+      "io_read_ops_raw": "linux_proc_io_read_family_syscalls_raw",
+      "io_read_bytes_raw": "linux_proc_io_logical_read_bytes_raw",
+      "io_observer_read_ops": "linux_proc_io_snapshot_observer_reads",
+      "io_observer_read_bytes": "linux_proc_io_snapshot_observer_reads",
+      "storage_read_bytes": "linux_proc_io_storage_accounting",
+      "storage_write_bytes": "linux_proc_io_storage_accounting",
+      "page_faults": "linux_getrusage_process_page_faults",
+      "minor_faults": "linux_getrusage_process_page_faults",
+      "major_faults": "linux_getrusage_process_page_faults",
+      "voluntary_switches": "linux_getrusage_process_context_switches",
+      "involuntary_switches": "linux_getrusage_process_context_switches",
+      "allocs": "diagnostic_allocator_requests",
+      "alloc_bytes": "diagnostic_allocator_requests",
+      "reallocs": "diagnostic_allocator_requests",
+      "deallocs": "diagnostic_allocator_outcomes",
+      "alloc_successes": "diagnostic_allocator_outcomes",
+      "alloc_success_bytes": "diagnostic_allocator_outcomes",
+      "realloc_successes": "diagnostic_allocator_outcomes",
+      "realloc_success_bytes": "diagnostic_allocator_outcomes",
+      "alloc_failures": "diagnostic_allocator_outcomes",
+      "realloc_failures": "diagnostic_allocator_outcomes",
+      "dealloc_bytes": "diagnostic_allocator_outcomes",
+      "zeroed_bytes": "diagnostic_allocator_outcomes",
+      "elapsed_ns": "phase_wall_time",
+      "work_ns": "phase_wall_time",
+      "drop_ns": "phase_wall_time",
+      "cpu_ns": "process_cpu_time_all_threads",
+      "user_ns": "process_cpu_time_all_threads",
+      "kernel_ns": "process_cpu_time_all_threads"
+    },
+    "repeats": 7,
+    "policy": "AB/BA alternating pairs; no trimming, implicit warmup, or dropped first samples",
+    "scenarios": [
+      [
+        "noop",
+        1
+      ],
+      [
+        "scan",
+        1
+      ],
+      [
+        "read",
+        4
+      ]
+    ],
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "stage": "noop",
+        "readers": 1
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "stage": "noop",
+        "readers": 1
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "stage": "noop",
+        "readers": 1
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "stage": "noop",
+        "readers": 1
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "stage": "noop",
+        "readers": 1
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "stage": "noop",
+        "readers": 1
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "target/perf-counters-20261023/linux-counters/paired-run.json",
+      "sha256": "345af17889f12fded53b519e4e27bac8f8b0535cdbf370b584c05a126afd0f86",
+      "bytes": 17273,
+      "extracted_sha256": "c39122d0c6112db744244cbb45f2e2f026f446deb219ee4c46c417fb0c22adef",
+      "saved": "raw/samples.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "target/perf-counters-20261023/linux-counters/paired-run.json",
+      "sha256": "345af17889f12fded53b519e4e27bac8f8b0535cdbf370b584c05a126afd0f86",
+      "bytes": 17273
+    },
+    {
+      "source": "target/perf-counters-20261023/linux-counters/runs/noop-r1/03-after/run.log",
+      "sha256": "a22d5de55628fe278a7aa2492154f6f68bee4e96a359f53358a342bdcaa0e390",
+      "bytes": 1090
+    }
+  ]
+}

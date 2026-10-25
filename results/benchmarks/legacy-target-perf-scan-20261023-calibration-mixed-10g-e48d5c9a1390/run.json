@@ -1,0 +1,134 @@
+{
+  "schema_version": 1,
+  "id": "legacy-target-perf-scan-20261023-calibration-mixed-10g-e48d5c9a1390",
+  "kind": "benchmark",
+  "label": "target/perf-scan-20261023/calibration-mixed-10g",
+  "status": "imported",
+  "started_utc": "2026-10-23T20:40:41.950255+00:00",
+  "time_source": "original_file_mtime",
+  "imported_utc": "2026-10-25T02:06:44.111804+00:00",
+  "import_sha256": "e48d5c9a13905ec49abfccad78afcb9f634b28e9382222472b42ef6d99a3a62e",
+  "origin": "results/history/2026-10-24",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "binary_sha256": {
+      "before": "584676186b0e0ce3e0271ef586ec4540a68e206024828c55eaaabfc7bd479922",
+      "after": "584676186b0e0ce3e0271ef586ec4540a68e206024828c55eaaabfc7bd479922"
+    },
+    "comparison_kind": "A/A",
+    "requested_readers": {
+      "before": 16,
+      "after": 16
+    },
+    "common_arguments": [
+      "--repeats",
+      "1",
+      "--shuffle-scenarios",
+      "--shuffle-seed",
+      "91",
+      "--source",
+      "E:\\projects\\cool_project\\fast-dump\\target\\bench-verify-20261022\\datasets\\mixed",
+      "--network-profile",
+      "link-10gbps",
+      "--threads",
+      "31",
+      "--frames",
+      "64",
+      "--buffers",
+      "1024",
+      "--executor",
+      "default"
+    ],
+    "repeats_per_side": 4,
+    "policy": "AB then BA alternating; all samples retained; no automatic warmup or trimming",
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "before",
+        "exit_code": 0
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "target/perf-scan-20261023/calibration-mixed-10g/before/run.log",
+      "sha256": "82252f5006243b7558cc918db05be1a4cc2e36de1655eeea991094548fcf5956",
+      "bytes": 13240,
+      "extracted_sha256": "5c0daa4a149306208474e4d2a87338f512d2e6d3ce837d72d8905e9f4874ebd1",
+      "saved": "raw/before/resource_samples.csv"
+    },
+    {
+      "source": "target/perf-scan-20261023/calibration-mixed-10g/before/results_raw.csv",
+      "sha256": "f0ab3b16699fc78cb7e6b37abc81a31da028faa635f9cdfde8fa3e523d7e222e",
+      "bytes": 3798,
+      "saved": "raw/before/results_raw.csv"
+    },
+    {
+      "source": "target/perf-scan-20261023/calibration-mixed-10g/after/run.log",
+      "sha256": "532a1f9b41f52274b02b93a364c67a15dc09bd8d6aadf5ddea529a51d5f608f2",
+      "bytes": 13228,
+      "extracted_sha256": "86a57549e8884a117f6b950075eba17710c9473aef32f987fa463f2072548706",
+      "saved": "raw/after/resource_samples.csv"
+    },
+    {
+      "source": "target/perf-scan-20261023/calibration-mixed-10g/after/results_raw.csv",
+      "sha256": "feb3fef5ce39a0cd930286a45776556ffce2406d46f4dfdf6f1b948489361fe3",
+      "bytes": 3799,
+      "saved": "raw/after/results_raw.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "target/perf-scan-20261023/calibration-mixed-10g/paired-run.json",
+      "sha256": "a2e898459715c7c8de0608b6c752683c9a522efab240ea6353bf68df77b405db",
+      "bytes": 7726
+    },
+    {
+      "source": "target/perf-scan-20261023/calibration-mixed-10g/before/run.log",
+      "sha256": "82252f5006243b7558cc918db05be1a4cc2e36de1655eeea991094548fcf5956",
+      "bytes": 13240
+    },
+    {
+      "source": "target/perf-scan-20261023/calibration-mixed-10g/after/run.log",
+      "sha256": "532a1f9b41f52274b02b93a364c67a15dc09bd8d6aadf5ddea529a51d5f608f2",
+      "bytes": 13228
+    }
+  ]
+}

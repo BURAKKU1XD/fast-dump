@@ -1,0 +1,154 @@
+{
+  "schema_version": 1,
+  "id": "legacy-target-perf-scan-20261023-coarse-two-mixed-1g-78c9641e8a64",
+  "kind": "benchmark",
+  "label": "target/perf-scan-20261023/coarse-two-mixed-1g",
+  "status": "imported",
+  "started_utc": "2026-10-23T20:33:20.137741+00:00",
+  "time_source": "original_file_mtime",
+  "imported_utc": "2026-10-25T02:06:44.386730+00:00",
+  "import_sha256": "78c9641e8a64b6ff23df7a67a92b7e21dea27bece5a9250c13fe45ecc0aa445c",
+  "origin": "results/history/2026-10-24",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "binary_sha256": {
+      "before": "da67604e5471ffd0ed024dcfbafe0d7968b4d3262ff3c8cda15bb900e24510c2",
+      "after": "9ddb39a861bf462fe44dd4f5e254b5f7ce16ad30811df3e51a2e464c6415e1c7"
+    },
+    "comparison_kind": "A/B",
+    "requested_readers": {
+      "before": 16,
+      "after": 16
+    },
+    "common_arguments": [
+      "--repeats",
+      "1",
+      "--shuffle-scenarios",
+      "--shuffle-seed",
+      "91",
+      "--source",
+      "E:\\projects\\cool_project\\fast-dump\\target\\bench-verify-20261022\\datasets\\mixed",
+      "--network-profile",
+      "link-1gbps",
+      "--threads",
+      "31",
+      "--frames",
+      "64",
+      "--buffers",
+      "1024",
+      "--executor",
+      "default"
+    ],
+    "repeats_per_side": 6,
+    "policy": "AB then BA alternating; all samples retained; no automatic warmup or trimming",
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 6,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 6,
+        "side": "before",
+        "exit_code": 0
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "target/perf-scan-20261023/coarse-two-mixed-1g/before/run.log",
+      "sha256": "0ced745de0ae2b1c59f79dcfced3dfe57c61dd11f57896148d5eaefa221755ce",
+      "bytes": 19812,
+      "extracted_sha256": "e5928608ab531d6b6ccb842521fb44222e5863ab600e295a5364b4afbb1b58d7",
+      "saved": "raw/before/resource_samples.csv"
+    },
+    {
+      "source": "target/perf-scan-20261023/coarse-two-mixed-1g/before/results_raw.csv",
+      "sha256": "96176762a1a96499c8125cbf2b908893c302f2b89120a319529ad560a1831efe",
+      "bytes": 4929,
+      "saved": "raw/before/results_raw.csv"
+    },
+    {
+      "source": "target/perf-scan-20261023/coarse-two-mixed-1g/after/run.log",
+      "sha256": "c228185881956c17a1ee06ce2f421b5687cf967fb06275920956f3c4bcfb2e59",
+      "bytes": 19795,
+      "extracted_sha256": "50ec918fc35f295c2b709ac3e8b0befcd05aa1f918c338b7f29921edcd89f4f3",
+      "saved": "raw/after/resource_samples.csv"
+    },
+    {
+      "source": "target/perf-scan-20261023/coarse-two-mixed-1g/after/results_raw.csv",
+      "sha256": "512eedeb34dd0b8ad30fc817567bbc303fa60592725e20cb70ef28a038b736e2",
+      "bytes": 4928,
+      "saved": "raw/after/results_raw.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "target/perf-scan-20261023/coarse-two-mixed-1g/paired-run.json",
+      "sha256": "2c492fac4d14b2963c161e3353b55b8f4c1cbeed7c06e20210ac990a4a45d37b",
+      "bytes": 11071
+    },
+    {
+      "source": "target/perf-scan-20261023/coarse-two-mixed-1g/before/run.log",
+      "sha256": "0ced745de0ae2b1c59f79dcfced3dfe57c61dd11f57896148d5eaefa221755ce",
+      "bytes": 19812
+    },
+    {
+      "source": "target/perf-scan-20261023/coarse-two-mixed-1g/after/run.log",
+      "sha256": "c228185881956c17a1ee06ce2f421b5687cf967fb06275920956f3c4bcfb2e59",
+      "bytes": 19795
+    }
+  ]
+}

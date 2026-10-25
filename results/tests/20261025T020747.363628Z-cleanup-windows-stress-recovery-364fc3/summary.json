@@ -1,0 +1,28 @@
+{
+  "schema_version": 1,
+  "command": [
+    "cargo",
+    "test",
+    "--locked",
+    "--release",
+    "--test",
+    "integration",
+    "connectivity::recovery_stress::receiver_process_kill_and_resume_preserves_archive_push_and_pull",
+    "--",
+    "--exact",
+    "--ignored",
+    "--nocapture"
+  ],
+  "exit_code": 0,
+  "rust_test_suites": [
+    {
+      "status": "ok",
+      "passed": 1,
+      "failed": 0,
+      "ignored": 0
+    }
+  ],
+  "python_tests": null,
+  "entries": [],
+  "warnings": []
+}

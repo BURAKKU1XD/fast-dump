@@ -1,0 +1,134 @@
+{
+  "schema_version": 1,
+  "id": "legacy-target-perf-scan-20261023-calibration-small-10g-035c28eee482",
+  "kind": "benchmark",
+  "label": "target/perf-scan-20261023/calibration-small-10g",
+  "status": "imported",
+  "started_utc": "2026-10-23T20:40:27.175471+00:00",
+  "time_source": "original_file_mtime",
+  "imported_utc": "2026-10-25T02:06:44.124339+00:00",
+  "import_sha256": "035c28eee48208ee5b3bc457e70a0b651f271fc72f8b5b2db2b54a3a46c13d05",
+  "origin": "results/history/2026-10-24",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "binary_sha256": {
+      "before": "584676186b0e0ce3e0271ef586ec4540a68e206024828c55eaaabfc7bd479922",
+      "after": "584676186b0e0ce3e0271ef586ec4540a68e206024828c55eaaabfc7bd479922"
+    },
+    "comparison_kind": "A/A",
+    "requested_readers": {
+      "before": 16,
+      "after": 16
+    },
+    "common_arguments": [
+      "--repeats",
+      "1",
+      "--shuffle-scenarios",
+      "--shuffle-seed",
+      "91",
+      "--source",
+      "E:\\projects\\cool_project\\fast-dump\\target\\bench-verify-20261022\\datasets\\manySmallFiles",
+      "--network-profile",
+      "link-10gbps",
+      "--threads",
+      "31",
+      "--frames",
+      "64",
+      "--buffers",
+      "1024",
+      "--executor",
+      "default"
+    ],
+    "repeats_per_side": 4,
+    "policy": "AB then BA alternating; all samples retained; no automatic warmup or trimming",
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "before",
+        "exit_code": 0
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "target/perf-scan-20261023/calibration-small-10g/before/run.log",
+      "sha256": "611f9b1342704b4f24a837ddf205cb3d578768f2aa7757db458b8aa46ce107e3",
+      "bytes": 13253,
+      "extracted_sha256": "3bfbb9866e6195ded5f21517aec80c344ab84d039aa1f4e598d524896742863c",
+      "saved": "raw/before/resource_samples.csv"
+    },
+    {
+      "source": "target/perf-scan-20261023/calibration-small-10g/before/results_raw.csv",
+      "sha256": "79a55a259663f36158c05d6edd77cf3c499886fc633f1f7c013c347b71262998",
+      "bytes": 3762,
+      "saved": "raw/before/results_raw.csv"
+    },
+    {
+      "source": "target/perf-scan-20261023/calibration-small-10g/after/run.log",
+      "sha256": "5129bf66173b2bed242e6a62dd2444bef8b5ff33ed6019eeef106d3080e77eb1",
+      "bytes": 13244,
+      "extracted_sha256": "c5f4a0f4d9768e0ff5c2d9714a903f7405a07e8255dd5d7229bd0de98750970f",
+      "saved": "raw/after/resource_samples.csv"
+    },
+    {
+      "source": "target/perf-scan-20261023/calibration-small-10g/after/results_raw.csv",
+      "sha256": "0bb9a99725d6afcbf2c31a46d94fbb5b9732e4efe4ef45dbaca75f1c6203d62e",
+      "bytes": 3764,
+      "saved": "raw/after/results_raw.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "target/perf-scan-20261023/calibration-small-10g/paired-run.json",
+      "sha256": "81345345b90cd456b6aa231d2a63ac0a6e978cfcdb2405247cb33d5996c21c0f",
+      "bytes": 7807
+    },
+    {
+      "source": "target/perf-scan-20261023/calibration-small-10g/before/run.log",
+      "sha256": "611f9b1342704b4f24a837ddf205cb3d578768f2aa7757db458b8aa46ce107e3",
+      "bytes": 13253
+    },
+    {
+      "source": "target/perf-scan-20261023/calibration-small-10g/after/run.log",
+      "sha256": "5129bf66173b2bed242e6a62dd2444bef8b5ff33ed6019eeef106d3080e77eb1",
+      "bytes": 13244
+    }
+  ]
+}

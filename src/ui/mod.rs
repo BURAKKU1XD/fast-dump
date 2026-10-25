@@ -1,6 +1,7 @@
 mod dashboard;
 mod terminal;
 mod theme;
+mod widgets;
 mod wizard;
 
 use std::sync::Arc;

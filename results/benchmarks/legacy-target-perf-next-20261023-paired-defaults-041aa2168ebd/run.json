@@ -1,0 +1,144 @@
+{
+  "schema_version": 1,
+  "id": "legacy-target-perf-next-20261023-paired-defaults-041aa2168ebd",
+  "kind": "benchmark",
+  "label": "target/perf-next-20261023/paired-defaults",
+  "status": "imported",
+  "started_utc": "2026-10-23T00:40:00.620482+00:00",
+  "time_source": "original_file_mtime",
+  "imported_utc": "2026-10-25T02:06:43.258728+00:00",
+  "import_sha256": "041aa2168ebd83fffdfaf7e7b3079e8636f470fe5d8abd7ae3c1037d9832a086",
+  "origin": "results/history/2026-10-24",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "binary_sha256": {
+      "before": "3e28949e47a7e31894cca504f2f8e228b2a6b2a9f1a9aacc4b3cc20e790e19b5",
+      "after": "516907df5657c5af7b1e4ace716aaf0982329e03d0746f549191592f67a83ca1"
+    },
+    "comparison_kind": "A/B",
+    "requested_readers": {
+      "before": 32,
+      "after": 16
+    },
+    "common_arguments": [
+      "--repeats",
+      "1",
+      "--shuffle-scenarios",
+      "--shuffle-seed",
+      "91",
+      "--dataset",
+      "manySmallFiles,bigFiles,mixed",
+      "--network-profile",
+      "link-1gbps,link-10gbps",
+      "--threads",
+      "31",
+      "--frames",
+      "64",
+      "--buffers",
+      "1024",
+      "--executor",
+      "default"
+    ],
+    "repeats_per_side": 5,
+    "policy": "AB then BA alternating; all samples retained; no automatic warmup or trimming",
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "after",
+        "exit_code": 0
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "target/perf-next-20261023/paired-defaults/before/run.log",
+      "sha256": "521424dcc6d1e281eaccdeacdab7bbb4922ff5e5baa801aea5f800c884772b3f",
+      "bytes": 50769,
+      "extracted_sha256": "248b9870d17fc6496bb7c898d0f16143a5b9d84fa121011d50b9cd84fdaeb19c",
+      "saved": "raw/before/resource_samples.csv"
+    },
+    {
+      "source": "target/perf-next-20261023/paired-defaults/before/results_raw.csv",
+      "sha256": "e40a8156810c9d65e016fbbaa3f0366116b3cc399988348fdcfb95d1ed8ae297",
+      "bytes": 18327,
+      "saved": "raw/before/results_raw.csv"
+    },
+    {
+      "source": "target/perf-next-20261023/paired-defaults/after/run.log",
+      "sha256": "1006173aeff5ce71239ce7a4a157659bbc613705956b4dc9ca9082c02649df45",
+      "bytes": 53583,
+      "extracted_sha256": "4f1ebc582d4475a2bcca2a410ba398ea1b01990989195696d0de50fc676e38f1",
+      "saved": "raw/after/resource_samples.csv"
+    },
+    {
+      "source": "target/perf-next-20261023/paired-defaults/after/results_raw.csv",
+      "sha256": "62edfae35eb60857029e8b6acf523db618f7861ac0e831ccf2c138b1a0d3e7f7",
+      "bytes": 18322,
+      "saved": "raw/after/results_raw.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "target/perf-next-20261023/paired-defaults/paired-run.json",
+      "sha256": "efd622b1b28a6dd2af7794d4046607d615639a612d0be603f9ac504a7b95e69b",
+      "bytes": 9011
+    },
+    {
+      "source": "target/perf-next-20261023/paired-defaults/before/run.log",
+      "sha256": "521424dcc6d1e281eaccdeacdab7bbb4922ff5e5baa801aea5f800c884772b3f",
+      "bytes": 50769
+    },
+    {
+      "source": "target/perf-next-20261023/paired-defaults/after/run.log",
+      "sha256": "1006173aeff5ce71239ce7a4a157659bbc613705956b4dc9ca9082c02649df45",
+      "bytes": 53583
+    }
+  ]
+}

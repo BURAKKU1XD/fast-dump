@@ -1,0 +1,370 @@
+{
+  "schema_version": 1,
+  "id": "legacy-target-perf-next-20261023-paired-alloc-4a7bd3d00a88",
+  "kind": "benchmark",
+  "label": "target/perf-next-20261023/paired-alloc",
+  "status": "imported",
+  "started_utc": "2026-10-23T00:29:08.957324+00:00",
+  "time_source": "manifest",
+  "imported_utc": "2026-10-25T02:06:43.213891+00:00",
+  "import_sha256": "4a7bd3d00a887741d62bbb0068f53ef644de087d366ff3b28d27abaf4c34833a",
+  "origin": "results/history/2026-10-24",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "created_utc": "2026-10-23T00:29:08.957324+00:00",
+    "binary_sha256": {
+      "before": "34cee794b2b12b1383c555f2d52ef19ce859936979e70e0c6a2297286a805ba1",
+      "after": "eb121d4d4efa886d8a2614c57d7747b50378cf7d8e4cced894a9df5c67edc087"
+    },
+    "comparison_kind": "A/B",
+    "platform": "Windows-10-10.0.19045-SP0",
+    "logical_cpus": 32,
+    "allocations_diagnostic": true,
+    "measurement_contract": {
+      "counters_schema": 2,
+      "cycle_source": "windows-process-cycle-time",
+      "io_source": "windows-process-io"
+    },
+    "counter_scope": {
+      "cpu_cycles": "windows_process_cycle_time",
+      "io_read_ops": "windows_process_io_accounting",
+      "io_write_ops": "windows_process_io_accounting",
+      "io_other_ops": "windows_process_io_accounting",
+      "io_read_bytes": "windows_process_io_accounting",
+      "io_write_bytes": "windows_process_io_accounting",
+      "io_other_bytes": "windows_process_io_accounting",
+      "io_read_ops_raw": "windows_process_io_accounting",
+      "io_read_bytes_raw": "windows_process_io_accounting",
+      "io_observer_read_ops": "process_snapshot_observer_reads",
+      "io_observer_read_bytes": "process_snapshot_observer_reads",
+      "storage_read_bytes": "unmeasured",
+      "storage_write_bytes": "unmeasured",
+      "page_faults": "windows_process_combined_page_faults",
+      "minor_faults": "unmeasured",
+      "major_faults": "unmeasured",
+      "voluntary_switches": "unmeasured",
+      "involuntary_switches": "unmeasured",
+      "allocs": "diagnostic_allocator_requests",
+      "alloc_bytes": "diagnostic_allocator_requests",
+      "reallocs": "diagnostic_allocator_requests",
+      "deallocs": "diagnostic_allocator_outcomes",
+      "alloc_successes": "diagnostic_allocator_outcomes",
+      "alloc_success_bytes": "diagnostic_allocator_outcomes",
+      "realloc_successes": "diagnostic_allocator_outcomes",
+      "realloc_success_bytes": "diagnostic_allocator_outcomes",
+      "alloc_failures": "diagnostic_allocator_outcomes",
+      "realloc_failures": "diagnostic_allocator_outcomes",
+      "dealloc_bytes": "diagnostic_allocator_outcomes",
+      "zeroed_bytes": "diagnostic_allocator_outcomes",
+      "elapsed_ns": "phase_wall_time",
+      "work_ns": "phase_wall_time",
+      "drop_ns": "phase_wall_time",
+      "cpu_ns": "process_cpu_time_all_threads",
+      "user_ns": "process_cpu_time_all_threads",
+      "kernel_ns": "process_cpu_time_all_threads"
+    },
+    "repeats": 3,
+    "policy": "AB/BA alternating pairs; no trimming, implicit warmup, or dropped first samples",
+    "scenarios": [
+      [
+        "scan",
+        1
+      ],
+      [
+        "read",
+        16
+      ],
+      [
+        "read",
+        32
+      ],
+      [
+        "read",
+        48
+      ],
+      [
+        "read",
+        64
+      ],
+      [
+        "read",
+        96
+      ],
+      [
+        "read",
+        128
+      ]
+    ],
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "stage": "scan",
+        "readers": 1
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "stage": "scan",
+        "readers": 1
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "stage": "scan",
+        "readers": 1
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "stage": "scan",
+        "readers": 1
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "stage": "scan",
+        "readers": 1
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "stage": "scan",
+        "readers": 1
+      },
+      {
+        "pair": 1,
+        "side": "before",
+        "stage": "read",
+        "readers": 16
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "stage": "read",
+        "readers": 16
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "stage": "read",
+        "readers": 16
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "stage": "read",
+        "readers": 16
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "stage": "read",
+        "readers": 16
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "stage": "read",
+        "readers": 16
+      },
+      {
+        "pair": 1,
+        "side": "before",
+        "stage": "read",
+        "readers": 32
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "stage": "read",
+        "readers": 32
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "stage": "read",
+        "readers": 32
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "stage": "read",
+        "readers": 32
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "stage": "read",
+        "readers": 32
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "stage": "read",
+        "readers": 32
+      },
+      {
+        "pair": 1,
+        "side": "before",
+        "stage": "read",
+        "readers": 48
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "stage": "read",
+        "readers": 48
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "stage": "read",
+        "readers": 48
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "stage": "read",
+        "readers": 48
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "stage": "read",
+        "readers": 48
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "stage": "read",
+        "readers": 48
+      },
+      {
+        "pair": 1,
+        "side": "before",
+        "stage": "read",
+        "readers": 64
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "stage": "read",
+        "readers": 64
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "stage": "read",
+        "readers": 64
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "stage": "read",
+        "readers": 64
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "stage": "read",
+        "readers": 64
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "stage": "read",
+        "readers": 64
+      },
+      {
+        "pair": 1,
+        "side": "before",
+        "stage": "read",
+        "readers": 96
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "stage": "read",
+        "readers": 96
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "stage": "read",
+        "readers": 96
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "stage": "read",
+        "readers": 96
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "stage": "read",
+        "readers": 96
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "stage": "read",
+        "readers": 96
+      },
+      {
+        "pair": 1,
+        "side": "before",
+        "stage": "read",
+        "readers": 128
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "stage": "read",
+        "readers": 128
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "stage": "read",
+        "readers": 128
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "stage": "read",
+        "readers": 128
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "stage": "read",
+        "readers": 128
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "stage": "read",
+        "readers": 128
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "target/perf-next-20261023/paired-alloc/samples.csv",
+      "sha256": "13ef82bd14efccd9c68be691af821bf1e6d00748118273afa578370ea9a74a3f",
+      "bytes": 48999,
+      "saved": "raw/samples.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "target/perf-next-20261023/paired-alloc/paired-run.json",
+      "sha256": "cdbacdf70f29662051797bc1e8f219639ed363295e0bbb92d2cc946871f311e8",
+      "bytes": 112358
+    }
+  ]
+}

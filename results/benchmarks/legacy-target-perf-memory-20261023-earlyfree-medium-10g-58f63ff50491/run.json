@@ -1,0 +1,134 @@
+{
+  "schema_version": 1,
+  "id": "legacy-target-perf-memory-20261023-earlyfree-medium-10g-58f63ff50491",
+  "kind": "benchmark",
+  "label": "target/perf-memory-20261023/earlyfree-medium-10g",
+  "status": "imported",
+  "started_utc": "2026-10-23T10:05:33.432174+00:00",
+  "time_source": "original_file_mtime",
+  "imported_utc": "2026-10-25T02:06:41.563239+00:00",
+  "import_sha256": "58f63ff504915241dbc65f171f09e41e0584df2b764b3ddd429fa17572cae26f",
+  "origin": "results/history/2026-10-24",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "binary_sha256": {
+      "before": "d7dce4575ee4290e5fa72faeca0ecfb92ae5e609e5de797fb5f1a51587ab4bab",
+      "after": "b74cf97b815e51fac00e2b52887f272cdf242faf8a36cb8972ae1bb82d5c77d8"
+    },
+    "comparison_kind": "A/B",
+    "requested_readers": {
+      "before": 16,
+      "after": 16
+    },
+    "common_arguments": [
+      "--repeats",
+      "1",
+      "--shuffle-scenarios",
+      "--shuffle-seed",
+      "91",
+      "--source",
+      "E:\\projects\\cool_project\\fast-dump\\target\\perf-next-20261023\\fixtures\\medium",
+      "--network-profile",
+      "link-10gbps",
+      "--threads",
+      "31",
+      "--frames",
+      "64",
+      "--buffers",
+      "1024",
+      "--executor",
+      "default"
+    ],
+    "repeats_per_side": 4,
+    "policy": "AB then BA alternating; all samples retained; no automatic warmup or trimming",
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "before",
+        "exit_code": 0
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "target/perf-memory-20261023/earlyfree-medium-10g/before/run.log",
+      "sha256": "7602608a97787368ccca1128b99a4f22055edc16467b4021c83b9a49bdc60805",
+      "bytes": 10890,
+      "extracted_sha256": "52c2b2c75dbcc518308ac6635e6b18711895f5af894cc924226242cf96952bef",
+      "saved": "raw/before/resource_samples.csv"
+    },
+    {
+      "source": "target/perf-memory-20261023/earlyfree-medium-10g/before/results_raw.csv",
+      "sha256": "479b523e19308ecc4e4c55b14cbfb0626414fb862cdf1da7aec3aeeaca1e876d",
+      "bytes": 3753,
+      "saved": "raw/before/results_raw.csv"
+    },
+    {
+      "source": "target/perf-memory-20261023/earlyfree-medium-10g/after/run.log",
+      "sha256": "c138ad7e757f1f209263a697fc40b32b1a858e442f8a6565ce9b7deeed2028fb",
+      "bytes": 10882,
+      "extracted_sha256": "0e5d0092f7eba41bde1bf16344585acd4b77be67ac74e3e9ee3467453131f73c",
+      "saved": "raw/after/resource_samples.csv"
+    },
+    {
+      "source": "target/perf-memory-20261023/earlyfree-medium-10g/after/results_raw.csv",
+      "sha256": "53bdb7487a21338ffd4ac6dea9000b85f9ba578e246e08e4755cc6bcd049485a",
+      "bytes": 3756,
+      "saved": "raw/after/results_raw.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "target/perf-memory-20261023/earlyfree-medium-10g/paired-run.json",
+      "sha256": "0c10502d744bf23fe7d29e85a8b0c194731b868264f72f97635db15120b54916",
+      "bytes": 7820
+    },
+    {
+      "source": "target/perf-memory-20261023/earlyfree-medium-10g/before/run.log",
+      "sha256": "7602608a97787368ccca1128b99a4f22055edc16467b4021c83b9a49bdc60805",
+      "bytes": 10890
+    },
+    {
+      "source": "target/perf-memory-20261023/earlyfree-medium-10g/after/run.log",
+      "sha256": "c138ad7e757f1f209263a697fc40b32b1a858e442f8a6565ce9b7deeed2028fb",
+      "bytes": 10882
+    }
+  ]
+}

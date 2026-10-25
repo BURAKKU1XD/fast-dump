@@ -1,0 +1,144 @@
+{
+  "schema_version": 1,
+  "id": "legacy-run-754143394f95",
+  "kind": "benchmark",
+  "label": ".",
+  "status": "imported",
+  "started_utc": "2026-10-25T01:59:06.399815+00:00",
+  "time_source": "original_file_mtime",
+  "imported_utc": "2026-10-25T02:06:57.794552+00:00",
+  "import_sha256": "754143394f95bf31931431a988b37a03960980bd045f5b61bbc0d14f433dbbcd",
+  "origin": "results/local/benchmarks/cleanup-loopback-aa",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "binary_sha256": {
+      "before": "0c2df973d46ef8bef8312862a41db8d60db2cf2745dbc4e243f3fdc933aecd12",
+      "after": "0c2df973d46ef8bef8312862a41db8d60db2cf2745dbc4e243f3fdc933aecd12"
+    },
+    "comparison_kind": "A/A",
+    "requested_readers": {
+      "before": 8,
+      "after": 8
+    },
+    "common_arguments": [
+      "--repeats",
+      "1",
+      "--shuffle-scenarios",
+      "--shuffle-seed",
+      "91",
+      "--dataset",
+      "manySmallFiles,mixed,bigFiles",
+      "--network-profile",
+      "loopback-localhost",
+      "--threads",
+      "1,4",
+      "--frames",
+      "64",
+      "--buffers",
+      "1024",
+      "--executor",
+      "default"
+    ],
+    "repeats_per_side": 5,
+    "policy": "AB then BA alternating; all samples retained; no automatic warmup or trimming",
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "after",
+        "exit_code": 0
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "before/run.log",
+      "sha256": "0e999a75a9d30ab04d48a94b56b666b1fb281432a226297bdf5740853975ea00",
+      "bytes": 74276,
+      "extracted_sha256": "34e2e41027e2eef924a4e0f27a037dde12fea72e2288443cc9fe582d5f14d7fd",
+      "saved": "raw/before/resource_samples.csv"
+    },
+    {
+      "source": "before/results_raw.csv",
+      "sha256": "b07b4eff41052e691b19841f12a4cd12e26320dd8178660418a9efcfaf15c410",
+      "bytes": 18451,
+      "saved": "raw/before/results_raw.csv"
+    },
+    {
+      "source": "after/run.log",
+      "sha256": "4c2055adb5ad25f7ea124ce07cf8bf544a4493d657f9d46450f2dd6848420ff4",
+      "bytes": 74238,
+      "extracted_sha256": "627c3617b649dbc05807f8b7c6d3db09dfc55a1d298c7fd9d6f4a6cf6181ab75",
+      "saved": "raw/after/resource_samples.csv"
+    },
+    {
+      "source": "after/results_raw.csv",
+      "sha256": "0e35175a7064b6678dedeb7657f3fc52c7c9cfd88d0af872131a2327b8e72da2",
+      "bytes": 18459,
+      "saved": "raw/after/results_raw.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "paired-run.json",
+      "sha256": "a6fa72dbabe9d597054016ada8a310446d0276a110249a9f8316139a36dcb679",
+      "bytes": 9293
+    },
+    {
+      "source": "before/run.log",
+      "sha256": "0e999a75a9d30ab04d48a94b56b666b1fb281432a226297bdf5740853975ea00",
+      "bytes": 74276
+    },
+    {
+      "source": "after/run.log",
+      "sha256": "4c2055adb5ad25f7ea124ce07cf8bf544a4493d657f9d46450f2dd6848420ff4",
+      "bytes": 74238
+    }
+  ]
+}

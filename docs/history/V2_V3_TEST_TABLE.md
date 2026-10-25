@@ -1,3 +1,6 @@
+> Historical document. See the [current runtime](../runtime.md) and
+> [protocol v4](../../src/network/protocol.md) for the active contract.
+
 # V2 vs V3 Test Table
 
 Это сводка по тем `v2 vs v3` тестам, которые ещё можно честно восстановить из

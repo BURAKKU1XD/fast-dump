@@ -1,0 +1,139 @@
+{
+  "schema_version": 1,
+  "id": "legacy-target-perf-link-20261022-paired-windows-c86a455fccfd",
+  "kind": "benchmark",
+  "label": "target/perf-link-20261022/paired-windows",
+  "status": "imported",
+  "started_utc": "2026-10-22T20:56:04.800913+00:00",
+  "time_source": "original_file_mtime",
+  "imported_utc": "2026-10-25T02:06:41.441874+00:00",
+  "import_sha256": "c86a455fccfdbe33ef1f2f0a5939c0f6c443554a34b9e1054283631c822fc721",
+  "origin": "results/history/2026-10-24",
+  "source": null,
+  "exit_code": null,
+  "parameters": {
+    "complete": true,
+    "binary_sha256": {
+      "before": "86d6d6b847acc89999461d059fe9f1de07de6c9ec474b7abbfac94f000602ca4",
+      "after": "ce5064dbfde23fb819e537246c310e291171b62b0575ca2c9e75607f9c6d9e96"
+    },
+    "common_arguments": [
+      "--repeats",
+      "1",
+      "--shuffle-scenarios",
+      "--shuffle-seed",
+      "91",
+      "--dataset",
+      "manySmallFiles,bigFiles,mixed",
+      "--network-profile",
+      "loopback-localhost,link-1gbps,link-10gbps",
+      "--threads",
+      "4",
+      "--frames",
+      "64",
+      "--buffers",
+      "1024",
+      "--executor",
+      "default"
+    ],
+    "repeats_per_side": 5,
+    "policy": "AB then BA alternating; all samples retained; no automatic warmup or trimming",
+    "order": [
+      {
+        "pair": 1,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 1,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 2,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 3,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "after",
+        "exit_code": 0
+      },
+      {
+        "pair": 4,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "before",
+        "exit_code": 0
+      },
+      {
+        "pair": 5,
+        "side": "after",
+        "exit_code": 0
+      }
+    ]
+  },
+  "evidence": [
+    {
+      "source": "target/perf-link-20261022/paired-windows/before/run.log",
+      "sha256": "c5b29bfbbc53e5e2bd51510347c70e284d6a3f48223b265ae8872df4b2e6e6bd",
+      "bytes": 62048,
+      "extracted_sha256": "070d54345c194ae2b36e00d753e6484cbb9834986b5c7fe391dc9d6eff51e7ca",
+      "saved": "raw/before/resource_samples.csv"
+    },
+    {
+      "source": "target/perf-link-20261022/paired-windows/before/results_raw.csv",
+      "sha256": "eba4d12e4de7b14c01232201f3533727a14e446fffc206bf1abbfb69ce2a54d7",
+      "bytes": 26726,
+      "saved": "raw/before/results_raw.csv"
+    },
+    {
+      "source": "target/perf-link-20261022/paired-windows/after/run.log",
+      "sha256": "744401713f42d2128b41f316eefeef93a994e878ab4d0e319ef380c72b20e6aa",
+      "bytes": 62007,
+      "extracted_sha256": "99395abbc1ca8742601ac29dbf084638b76b833a315b9157801039f63c52698a",
+      "saved": "raw/after/resource_samples.csv"
+    },
+    {
+      "source": "target/perf-link-20261022/paired-windows/after/results_raw.csv",
+      "sha256": "16590064526007463bd6d79a9094ea6c0ed16b8811b4b88625e2fe49d523137c",
+      "bytes": 26746,
+      "saved": "raw/after/results_raw.csv"
+    }
+  ],
+  "context_evidence": [
+    {
+      "source": "target/perf-link-20261022/paired-windows/paired-run.json",
+      "sha256": "81fdd54f93ac1ece61540300cfd6ef330a01655ea6980880cf1cd61d49f9db4a",
+      "bytes": 8638
+    },
+    {
+      "source": "target/perf-link-20261022/paired-windows/before/run.log",
+      "sha256": "c5b29bfbbc53e5e2bd51510347c70e284d6a3f48223b265ae8872df4b2e6e6bd",
+      "bytes": 62048
+    },
+    {
+      "source": "target/perf-link-20261022/paired-windows/after/run.log",
+      "sha256": "744401713f42d2128b41f316eefeef93a994e878ab4d0e319ef380c72b20e6aa",
+      "bytes": 62007
+    }
+  ]
+}
