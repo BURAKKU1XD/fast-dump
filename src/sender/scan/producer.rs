@@ -197,13 +197,20 @@ pub(super) fn stream_parallel_subtrees(
             loop {
                 while pending.len() < workers && next_directory != 0 {
                     next_directory -= 1;
-                    let entry = &entries[next_directory];
+                    let entry = &mut entries[next_directory];
                     if !entry.file_type.is_dir() {
                         continue;
                     }
                     let (sender, receiver) = bounded(SCAN_QUEUE_BATCHES);
+                    // Координатору остаётся признак каталога для очереди результатов;
+                    // оба пути дальше нужны только обработчику поддерева.
                     jobs.send(StreamingSubtreeTask {
-                        entry: entry.clone(),
+                        entry: DiscoveredEntry {
+                            abs_path: std::mem::take(&mut entry.abs_path),
+                            relative_path: std::mem::take(&mut entry.relative_path),
+                            file_type: entry.file_type,
+                            ambiguous_name: entry.ambiguous_name,
+                        },
                         output: sender,
                     })
                     .context("source subtree scanners stopped before receiving work")?;
