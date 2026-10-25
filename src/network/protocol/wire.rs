@@ -27,6 +27,17 @@ pub(crate) fn write_message<T>(stream: &mut T, message: &Message) -> Result<()>
 where
     T: Write,
 {
+    if let Message::BundleCommit(commit) = message {
+        // Фиксированный body не требует heap; до первого write сохраняем прежнюю валидацию.
+        codec::validate_bundle_commit_descriptor(&commit.descriptor)?;
+        let mut body = [0_u8; 36];
+        body[..4].copy_from_slice(&commit.attempt_no.to_le_bytes());
+        body[4..12].copy_from_slice(&commit.descriptor.bundle_no.to_le_bytes());
+        body[12..20].copy_from_slice(&commit.descriptor.tar_payload_bytes.to_le_bytes());
+        body[20..28].copy_from_slice(&commit.descriptor.compressed_payload_bytes.to_le_bytes());
+        body[28..36].copy_from_slice(&commit.descriptor.compressed_xxh3_64.to_le_bytes());
+        return write_packet(stream, MessageKind::BundleCommit, &body);
+    }
     let (kind, body) = encode_message(message)?;
     write_packet(stream, kind, &body)
 }
@@ -427,6 +438,85 @@ mod tests {
         let mut bytes = packet_header(kind, body.len() as u32).to_vec();
         bytes.extend_from_slice(&body);
         bytes
+    }
+
+    fn commit_message(attempt_no: u32, fields: [u64; 4]) -> Message {
+        Message::BundleCommit(BundleCommit {
+            attempt_no,
+            descriptor: crate::network::protocol::BundleCommitDescriptor {
+                bundle_no: fields[0],
+                tar_payload_bytes: fields[1],
+                compressed_payload_bytes: fields[2],
+                compressed_xxh3_64: fields[3],
+            },
+        })
+    }
+
+    #[test]
+    fn stack_commit_matches_generic_encoder_for_edge_values() {
+        for attempt in [0, 1, u32::MAX] {
+            for fields in [
+                [1, 0, 1, 0],
+                [17, 0x0102_0304_0506_0708, 9, 0xf1e2_d3c4_b5a6_9788],
+                [u64::MAX; 4],
+            ] {
+                let message = commit_message(attempt, fields);
+                let mut packet = Vec::new();
+                write_message(&mut packet, &message).unwrap();
+                assert_eq!(packet, reference_packet(&message));
+                assert_eq!(packet.len(), 12 + 36);
+                assert_eq!(read_message(&mut Cursor::new(packet)).unwrap(), message);
+            }
+        }
+    }
+
+    #[test]
+    fn stack_commit_rejects_invalid_descriptor_before_any_write() {
+        for fields in [[0, 0, 1, 0], [1, 0, 0, 0], [0, 0, 0, 0]] {
+            let message = commit_message(u32::MAX, fields);
+            let expected = encode_message(&message).unwrap_err().to_string();
+            let mut writer = ScriptedVectoredWriter::default();
+            let error = write_message(&mut writer, &message).unwrap_err();
+            assert_eq!(error.to_string(), expected);
+            assert!(writer.bytes.is_empty());
+            assert_eq!(writer.calls, 0);
+        }
+    }
+
+    #[test]
+    fn stack_commit_preserves_partial_and_interrupted_writes() {
+        let message = commit_message(3, [17, 1024, 999, u64::MAX]);
+        for limit in [1, 11, 12, 13, 47] {
+            let mut writer = ScriptedVectoredWriter {
+                steps: VecDeque::from([
+                    WriteStep::Fail(io::ErrorKind::Interrupted),
+                    WriteStep::Limit(limit),
+                    WriteStep::Fail(io::ErrorKind::Interrupted),
+                    WriteStep::Limit(limit),
+                ]),
+                ..Default::default()
+            };
+            write_message(&mut writer, &message).unwrap();
+            assert_eq!(writer.bytes, reference_packet(&message));
+        }
+        for kind in [io::ErrorKind::WriteZero, io::ErrorKind::BrokenPipe] {
+            let mut writer = ScriptedVectoredWriter {
+                steps: VecDeque::from([
+                    WriteStep::Limit(5),
+                    if kind == io::ErrorKind::WriteZero {
+                        WriteStep::Limit(0)
+                    } else {
+                        WriteStep::Fail(kind)
+                    },
+                ]),
+                ..Default::default()
+            };
+            let error = write_message(&mut writer, &message).unwrap_err();
+            assert_eq!(error.downcast_ref::<io::Error>().unwrap().kind(), kind);
+            assert!(crate::network::is_retryable_error(&error));
+            assert_eq!(writer.bytes, reference_packet(&message)[..5]);
+            assert_eq!(writer.calls, 2);
+        }
     }
 
     #[test]
