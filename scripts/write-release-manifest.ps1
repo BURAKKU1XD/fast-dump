@@ -23,7 +23,7 @@ $manifestPath = [System.IO.Path]::GetFullPath($OutputPath)
 $repoRoot = Split-Path -Parent $PSScriptRoot
 Push-Location $repoRoot
 try {
-    # Манифест привязан к чистому коммиту; артефакты сборки остаются в ignored target/.
+    # Манифест привязан к чистому коммиту; target/ и releases/ исключены из Git.
     $status = Invoke-Checked 'git' @('status', '--porcelain', '--untracked-files=all')
     if ($status) {
         throw 'Release manifest requires a clean working tree.'

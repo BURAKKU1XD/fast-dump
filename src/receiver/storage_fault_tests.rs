@@ -52,6 +52,28 @@ fn expected_payload(last_bundle: u64) -> Vec<u8> {
 }
 
 #[test]
+fn failed_wal_sync_does_not_publish_durable_progress() {
+    use crate::progress::ProgressHub;
+    use crate::role::Role;
+    use crate::runtime::RunControl;
+    let directory = TestDirectory::new();
+    let run = RunControl::new(Some(std::sync::Arc::new(ProgressHub::new())));
+    let control = run.session(Role::Receiver, "boundaries", "peer");
+    let mut receiver =
+        ReceiverSession::open_controlled(directory.0.clone(), "boundaries", 1, Some(&control))
+            .unwrap();
+    let mut state = prepare_group(&mut receiver, 1, 2);
+    let fault = storage_faults::arm(Point::WalSync, 0, 0);
+    assert_commit_failure_without_ack(&mut receiver, &mut state);
+    fault.assert_consumed();
+    let progress = control.progress().unwrap();
+    assert!(progress.transferred_bytes.load(Ordering::Relaxed) > 0);
+    assert_eq!(progress.durable_bytes.load(Ordering::Relaxed), 0);
+    assert_eq!(progress.committed_entries.load(Ordering::Relaxed), 0);
+    assert_eq!(progress.bundles.load(Ordering::Relaxed), 0);
+}
+
+#[test]
 fn disk_full_after_partial_archive_write_preserves_acknowledged_prefix() {
     for partial_bytes in [0, 5] {
         let directory = TestDirectory::new();

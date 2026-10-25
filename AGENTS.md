@@ -25,8 +25,88 @@ behavior, hard constraints, and navigation.
   - `push`: `sender --connect` with `receiver --listen`
   - `pull`: `sender --listen` with `receiver --connect`
 - The active CLI/runtime contract is packet version `4`.
+- Interactive binary launches without a subcommand open an English setup wizard.
+  Complete sender/receiver commands start immediately with a terminal dashboard;
+  explicitly incomplete commands still fail validation. Global `--no-gui`,
+  non-terminal stdin/stdout/stderr, or `TERM=dumb` selects the plain path.
+  Help/version bypass terminal setup. The dashboard renders to stderr at most
+  five times per second, honors `NO_COLOR`, and preserves aggregate stdout.
+  Wizard Listen defaults to `0.0.0.0:7000`; Connect has a separate address
+  defaulting to `127.0.0.1:7000` for local use. Preserve edits independently
+  when switching transport modes; remote Connect needs the peer's network IP.
+  Sender setup offers `Zstd level`, default `3`, validated against the linked
+  zstd library's supported range. Preserve the edited level across role and
+  transport switches; receiver setup omits it. Review and dashboard show the
+  selected value. CLI selection remains `-l`/`--level` (default `3`).
+  Counters are observational: transferred compressed payload includes retries,
+  durable size follows validated ACKs (sender) or archive/WAL sync (receiver),
+  and resume ordinals are never substituted for successful entry counts.
+  Do not pre-scan the source to display an overall percentage or ETA; omit these
+  estimates while the total is unknown. Receiver Written counts archive appends
+  including later rollbacks, excluding discarded late/orphan payload.
+  Keep logs bounded to 200 messages and completed session history to 20.
+- Sender details show the current tar/zstd entry, its `size_at_open`, processed
+  payload bytes, and five-second source-processing speed separately from network
+  speed. Count regular-file payload accepted by tar/zstd, including retries;
+  exclude read-ahead, tar headers/padding, and symlink metadata. This is neither
+  physical disk throughput nor durable progress. Reset current-file progress on
+  each attempt, clear it at entry end, and preserve cumulative session counters.
+  Update payload counters atomically without per-block locks, allocations, or
+  clocks. Observed materialized writes use at most `1 MiB` slices for live
+  progress; unobserved writes retain the direct path.
+- The dashboard's Pipeline panel shows local stage operations, explicit queue/
+  peer/storage wait reasons, and elapsed time in the current state. Sender
+  stages are Scan, Read, Plan, Compress, Data, and Control; receiver stages are
+  Data, Control, and Storage. Read represents ordered file preparation; streamed
+  source reads appear under Compress. Socket I/O states include blocking time
+  and never imply throughput or diagnose packet loss. Silent waits are not
+  errors. Preserve detected failure states and freeze timers at session end.
+  Record stage state and transition time atomically without locks/allocations
+  on each update; repeated states must not reset wait timers. Unobserved runs
+  do not collect stage timings. Narrow layouts prioritize pipeline visibility.
+- Global `--retries <N>` counts additional whole-session attempts after transient
+  network failures; default `0` in plain mode, `10` in GUI. Global
+  `--retry-delay-secs <SECONDS>` defaults to `10` and requires at least `1`.
+  Explicit `--retries 0` disables GUI retries; wizard flags must survive setup.
+  Resolve presentation defaults at launch and preserve them on UI fallback.
+  Exhaustion returns the last error; success ends the budget. Use typed socket
+  I/O provenance, never error text or unqualified io::Error kinds, to distinguish
+  network failure from local file EOF or malformed packet-body decoding.
+  Known protocol/auth/storage rejections and cancellation are not retried.
+  A lost peer error response may still appear as a network disconnect.
+  Finish cleanup/join all workers before waiting; Ctrl+C wakes retry waiting.
+  Receiver Listen already isolates failed sessions and stays outside the
+  whole-run retry loop. Preserve v4 resume, archive finalization, aggregate
+  stdout, and the separate immediate per-file attempt limit.
+- Binary Ctrl+C cooperatively cancels both presentation modes and returns 130
+  after cleanup. Library APIs do not install process signal handlers. Register
+  sockets throughout connection/handshake/session lifetime; cancellation must
+  wake accept/connect/initialization-lock and queue waits, join listener session
+  workers and network readers, and never create terminal skips or send Finish.
+  Do not interrupt an in-progress durable commit or finalization transaction.
+  Current filesystem I/O or a compression call may delay shutdown. Existing
+  five-second handshake limits and lack of a general idle deadline remain.
 - Mainline execution path uses the bundle-first runtime in canonical module
   locations.
+- Linux senders exclude procfs, sysfs, debugfs, tracefs, cgroup v1/v2, resctrl,
+  configfs, binfmt_misc, securityfs, selinuxfs, smackfs, bpffs, nsfs, efivarfs,
+  mqueue, devpts, fusectl, rpc_pipefs, and nfsd by filesystem type. Check before
+  directory enumeration and prune the whole tree, including nested mounts.
+  Reject an excluded source root. Check every newly opened regular-file handle
+  before payload reads, including retries and individual bind-mounted files;
+  do not cache permission to read solely by `st_dev`. An excluded handle is an
+  immediate `UnsupportedEntry`; classification I/O errors use the existing open
+  attempt budget. Directory classification errors fail the scan; retry `EINTR`.
+  Unknown FS types, ordinary FUSE/network FS, OverlayFS, tmpfs/ramfs/hugetlbfs,
+  large/sparse files, and symlinks outside excluded trees remain eligible.
+  Windows selection is unchanged. The reason list is documented in README.
+  Emit one `UnsupportedEntry` with ordinal `0` per pruned directory and log its
+  filesystem/reason locally. Durability follows `SkipAck`; unvisited descendants
+  are not individual terminal skips. Records retain exact-path semantics, not
+  permanent prefix filtering. Reevaluate filesystem types on every scan.
+  Pruning changes ordinals relative to older senders; preserve committed-prefix
+  validation and never reset acknowledged state on mismatch. Use a new dump ID
+  for old root-dump tests. Protocol v4 and receiver formats stay unchanged.
 - Source scanning uses up to `2` subtree workers on Windows and `8` on other
   platforms, merging results in the same deterministic depth-first order.
   Batches contain up to `1024` entries on Windows and `64` on other platforms;
@@ -199,12 +279,26 @@ behavior, hard constraints, and navigation.
   doc, not runtime contract.
 - `docs/history/REWRITE_PERF_PLAN.md`: bundle-first perf backlog and rewrite rationale.
 - `docs/history/`: historical `v3` planning docs and reference material.
+- `results/history/2026-10-24/index.html`: local historical result index from
+  cleanup. Copies retain original relative paths (including `target/bench-*`);
+  `manifest.csv` records SHA-256 checksums and original modification times.
+  The archive also includes `inventory-before.json` and a cleanup report.
+  `results/history/` is ignored by Git; keep future result copies outside
+  `target/` so `cargo clean` preserves them.
+- `releases/index.html`: local saved release index. New packages use
+  `releases/<version>-<short-commit>/<Rust target triple>/` for the binary,
+  `manifest.json`, and `Cargo.lock`, with `.tar.gz` and `.sha256` files in the
+  version directory. Preserve historical verification files for older copies.
+  `releases/local/` holds replaceable local builds without release stress gates.
+  All of `releases/` is ignored by Git and stays outside Cargo's `target/`.
 - Runtime truth lives in code, `README.md`, and `src/network/protocol.md`. Historical
   docs explain old behavior only.
 
 ## Code Map
 
 - Top-level flow: `src/main.rs`, `src/app.rs`, `src/cli/mod.rs`.
+- Terminal presentation: `src/launch.rs`, `src/ui/`, `src/progress.rs`.
+- Cooperative cancellation and socket ownership: `src/runtime.rs`.
 - Active runtime:
   - `src/network/`
   - `src/sender/`

@@ -6,6 +6,7 @@ use anyhow::{Context, Result, ensure};
 use tar::{Builder, EntryType, Header};
 
 use crate::network::protocol::{BundleEntryDescriptor, BundleEntryKind};
+use crate::progress::SourceFileGuard;
 
 use super::compress::{BundleCompressor, CompressionOutput, DirectEncoder};
 #[cfg(test)]
@@ -214,8 +215,9 @@ impl<'a, O: CompressionOutput> BufferedBundleWriter<'a, O> {
         descriptor: &BundleEntryDescriptor,
         mode: u32,
         contents: &[u8],
+        progress: Option<&SourceFileGuard<'_>>,
     ) -> Result<()> {
-        append_materialized_entry(&mut self.writer, descriptor, mode, contents)
+        append_materialized_entry(&mut self.writer, descriptor, mode, contents, progress)
     }
 
     pub(crate) fn finish(self) -> Result<(O, u64)> {
@@ -247,19 +249,26 @@ pub(crate) fn build_streamed_regular_bundle_payload(
 
     let attempt_limit = entry.remaining_attempts();
     for attempt in 1..=attempt_limit {
-        if attempt > 1 && entry.reopen_for_retry().is_err() {
-            if attempt == attempt_limit {
+        if attempt > 1 {
+            let reason = match entry.reopen_for_retry() {
+                Ok(super::read::ReopenDecision::Opened) => None,
+                Ok(super::read::ReopenDecision::Unsupported(_)) => {
+                    Some(SkipReason::UnsupportedEntry)
+                }
+                Err(_) if attempt == attempt_limit => Some(SkipReason::OpenFailed),
+                Err(_) => continue,
+            };
+            if let Some(reason) = reason {
                 return Ok(StreamedBundleOutcome::Skipped {
                     skipped: SkippedEntry {
                         work_ordinal: entry.descriptor.work_ordinal,
                         relative_path: entry.descriptor.relative_path.clone(),
-                        reason: SkipReason::OpenFailed,
+                        reason,
                     },
                     raw_read_bytes: total_read_bytes,
                     read_duration: total_read_duration,
                 });
             }
-            continue;
         }
 
         let build_started = Instant::now();
@@ -337,7 +346,7 @@ fn append_buffered_entry<W>(writer: &mut W, entry: &MaterializedEntry) -> Result
 where
     W: Write,
 {
-    append_materialized_entry(writer, &entry.descriptor, entry.mode, &entry.contents)
+    append_materialized_entry(writer, &entry.descriptor, entry.mode, &entry.contents, None)
 }
 
 fn append_materialized_entry<W: Write>(
@@ -345,6 +354,7 @@ fn append_materialized_entry<W: Write>(
     descriptor: &BundleEntryDescriptor,
     mode: u32,
     contents: &[u8],
+    progress: Option<&SourceFileGuard<'_>>,
 ) -> Result<()> {
     match &descriptor.kind {
         BundleEntryKind::Regular => {
@@ -357,7 +367,7 @@ fn append_materialized_entry<W: Write>(
             append_entry_header(writer, &mut header, &descriptor.relative_path, None)?;
             // Данные уже в памяти: передаём срез кодировщику без промежуточного
             // буфера io::copy и динамических вызовов Read на каждом блоке.
-            writer.write_all(contents).with_context(|| {
+            write_source_payload(writer, contents, progress).with_context(|| {
                 format!("failed to encode v4 tar entry {}", descriptor.relative_path)
             })?;
             pad_zeroes(writer, descriptor.size_at_open)?;
@@ -391,6 +401,7 @@ where
         size_at_open,
         reader,
         &mut scratch,
+        None,
     )
 }
 
@@ -403,6 +414,7 @@ pub(crate) fn append_streamed_regular_entry_with_buffer<W: Write, R: Read>(
     size_at_open: u64,
     reader: &mut R,
     scratch: &mut [u8],
+    progress: Option<&SourceFileGuard<'_>>,
 ) -> Result<()> {
     anyhow::ensure!(
         !scratch.is_empty(),
@@ -410,7 +422,7 @@ pub(crate) fn append_streamed_regular_entry_with_buffer<W: Write, R: Read>(
     );
     let mut header = new_entry_header(mode, EntryType::Regular, size_at_open);
     append_entry_header(writer, &mut header, relative_path, None)?;
-    copy_stream(reader, writer, relative_path, scratch)?;
+    copy_stream(reader, writer, relative_path, scratch, progress)?;
     pad_zeroes(writer, size_at_open)?;
     Ok(())
 }
@@ -516,6 +528,7 @@ fn copy_stream<R, W>(
     writer: &mut W,
     relative_path: &str,
     buffer: &mut [u8],
+    progress: Option<&SourceFileGuard<'_>>,
 ) -> Result<()>
 where
     R: Read,
@@ -533,9 +546,34 @@ where
         if read == 0 {
             break;
         }
-        writer.write_all(&buffer[..read]).with_context(|| {
+        write_source_payload(writer, &buffer[..read], progress).with_context(|| {
             format!("failed to write streamed v4 tar payload for {relative_path}")
         })?;
+    }
+    Ok(())
+}
+
+fn write_source_payload<W: Write>(
+    writer: &mut W,
+    mut bytes: &[u8],
+    progress: Option<&SourceFileGuard<'_>>,
+) -> io::Result<()> {
+    let Some(progress) = progress else {
+        return writer.write_all(bytes);
+    };
+    // Считаем только принятый payload, включая успешный префикс перед ошибкой.
+    // Заголовки/padding идут мимо; read-ahead не означает обработку компрессором.
+    while !bytes.is_empty() {
+        let end = bytes.len().min(STREAM_READ_BYTES);
+        match writer.write(&bytes[..end]) {
+            Ok(0) => return Err(io::ErrorKind::WriteZero.into()),
+            Ok(written) => {
+                progress.processed(written);
+                bytes = &bytes[written..];
+            }
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => continue,
+            Err(error) => return Err(error),
+        }
     }
     Ok(())
 }
@@ -564,6 +602,143 @@ mod tests {
     use super::*;
 
     #[test]
+    fn observed_payload_counts_partial_writes_retries_and_write_zero() {
+        struct FailingWriter(usize);
+        impl Write for FailingWriter {
+            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+                if self.0 == 5 {
+                    return Err(io::ErrorKind::BrokenPipe.into());
+                }
+                let written = bytes.len().min(3).min(5 - self.0);
+                self.0 += written;
+                Ok(written)
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        let progress = crate::progress::ProgressHub::new().session("sender".into(), "dump", "peer");
+        {
+            let source = progress.source_file("file", 9);
+            let error = write_source_payload(&mut FailingWriter(0), b"123456789", Some(&source))
+                .unwrap_err();
+            assert_eq!(error.kind(), io::ErrorKind::BrokenPipe);
+            assert_eq!(progress.snapshot().current_file.unwrap().processed_bytes, 5);
+        }
+        {
+            let source = progress.source_file("file", 9);
+            write_source_payload(&mut Vec::new(), b"123456789", Some(&source)).unwrap();
+            assert_eq!(progress.snapshot().current_file.unwrap().processed_bytes, 9);
+        }
+        let source = progress.source_file("empty-writer", 1);
+        let mut empty = &mut [][..];
+        assert_eq!(
+            write_source_payload(&mut empty, b"x", Some(&source))
+                .unwrap_err()
+                .kind(),
+            io::ErrorKind::WriteZero
+        );
+        assert_eq!(progress.snapshot().raw_processed_bytes, 14);
+    }
+
+    #[test]
+    fn source_accounting_matches_materialized_and_streamed_payload_only() {
+        let progress = crate::progress::ProgressHub::new().session("sender".into(), "dump", "peer");
+        let mut entry = regular("regular", vec![7; 17]);
+        let mut materialized = Vec::new();
+        {
+            let source = progress.source_file("regular", 17);
+            append_materialized_entry(
+                &mut materialized,
+                &entry.descriptor,
+                entry.mode,
+                &entry.contents,
+                Some(&source),
+            )
+            .unwrap();
+            assert_eq!(
+                progress.snapshot().current_file.unwrap().processed_bytes,
+                17
+            );
+        }
+        let mut streamed = Vec::new();
+        {
+            let source = progress.source_file("regular", 17);
+            append_streamed_regular_entry_with_buffer(
+                &mut streamed,
+                "regular",
+                entry.mode,
+                17,
+                &mut Cursor::new(&entry.contents),
+                &mut [0; 5],
+                Some(&source),
+            )
+            .unwrap();
+            assert_eq!(
+                progress.snapshot().current_file.unwrap().processed_bytes,
+                17
+            );
+        }
+        assert_eq!(materialized, streamed);
+        assert!(streamed.len() > 17);
+        entry.descriptor.kind = BundleEntryKind::Symlink {
+            target: "target".into(),
+        };
+        entry.descriptor.size_at_open = 0;
+        entry.contents = Vec::new().into();
+        {
+            let source = progress.source_file("symlink", 0);
+            append_materialized_entry(
+                &mut Vec::new(),
+                &entry.descriptor,
+                entry.mode,
+                &entry.contents,
+                Some(&source),
+            )
+            .unwrap();
+        }
+        entry.descriptor.kind = BundleEntryKind::Regular;
+        {
+            let source = progress.source_file("empty", 0);
+            append_materialized_entry(
+                &mut Vec::new(),
+                &entry.descriptor,
+                entry.mode,
+                &entry.contents,
+                Some(&source),
+            )
+            .unwrap();
+        }
+        assert_eq!(progress.snapshot().raw_processed_bytes, 34);
+        assert!(progress.snapshot().current_file.is_none());
+    }
+
+    #[test]
+    fn observed_materialized_payload_has_bounded_progress_intervals() {
+        #[derive(Default)]
+        struct LargestWrite(usize);
+        impl Write for LargestWrite {
+            fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+                self.0 = self.0.max(bytes.len());
+                Ok(bytes.len())
+            }
+            fn flush(&mut self) -> io::Result<()> {
+                Ok(())
+            }
+        }
+        let bytes = vec![0; STREAM_READ_BYTES * 3 + 17];
+        let progress = crate::progress::ProgressHub::new().session("sender".into(), "dump", "peer");
+        let source = progress.source_file("large", bytes.len() as u64);
+        let mut observed = LargestWrite::default();
+        write_source_payload(&mut observed, &bytes, Some(&source)).unwrap();
+        assert_eq!(observed.0, STREAM_READ_BYTES);
+        assert_eq!(progress.snapshot().raw_processed_bytes, bytes.len() as u64);
+        let mut unobserved = LargestWrite::default();
+        write_source_payload(&mut unobserved, &bytes, None).unwrap();
+        assert_eq!(unobserved.0, bytes.len());
+    }
+
+    #[test]
     fn streamed_copy_retries_interrupted_read_without_losing_progress() {
         struct InterruptedReader {
             inner: Cursor<&'static [u8]>,
@@ -587,7 +762,7 @@ mod tests {
             calls: 0,
         };
         let mut output = Vec::new();
-        copy_stream(&mut reader, &mut output, "file", &mut [0; 16]).unwrap();
+        copy_stream(&mut reader, &mut output, "file", &mut [0; 16], None).unwrap();
         assert_eq!(output, expected);
         assert!(reader.calls > 2);
     }

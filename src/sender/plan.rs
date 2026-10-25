@@ -139,6 +139,7 @@ pub(crate) struct DumpPlanner {
     #[cfg(test)]
     compressor: BundleCompressor,
     cancellation: Arc<AtomicBool>,
+    control: Option<crate::runtime::SessionControl>,
     pending_entry: Option<PendingEntry>,
     next_bundle_no: u64,
     options: BundlePlanOptions,
@@ -225,6 +226,20 @@ impl DumpPlanner {
         resume_state: &ResumeState,
         options: BundlePlanOptions,
     ) -> Result<Self> {
+        Self::controlled(source_dir, resume_state, options, None)
+    }
+
+    pub(crate) fn controlled(
+        source_dir: &Path,
+        resume_state: &ResumeState,
+        options: BundlePlanOptions,
+        control: Option<crate::runtime::SessionControl>,
+    ) -> Result<Self> {
+        let preparing = crate::progress::stage(
+            control.as_ref(),
+            crate::progress::PipelineStage::Plan,
+            crate::progress::PipelineState::Planning,
+        );
         if options.bundle_target_bytes == 0 {
             bail!("v4 bundle_target_bytes must be greater than zero");
         }
@@ -233,7 +248,7 @@ impl DumpPlanner {
             options.compression_threads > 0,
             "compression threads must be greater than zero"
         );
-        let mut scan = StreamingScan::new(source_dir)?;
+        let mut scan = StreamingScan::controlled(source_dir, control.clone())?;
         let cancellation = scan.cancellation_flag();
         // До подтверждения границы никакой reader ещё не открывает новый payload.
         validate_resume_boundary(resume_state, &mut scan)?;
@@ -258,6 +273,7 @@ impl DumpPlanner {
             #[cfg(test)]
             compressor,
             cancellation,
+            control,
             pending_entry: None,
             next_bundle_no: resume_state.last_committed_bundle_no.saturating_add(1),
             options,
@@ -270,7 +286,17 @@ impl DumpPlanner {
             cancel_after_skips: None,
         };
         planner.refresh_scan_state();
+        drop(preparing);
+        crate::progress::set_stage(
+            planner.control.as_ref(),
+            crate::progress::PipelineStage::Plan,
+            crate::progress::PipelineState::WaitingConsumer,
+        );
         Ok(planner)
+    }
+
+    pub(crate) fn control(&self) -> Option<crate::runtime::SessionControl> {
+        self.control.clone()
     }
 
     pub(crate) fn cancellation_flag(&self) -> Arc<AtomicBool> {
@@ -278,6 +304,7 @@ impl DumpPlanner {
     }
 
     pub(crate) fn check_cancelled(&self) -> Result<()> {
+        super::check_control(self.control.as_ref())?;
         anyhow::ensure!(
             !self.cancellation.load(Ordering::Relaxed),
             "v4 dump planning cancelled"
@@ -365,6 +392,11 @@ impl DumpPlanner {
     }
 
     pub(crate) fn next_send_bundle(&mut self) -> Result<Option<SendBundle>> {
+        let _planning = crate::progress::stage(
+            self.control.as_ref(),
+            crate::progress::PipelineStage::Plan,
+            crate::progress::PipelineState::Planning,
+        );
         self.check_cancelled()?;
         let mut current_entries = Vec::<MaterializedEntry>::new();
         let mut current_budget = BundleBudget::default();
@@ -459,7 +491,13 @@ impl DumpPlanner {
     }
 
     fn next_read_decision(&mut self) -> Result<Option<ReadDecision>> {
+        let waiting = crate::progress::stage(
+            self.control.as_ref(),
+            crate::progress::PipelineStage::Plan,
+            crate::progress::PipelineState::WaitingRead,
+        );
         let decision = self.entries.next();
+        drop(waiting);
         self.refresh_scan_state();
         decision
     }
@@ -853,6 +891,41 @@ mod tests {
     }
 
     #[test]
+    fn controlled_planner_drop_does_not_cancel_the_session() {
+        let dir = TestDir::new();
+        fs::write(dir.path().join("file"), b"payload").unwrap();
+        let run = crate::runtime::RunControl::new(None);
+        let control = run.session(crate::role::Role::Sender, "dump", "peer");
+        let planner = DumpPlanner::controlled(
+            dir.path(),
+            &ResumeState::default(),
+            BundlePlanOptions::default(),
+            Some(control.clone()),
+        )
+        .unwrap();
+        drop(planner);
+        assert!(!control.is_cancelled());
+        assert!(!run.is_cancelled());
+    }
+
+    #[test]
+    fn cancellation_is_observed_before_initial_scan_and_lookahead() {
+        let dir = TestDir::new();
+        let run = crate::runtime::RunControl::new(None);
+        let control = run.session(crate::role::Role::Sender, "dump", "peer");
+        control.cancel();
+        let error = DumpPlanner::controlled(
+            &dir.path().join("missing"),
+            &ResumeState::default(),
+            BundlePlanOptions::default(),
+            Some(control),
+        )
+        .err()
+        .expect("cancelled planner must fail before scanning");
+        assert!(error.downcast_ref::<crate::runtime::Cancelled>().is_some());
+    }
+
+    #[test]
     fn planner_cancellation_interrupts_active_scan_and_joins_its_workers() {
         let dir = TestDir::new();
         for directory in ["a", "b"] {
@@ -928,6 +1001,122 @@ mod tests {
             );
         }
         test_hooks::clear();
+    }
+
+    #[test]
+    fn filesystem_pruning_rejects_shifted_resume_before_pending_opens() {
+        use super::super::read::test_hooks;
+        use super::super::source_policy::{self, ExcludedFilesystem};
+
+        let _guard = test_hooks::lock();
+        test_hooks::clear();
+        let dir = TestDir::new();
+        let earlier_directory = dir.path().join("a-interface");
+        fs::create_dir(&earlier_directory).unwrap();
+        fs::write(earlier_directory.join("previous"), b"committed").unwrap();
+        fs::write(dir.path().join("b-boundary"), b"committed").unwrap();
+        for index in 0..65 {
+            fs::write(dir.path().join(format!("c-{index:03}")), b"pending").unwrap();
+        }
+        let state = ResumeState {
+            last_committed_bundle_no: 1,
+            last_committed_work_ordinal: 2,
+            last_committed_relative_path: "b-boundary".into(),
+            ..ResumeState::default()
+        };
+        let pending = dir.path().join("c-000");
+        for readers in [1, 2] {
+            let excluded = source_policy::test_hooks::directory(
+                &earlier_directory,
+                Ok(ExcludedFilesystem::procfs_for_test()),
+            );
+            test_hooks::fail_next_open(&pending);
+            let options = BundlePlanOptions {
+                readers,
+                ..BundlePlanOptions::default()
+            };
+            let error = DumpPlanner::new(dir.path(), &state, options)
+                .err()
+                .expect("pruned committed prefix was accepted");
+            assert!(error.to_string().contains("resume mismatch"));
+            assert!(
+                test_hooks::before_open(&pending).is_err(),
+                "pending payload opened before the pruned prefix was validated"
+            );
+            drop(excluded);
+
+            let mut planner = DumpPlanner::new(dir.path(), &state, options).unwrap();
+            let mut resumed = Vec::new();
+            while let Some(bundle) = planner.next_bundle().unwrap() {
+                assert_eq!(bundle.descriptor.bundle_no, 2);
+                resumed.extend(
+                    bundle
+                        .descriptor
+                        .entries
+                        .into_iter()
+                        .map(|entry| (entry.work_ordinal, entry.relative_path)),
+                );
+            }
+            assert_eq!(
+                resumed,
+                (0..65)
+                    .map(|index| (index + 3, format!("c-{index:03}")))
+                    .collect::<Vec<_>>()
+            );
+            assert!(planner.take_new_terminal_skips().is_empty());
+            assert_eq!(planner.final_work_ordinal(), 67);
+        }
+        test_hooks::clear();
+    }
+
+    #[test]
+    fn saved_filesystem_skip_is_an_exact_path_not_a_future_subtree_rule() {
+        use super::super::source_policy::{self, ExcludedFilesystem};
+
+        let dir = TestDir::new();
+        let directory = dir.path().join("interface");
+        fs::create_dir(&directory).unwrap();
+        fs::write(directory.join("new-data"), b"ordinary data").unwrap();
+        fs::write(dir.path().join("interface-other"), b"ordinary data").unwrap();
+        let excluded = source_policy::test_hooks::directory(
+            &directory,
+            Ok(ExcludedFilesystem::procfs_for_test()),
+        );
+        let prepared = prepare_dump(
+            dir.path(),
+            &ResumeState::default(),
+            BundlePlanOptions::default(),
+        )
+        .unwrap();
+        assert_eq!(
+            prepared.new_terminal_skips,
+            vec![SkippedEntry {
+                work_ordinal: 0,
+                relative_path: "interface".into(),
+                reason: crate::network::protocol::SkipReason::UnsupportedEntry,
+            }]
+        );
+        drop(excluded);
+
+        let state = ResumeState {
+            terminal_skips: prepared.new_terminal_skips,
+            ..ResumeState::default()
+        };
+        let mut planner =
+            DumpPlanner::new(dir.path(), &state, BundlePlanOptions::default()).unwrap();
+        let mut included = Vec::new();
+        while let Some(bundle) = planner.next_bundle().unwrap() {
+            included.extend(
+                bundle
+                    .descriptor
+                    .entries
+                    .into_iter()
+                    .map(|entry| entry.relative_path),
+            );
+        }
+        assert_eq!(included, ["interface/new-data", "interface-other"]);
+        assert!(planner.take_new_terminal_skips().is_empty());
+        assert_eq!(planner.finish_profile().terminal_skips, 1);
     }
 
     #[test]

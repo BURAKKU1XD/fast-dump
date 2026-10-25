@@ -8,8 +8,10 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use anyhow::{Context, Result};
 
 use crate::network::protocol::{BundleEntryDescriptor, BundleEntryKind, SkipReason, SkippedEntry};
+use crate::runtime::SessionControl;
 
 use super::scan::{ScannedEntry, ScannedEntryKind};
+use super::source_policy::{self, ExcludedFilesystem};
 
 pub(crate) const MAX_IMMEDIATE_ATTEMPTS: u32 = 3;
 pub(crate) const READ_BATCH_ENTRIES: usize = 4;
@@ -194,6 +196,17 @@ pub(crate) struct StreamedRegularFile {
     pub(crate) open_attempts: u32,
 }
 
+#[derive(Debug)]
+pub(crate) enum ReopenDecision {
+    Opened,
+    Unsupported(ExcludedFilesystem),
+}
+
+enum OpenRegularFile {
+    Opened(File, fs::Metadata, Option<u64>),
+    Unsupported(ExcludedFilesystem),
+}
+
 impl StreamedRegularFile {
     pub(crate) fn remaining_attempts(&self) -> u32 {
         MAX_IMMEDIATE_ATTEMPTS.saturating_sub(self.open_attempts) + 1
@@ -203,19 +216,27 @@ impl StreamedRegularFile {
         self.forced_short_read_limit.take()
     }
 
-    pub(crate) fn reopen_for_retry(&mut self) -> Result<()> {
+    pub(crate) fn reopen_for_retry(&mut self) -> Result<ReopenDecision> {
         anyhow::ensure!(
             self.open_attempts < MAX_IMMEDIATE_ATTEMPTS,
             "file attempt limit exhausted"
         );
         self.open_attempts += 1;
-        let (file, metadata, forced_short_read_limit) = open_regular_file_attempt(&self.abs_path)?;
+        let (file, metadata, forced_short_read_limit) =
+            match open_regular_file_attempt(&self.abs_path)? {
+                OpenRegularFile::Opened(file, metadata, forced_limit) => {
+                    (file, metadata, forced_limit)
+                }
+                OpenRegularFile::Unsupported(filesystem) => {
+                    return Ok(ReopenDecision::Unsupported(filesystem));
+                }
+            };
         self.descriptor.size_at_open = metadata.len();
         self.descriptor.best_effort = true;
         self.mode = regular_mode(&metadata);
         self.file = file;
         self.forced_short_read_limit = forced_short_read_limit;
-        Ok(())
+        Ok(ReopenDecision::Opened)
     }
 }
 
@@ -226,12 +247,24 @@ pub(crate) enum ReadDecision {
     Skipped(SkippedEntry),
 }
 
+#[cfg(test)]
 pub(crate) fn materialize_owned_entry(
     entry: ScannedEntry,
     stream_threshold_bytes: u64,
 ) -> Result<ReadDecision> {
+    materialize_owned_entry_controlled(entry, stream_threshold_bytes, None)
+}
+
+pub(crate) fn materialize_owned_entry_controlled(
+    entry: ScannedEntry,
+    stream_threshold_bytes: u64,
+    control: Option<&SessionControl>,
+) -> Result<ReadDecision> {
+    super::check_control(control)?;
     match entry.kind {
-        ScannedEntryKind::Regular => materialize_regular_file(entry, stream_threshold_bytes),
+        ScannedEntryKind::Regular => {
+            materialize_regular_file(entry, stream_threshold_bytes, control)
+        }
         ScannedEntryKind::Symlink => materialize_symlink(entry),
     }
 }
@@ -247,12 +280,26 @@ pub(crate) fn materialize_entry(
 fn materialize_regular_file(
     entry: ScannedEntry,
     stream_threshold_bytes: u64,
+    control: Option<&SessionControl>,
 ) -> Result<ReadDecision> {
     for attempt in 1..=MAX_IMMEDIATE_ATTEMPTS {
+        before_read_attempt(control, attempt > 1)?;
         let (mut file, metadata, forced_short_read_limit) =
             match open_regular_file_attempt(&entry.abs_path) {
-                Ok(result) => result,
+                Ok(OpenRegularFile::Opened(file, metadata, forced_limit)) => {
+                    (file, metadata, forced_limit)
+                }
+                Ok(OpenRegularFile::Unsupported(filesystem)) => {
+                    super::check_control(control)?;
+                    source_policy::log_exclusion(control, &entry.relative_path, filesystem);
+                    return Ok(ReadDecision::Skipped(SkippedEntry {
+                        work_ordinal: entry.work_ordinal,
+                        relative_path: entry.relative_path,
+                        reason: SkipReason::UnsupportedEntry,
+                    }));
+                }
                 Err(_) if attempt == MAX_IMMEDIATE_ATTEMPTS => {
+                    super::check_control(control)?;
                     return Ok(ReadDecision::Skipped(SkippedEntry {
                         work_ordinal: entry.work_ordinal,
                         relative_path: entry.relative_path,
@@ -268,6 +315,7 @@ fn materialize_regular_file(
             match read_contents(&mut file, size_at_open, forced_short_read_limit) {
                 Ok(contents) => Some(contents),
                 Err(_) if attempt == MAX_IMMEDIATE_ATTEMPTS => {
+                    super::check_control(control)?;
                     return Ok(ReadDecision::Skipped(SkippedEntry {
                         work_ordinal: entry.work_ordinal,
                         relative_path: entry.relative_path,
@@ -315,11 +363,21 @@ fn materialize_regular_file(
 
 // Когда read-ahead не получил byte budget, planner дочитывает уже открытый handle:
 // размер и лимит попыток остаются общими, новый open здесь не нужен.
+#[cfg(test)]
 pub(crate) fn finish_materializing(
-    mut entry: StreamedRegularFile,
+    entry: StreamedRegularFile,
     stream_threshold_bytes: u64,
 ) -> Result<ReadDecision> {
+    finish_materializing_controlled(entry, stream_threshold_bytes, None)
+}
+
+pub(crate) fn finish_materializing_controlled(
+    mut entry: StreamedRegularFile,
+    stream_threshold_bytes: u64,
+    control: Option<&SessionControl>,
+) -> Result<ReadDecision> {
     loop {
+        super::check_control(control)?;
         if entry.descriptor.size_at_open > stream_threshold_bytes {
             return Ok(ReadDecision::Streamed(entry));
         }
@@ -333,24 +391,44 @@ pub(crate) fn finish_materializing(
                 contents: contents.into(),
             }));
         }
-        if let Some(reason) = reopen_after_short_read(&mut entry) {
+        if let Some(reason) = reopen_after_short_read(&mut entry, control)? {
             return Ok(skipped_regular(entry, reason));
         }
     }
 }
 
-fn reopen_after_short_read(entry: &mut StreamedRegularFile) -> Option<SkipReason> {
+fn reopen_after_short_read(
+    entry: &mut StreamedRegularFile,
+    control: Option<&SessionControl>,
+) -> Result<Option<SkipReason>> {
+    super::check_control(control)?;
     if entry.open_attempts == MAX_IMMEDIATE_ATTEMPTS {
-        return Some(SkipReason::UnstableAfterRetries);
+        return Ok(Some(SkipReason::UnstableAfterRetries));
     }
     loop {
-        if entry.reopen_for_retry().is_ok() {
-            return None;
+        before_read_attempt(control, true)?;
+        match entry.reopen_for_retry() {
+            Ok(ReopenDecision::Opened) => return Ok(None),
+            Ok(ReopenDecision::Unsupported(filesystem)) => {
+                super::check_control(control)?;
+                source_policy::log_exclusion(control, &entry.descriptor.relative_path, filesystem);
+                return Ok(Some(SkipReason::UnsupportedEntry));
+            }
+            Err(_) => {}
         }
+        super::check_control(control)?;
         if entry.open_attempts == MAX_IMMEDIATE_ATTEMPTS {
-            return Some(SkipReason::OpenFailed);
+            return Ok(Some(SkipReason::OpenFailed));
         }
     }
+}
+
+pub(crate) fn before_read_attempt(control: Option<&SessionControl>, retry: bool) -> Result<()> {
+    super::check_control(control)?;
+    if retry && let Some(progress) = control.and_then(SessionControl::progress) {
+        progress.retries.fetch_add(1, Ordering::Relaxed);
+    }
+    Ok(())
 }
 
 pub(crate) type ReadBatch = [Option<Result<ReadDecision>>; READ_BATCH_ENTRIES];
@@ -360,25 +438,39 @@ pub(crate) fn materialize_batch(
     entries: [Option<ScannedEntry>; READ_BATCH_ENTRIES],
     stream_threshold_bytes: u64,
 ) -> ReadBatch {
-    finish_read_batch(open_read_batch(entries), stream_threshold_bytes)
+    finish_read_batch(open_read_batch(entries, None), stream_threshold_bytes)
 }
 
+#[cfg(test)]
 pub(crate) fn materialize_budgeted_batch(
     entries: [Option<ScannedEntry>; READ_BATCH_ENTRIES],
     stream_threshold_bytes: u64,
     budget: &Arc<PrefetchBudget>,
 ) -> ReadBatch {
+    materialize_budgeted_batch_controlled(entries, stream_threshold_bytes, budget, None)
+}
+
+pub(crate) fn materialize_budgeted_batch_controlled(
+    entries: [Option<ScannedEntry>; READ_BATCH_ENTRIES],
+    stream_threshold_bytes: u64,
+    budget: &Arc<PrefetchBudget>,
+    control: Option<&SessionControl>,
+) -> ReadBatch {
     finish_read_batch_with_budget(
-        open_read_batch(entries),
+        open_read_batch(entries, control),
         stream_threshold_bytes,
         Some(budget),
+        control,
     )
 }
 
-fn open_read_batch(entries: [Option<ScannedEntry>; READ_BATCH_ENTRIES]) -> ReadBatch {
+fn open_read_batch(
+    entries: [Option<ScannedEntry>; READ_BATCH_ENTRIES],
+    control: Option<&SessionControl>,
+) -> ReadBatch {
     // Порог 0 сохраняет открытый handle каждого непустого файла. Суммируем
     // размеры именно этих handles; отдельный stat и повторный open не нужны.
-    entries.map(|entry| entry.map(|entry| materialize_owned_entry(entry, 0)))
+    entries.map(|entry| entry.map(|entry| materialize_owned_entry_controlled(entry, 0, control)))
 }
 
 #[cfg(test)]
@@ -387,6 +479,7 @@ fn finish_read_batch(outcomes: ReadBatch, stream_threshold_bytes: u64) -> ReadBa
         outcomes,
         stream_threshold_bytes.min(PREFETCH_FILE_BYTES),
         None,
+        None,
     )
 }
 
@@ -394,6 +487,7 @@ fn finish_read_batch_with_budget(
     mut outcomes: ReadBatch,
     stream_threshold_bytes: u64,
     budget: Option<&Arc<PrefetchBudget>>,
+    control: Option<&SessionControl>,
 ) -> ReadBatch {
     struct SharedEntry {
         descriptor: BundleEntryDescriptor,
@@ -427,6 +521,15 @@ fn finish_read_batch_with_budget(
         if !selected[index] {
             continue;
         }
+        if let Err(error) = super::check_control(control) {
+            *outcome = Some(Err(error));
+            reserved -= sizes[index];
+            bytes.shrink_to(reserved);
+            if let Some(reservation) = &mut reservation {
+                reservation.release(sizes[index]);
+            }
+            continue;
+        }
         let Some(Ok(ReadDecision::Streamed(mut file))) = outcome.take() else {
             unreachable!();
         };
@@ -456,12 +559,15 @@ fn finish_read_batch_with_budget(
                 }
                 // Retry не меняет уже заполненный slab. Его новый size_at_open
                 // может вырасти; редкий повтор читает в отдельный Owned payload.
-                *outcome = Some(match reopen_after_short_read(&mut file) {
-                    Some(reason) => Ok(skipped_regular(file, reason)),
+                *outcome = Some(match reopen_after_short_read(&mut file, control) {
+                    Err(error) => Err(error),
+                    Ok(Some(reason)) => Ok(skipped_regular(file, reason)),
                     // После изменения размера planner продолжит уже открытую
                     // попытку; worker не выходит за общую reservation новым payload.
-                    None if budget.is_some() => Ok(ReadDecision::Streamed(file)),
-                    None => finish_materializing(file, stream_threshold_bytes),
+                    Ok(None) if budget.is_some() => Ok(ReadDecision::Streamed(file)),
+                    Ok(None) => {
+                        finish_materializing_controlled(file, stream_threshold_bytes, control)
+                    }
                 });
             }
         }
@@ -532,7 +638,7 @@ fn append_contents(
     Ok(start..contents.len())
 }
 
-fn open_regular_file_attempt(path: &Path) -> Result<(File, fs::Metadata, Option<u64>)> {
+fn open_regular_file_attempt(path: &Path) -> Result<OpenRegularFile> {
     test_hooks::before_open(path)?;
     let mut options = fs::OpenOptions::new();
     options.read(true);
@@ -554,6 +660,20 @@ fn open_regular_file_attempt(path: &Path) -> Result<(File, fs::Metadata, Option<
         .open(path)
         .with_context(|| format!("failed to open v4 regular file {}", path.display()))?;
     let metadata = regular_file_metadata(&file, path)?;
+    // Проверяем каждый новый handle до size_at_open и любых чтений: отдельный
+    // bind mount может вести в служебную ФС внутри обычного каталога.
+    #[cfg(test)]
+    let excluded = test_hooks::classify_file(path, &file);
+    #[cfg(not(test))]
+    let excluded = source_policy::excluded_file(&file);
+    if let Some(filesystem) = excluded.with_context(|| {
+        format!(
+            "failed to classify source filesystem for {}",
+            path.display()
+        )
+    })? {
+        return Ok(OpenRegularFile::Unsupported(filesystem));
+    }
     #[cfg(windows)]
     let (file, metadata) = {
         use std::os::windows::fs::MetadataExt;
@@ -576,7 +696,11 @@ fn open_regular_file_attempt(path: &Path) -> Result<(File, fs::Metadata, Option<
         }
     };
     let forced_short_read_limit = test_hooks::forced_short_read_after_open(path);
-    Ok((file, metadata, forced_short_read_limit))
+    Ok(OpenRegularFile::Opened(
+        file,
+        metadata,
+        forced_short_read_limit,
+    ))
 }
 
 fn regular_file_metadata(file: &File, path: &Path) -> Result<fs::Metadata> {
@@ -682,6 +806,197 @@ mod tests {
     use crate::tests::TestDir;
     use std::io::Write;
 
+    #[test]
+    fn excluded_filesystem_is_skipped_before_payload_without_retry() {
+        let _guard = test_hooks::lock();
+        test_hooks::clear();
+        let dir = TestDir::new();
+        let path = dir.path().join("file");
+        fs::write(&path, b"original").unwrap();
+        let entry = scan_source_tree(dir.path()).unwrap().entries.remove(0);
+        test_hooks::classify_next_open(
+            &path,
+            test_hooks::FilesystemResult::Unsupported(ExcludedFilesystem::procfs_for_test()),
+        );
+        test_hooks::classify_next_open(&path, test_hooks::FilesystemResult::Failed);
+        test_hooks::force_short_read_after_next_open(&path, 2);
+        let run =
+            crate::runtime::RunControl::new(Some(Arc::new(crate::progress::ProgressHub::new())));
+        let control = run.session(crate::role::Role::Sender, "dump", "peer");
+        let ReadDecision::Skipped(skipped) =
+            materialize_owned_entry_controlled(entry, u64::MAX, Some(&control)).unwrap()
+        else {
+            panic!("excluded filesystem reached payload preparation");
+        };
+        assert_eq!(skipped.reason, SkipReason::UnsupportedEntry);
+        assert_eq!(skipped.work_ordinal, 1);
+        assert_eq!(skipped.relative_path, "file");
+        assert_eq!(test_hooks::remaining_filesystem_results(&path), 1);
+        assert_eq!(test_hooks::forced_short_read_after_open(&path), Some(2));
+        let progress = control.progress().unwrap();
+        assert_eq!(progress.retries.load(Ordering::Relaxed), 0);
+        assert_eq!(progress.skips.load(Ordering::Relaxed), 0);
+        test_hooks::clear();
+    }
+
+    #[test]
+    fn filesystem_classification_errors_share_open_attempt_budget() {
+        let _guard = test_hooks::lock();
+        for failures in [2, 3] {
+            test_hooks::clear();
+            let dir = TestDir::new();
+            let path = dir.path().join("file");
+            fs::write(&path, b"original").unwrap();
+            let entry = scan_source_tree(dir.path()).unwrap().entries.remove(0);
+            for _ in 0..failures {
+                test_hooks::classify_next_open(&path, test_hooks::FilesystemResult::Failed);
+            }
+            test_hooks::classify_next_open(&path, test_hooks::FilesystemResult::Allowed);
+            let run = crate::runtime::RunControl::new(Some(Arc::new(
+                crate::progress::ProgressHub::new(),
+            )));
+            let control = run.session(crate::role::Role::Sender, "dump", "peer");
+            let result = materialize_owned_entry_controlled(entry, 1024, Some(&control)).unwrap();
+            match result {
+                ReadDecision::Accepted(entry) if failures == 2 => {
+                    assert!(entry.descriptor.best_effort);
+                    assert_eq!(entry.contents, b"original");
+                }
+                ReadDecision::Skipped(entry) if failures == 3 => {
+                    assert_eq!(entry.reason, SkipReason::OpenFailed);
+                }
+                _ => panic!("classification failure changed the immediate attempt budget"),
+            }
+            assert_eq!(
+                test_hooks::remaining_filesystem_results(&path),
+                failures - 2
+            );
+            assert_eq!(
+                control.progress().unwrap().retries.load(Ordering::Relaxed),
+                2
+            );
+        }
+        test_hooks::clear();
+    }
+
+    #[test]
+    fn deferred_and_prefetched_retries_reject_new_excluded_handles() {
+        let _guard = test_hooks::lock();
+        for prefetched in [false, true] {
+            test_hooks::clear();
+            let dir = TestDir::new();
+            let path = dir.path().join("file");
+            fs::write(&path, b"original").unwrap();
+            test_hooks::classify_next_open(&path, test_hooks::FilesystemResult::Allowed);
+            test_hooks::classify_next_open(
+                &path,
+                test_hooks::FilesystemResult::Unsupported(ExcludedFilesystem::procfs_for_test()),
+            );
+            test_hooks::classify_next_open(&path, test_hooks::FilesystemResult::Allowed);
+            test_hooks::force_short_read_after_next_open(&path, 2);
+            let run = crate::runtime::RunControl::new(Some(Arc::new(
+                crate::progress::ProgressHub::new(),
+            )));
+            let control = run.session(crate::role::Role::Sender, "dump", "peer");
+            let budget = PrefetchBudget::new();
+            let result = if prefetched {
+                let [result, _, _, _] = materialize_budgeted_batch_controlled(
+                    scanned_batch(dir.path()),
+                    1024,
+                    &budget,
+                    Some(&control),
+                );
+                result.unwrap().unwrap()
+            } else {
+                let entry = scan_source_tree(dir.path()).unwrap().entries.remove(0);
+                let ReadDecision::Streamed(file) =
+                    materialize_owned_entry_controlled(entry, 1, Some(&control)).unwrap()
+                else {
+                    panic!("file should defer payload reading");
+                };
+                finish_materializing_controlled(file, 1024, Some(&control)).unwrap()
+            };
+            let ReadDecision::Skipped(skipped) = result else {
+                panic!("retry accepted an excluded handle");
+            };
+            assert_eq!(skipped.reason, SkipReason::UnsupportedEntry);
+            assert_eq!(test_hooks::remaining_filesystem_results(&path), 1);
+            assert_eq!(
+                budget.available.load(Ordering::Relaxed),
+                PREFETCH_PAYLOAD_BYTES
+            );
+            assert_eq!(
+                control.progress().unwrap().retries.load(Ordering::Relaxed),
+                1
+            );
+            assert_eq!(control.progress().unwrap().skips.load(Ordering::Relaxed), 0);
+        }
+        test_hooks::clear();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn real_procfs_regular_handle_is_rejected_without_reading() {
+        let entry = ScannedEntry {
+            work_ordinal: 1,
+            relative_path: "version".into(),
+            abs_path: PathBuf::from("/proc/version"),
+            kind: ScannedEntryKind::Regular,
+        };
+        let ReadDecision::Skipped(skipped) = materialize_owned_entry(entry, u64::MAX).unwrap()
+        else {
+            panic!("procfs regular file was accepted");
+        };
+        assert_eq!(skipped.reason, SkipReason::UnsupportedEntry);
+    }
+
+    #[test]
+    fn controlled_reads_count_retries_across_open_and_short_read() {
+        let _guard = test_hooks::lock();
+        test_hooks::clear();
+        let dir = TestDir::new();
+        let path = dir.path().join("file");
+        fs::write(&path, b"original").unwrap();
+        let entry = scan_source_tree(dir.path()).unwrap().entries.remove(0);
+        test_hooks::fail_next_open(&path);
+        test_hooks::force_short_read_after_next_open(&path, 2);
+        let run =
+            crate::runtime::RunControl::new(Some(Arc::new(crate::progress::ProgressHub::new())));
+        let control = run.session(crate::role::Role::Sender, "dump", "peer");
+        let ReadDecision::Accepted(entry) =
+            materialize_owned_entry_controlled(entry, 1024, Some(&control)).unwrap()
+        else {
+            panic!("third file attempt should succeed");
+        };
+        assert_eq!(entry.contents, b"original");
+        assert!(entry.descriptor.best_effort);
+        assert_eq!(
+            control.progress().unwrap().retries.load(Ordering::Relaxed),
+            2
+        );
+        test_hooks::clear();
+    }
+
+    #[test]
+    fn cancelled_reads_do_not_retry_or_turn_missing_files_into_skips() {
+        let dir = TestDir::new();
+        let path = dir.path().join("file");
+        fs::write(&path, b"original").unwrap();
+        let entry = scan_source_tree(dir.path()).unwrap().entries.remove(0);
+        fs::remove_file(path).unwrap();
+        let run =
+            crate::runtime::RunControl::new(Some(Arc::new(crate::progress::ProgressHub::new())));
+        let control = run.session(crate::role::Role::Sender, "dump", "peer");
+        control.cancel();
+        let error = materialize_owned_entry_controlled(entry, 1024, Some(&control)).unwrap_err();
+        assert!(error.downcast_ref::<crate::runtime::Cancelled>().is_some());
+        assert_eq!(
+            control.progress().unwrap().retries.load(Ordering::Relaxed),
+            0
+        );
+        assert_eq!(control.progress().unwrap().skips.load(Ordering::Relaxed), 0);
+    }
+
     #[cfg(windows)]
     #[test]
     fn normal_reopen_preserves_file_after_rename_and_path_replacement() {
@@ -689,7 +1004,10 @@ mod tests {
         let path = dir.path().join("file");
         let renamed = dir.path().join("renamed");
         fs::write(&path, b"original").unwrap();
-        let (mut original, _, _) = open_regular_file_attempt(&path).unwrap();
+        let OpenRegularFile::Opened(mut original, _, _) = open_regular_file_attempt(&path).unwrap()
+        else {
+            panic!("ordinary file was excluded");
+        };
         let mut prefix = [0; 2];
         original.read_exact(&mut prefix).unwrap();
         fs::rename(&path, &renamed).unwrap();
@@ -720,7 +1038,10 @@ mod tests {
         let target = dir.path().join("target");
         fs::write(&path, b"original").unwrap();
         fs::write(&target, b"symlink target").unwrap();
-        let (original, _, _) = open_regular_file_attempt(&path).unwrap();
+        let OpenRegularFile::Opened(original, _, _) = open_regular_file_attempt(&path).unwrap()
+        else {
+            panic!("ordinary file was excluded");
+        };
         fs::rename(&path, &renamed).unwrap();
         if std::os::windows::fs::symlink_file(&target, &path).is_err() {
             return;
@@ -1012,7 +1333,7 @@ mod tests {
             fs::write(dir.path().join(name), b"original").unwrap();
         }
         test_hooks::force_short_read_after_next_open(&dir.path().join("b"), 2);
-        let opened = open_read_batch(scanned_batch(dir.path()));
+        let opened = open_read_batch(scanned_batch(dir.path()), None);
         fs::OpenOptions::new()
             .append(true)
             .open(dir.path().join("a"))
@@ -1161,7 +1482,19 @@ pub(crate) mod test_hooks {
 
     static OPEN_FAILURES: OnceLock<Mutex<BTreeMap<String, usize>>> = OnceLock::new();
     static FORCED_SHORT_READS: OnceLock<Mutex<BTreeMap<String, VecDeque<u64>>>> = OnceLock::new();
+    static FILESYSTEM_RESULTS: OnceLock<Mutex<BTreeMap<String, VecDeque<FilesystemResult>>>> =
+        OnceLock::new();
     static HOOK_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+
+    pub(crate) enum FilesystemResult {
+        Allowed,
+        Unsupported(ExcludedFilesystem),
+        Failed,
+    }
+
+    fn filesystem_results() -> &'static Mutex<BTreeMap<String, VecDeque<FilesystemResult>>> {
+        FILESYSTEM_RESULTS.get_or_init(|| Mutex::new(BTreeMap::new()))
+    }
 
     fn open_failures() -> &'static Mutex<BTreeMap<String, usize>> {
         OPEN_FAILURES.get_or_init(|| Mutex::new(BTreeMap::new()))
@@ -1182,6 +1515,7 @@ pub(crate) mod test_hooks {
     pub(crate) fn clear() {
         open_failures().lock().unwrap().clear();
         forced_short_reads().lock().unwrap().clear();
+        filesystem_results().lock().unwrap().clear();
     }
 
     pub(crate) fn fail_next_open(path: &Path) {
@@ -1199,6 +1533,42 @@ pub(crate) mod test_hooks {
             .entry(key(path))
             .or_default()
             .push_back(limit);
+    }
+
+    pub(crate) fn classify_next_open(path: &Path, result: FilesystemResult) {
+        filesystem_results()
+            .lock()
+            .unwrap()
+            .entry(key(path))
+            .or_default()
+            .push_back(result);
+    }
+
+    pub(crate) fn remaining_filesystem_results(path: &Path) -> usize {
+        filesystem_results()
+            .lock()
+            .unwrap()
+            .get(&key(path))
+            .map_or(0, VecDeque::len)
+    }
+
+    pub(crate) fn classify_file(
+        path: &Path,
+        file: &File,
+    ) -> io::Result<Option<ExcludedFilesystem>> {
+        let result = filesystem_results()
+            .lock()
+            .unwrap()
+            .get_mut(&key(path))
+            .and_then(VecDeque::pop_front);
+        match result {
+            Some(FilesystemResult::Allowed) => Ok(None),
+            Some(FilesystemResult::Unsupported(filesystem)) => Ok(Some(filesystem)),
+            Some(FilesystemResult::Failed) => Err(io::Error::other(
+                "v4 test hook forced filesystem classification failure",
+            )),
+            None => source_policy::excluded_file(file),
+        }
     }
 
     pub(crate) fn before_open(path: &Path) -> io::Result<()> {

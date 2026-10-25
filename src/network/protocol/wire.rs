@@ -2,6 +2,7 @@ use std::io::{self, Cursor, IoSlice, Read, Write};
 
 use anyhow::{Context, Result, bail};
 
+use crate::network::network_io;
 use crate::role::Role;
 
 use super::{
@@ -867,7 +868,9 @@ where
     header[12..20].copy_from_slice(&bundle_no.to_le_bytes());
     header[20..24].copy_from_slice(&attempt_no.to_le_bytes());
     header[24] = u8::from(is_last);
-    write_header_and_body(stream, &header, bytes).context("failed to write v4 bundle data packet")
+    write_header_and_body(stream, &header, bytes)
+        .map_err(network_io)
+        .context("failed to write v4 bundle data packet")
 }
 
 pub(crate) fn read_message<T>(stream: &mut T) -> Result<Message>
@@ -889,6 +892,7 @@ fn read_control_body<T: Read>(
     let mut body = vec![0_u8; body_len];
     stream
         .read_exact(&mut body)
+        .map_err(network_io)
         .context("failed to read v4 packet body")?;
     decode_message(Packet { kind, body })
 }
@@ -931,6 +935,7 @@ fn read_bundle_data_body_into<T: Read>(
     let mut header = [0_u8; DATA_HEADER_BYTES];
     stream
         .read_exact(&mut header)
+        .map_err(network_io)
         .context("failed to read v4 bundle data header")?;
     let mut reader = BodyReader::new(&header);
     let bundle_no = reader.read_u64()?;
@@ -944,6 +949,7 @@ fn read_bundle_data_body_into<T: Read>(
     }
     stream
         .read_exact(&mut bytes[..payload_len])
+        .map_err(network_io)
         .context("failed to read v4 bundle data payload")?;
     Ok(BundleDataHeader {
         bundle_no,
@@ -965,6 +971,7 @@ where
     )?;
     stream
         .flush()
+        .map_err(network_io)
         .context("failed to flush v4 resume query to peer")?;
 
     match read_message(stream)? {
@@ -999,7 +1006,10 @@ where
             session_nonce,
         }),
     )?;
-    stream.flush().context("failed to flush v4 hello packet")?;
+    stream
+        .flush()
+        .map_err(network_io)
+        .context("failed to flush v4 hello packet")?;
 
     match read_message(stream)? {
         Message::HelloAck(hello_ack) => {
@@ -1042,6 +1052,7 @@ where
             write_message(stream, &Message::HelloAck(HelloAck { role: local_role }))?;
             stream
                 .flush()
+                .map_err(network_io)
                 .context("failed to flush v4 hello ack packet")?;
             Ok(hello)
         }
@@ -1065,7 +1076,10 @@ where
             message: message.to_owned(),
         }),
     )?;
-    stream.flush().context("failed to flush v4 error packet")
+    stream
+        .flush()
+        .map_err(network_io)
+        .context("failed to flush v4 error packet")
 }
 
 fn validate_peer_role(local_role: Role, remote_role: Role) -> Result<()> {
@@ -1125,7 +1139,9 @@ where
     }
 
     let header = packet_header(kind, body_len);
-    write_header_and_body(stream, &header, body).context("failed to write v4 packet")
+    write_header_and_body(stream, &header, body)
+        .map_err(network_io)
+        .context("failed to write v4 packet")
 }
 
 fn write_header_and_body<T: Write>(stream: &mut T, header: &[u8], body: &[u8]) -> io::Result<()> {
@@ -1151,6 +1167,7 @@ where
     let mut header = [0_u8; 12];
     stream
         .read_exact(&mut header)
+        .map_err(network_io)
         .context("failed to read v4 packet header")?;
 
     let magic = u32::from_le_bytes(header[0..4].try_into().unwrap());
@@ -1183,6 +1200,49 @@ mod tests {
     use std::collections::VecDeque;
 
     use super::*;
+
+    #[test]
+    fn malformed_complete_body_is_not_a_retryable_network_eof() {
+        let mut packet = Vec::new();
+        write_packet(&mut packet, MessageKind::BundleAck, &[]).unwrap();
+        let error = read_message(&mut Cursor::new(packet)).unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<io::Error>().unwrap().kind(),
+            io::ErrorKind::UnexpectedEof
+        );
+        assert!(!crate::network::is_retryable_error(&error));
+    }
+
+    #[test]
+    fn socket_eof_and_reset_are_retryable_network_failures() {
+        use std::net::{Shutdown, TcpListener, TcpStream};
+        use std::time::Duration;
+
+        for reset in [false, true] {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let peer = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+            let (mut stream, _) = listener.accept().unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            if reset {
+                socket2::SockRef::from(&peer)
+                    .set_linger(Some(Duration::ZERO))
+                    .unwrap();
+                drop(peer);
+            } else {
+                peer.shutdown(Shutdown::Write).unwrap();
+            }
+            let error = read_message(&mut stream).unwrap_err();
+            assert!(crate::network::is_retryable_error(&error), "{error:#}");
+            assert!(matches!(
+                error.downcast_ref::<io::Error>().unwrap().kind(),
+                io::ErrorKind::UnexpectedEof
+                    | io::ErrorKind::ConnectionReset
+                    | io::ErrorKind::ConnectionAborted
+            ));
+        }
+    }
 
     #[test]
     fn control_strings_reject_inner_lengths_beyond_received_body() {

@@ -7,7 +7,7 @@ use clap::{ArgGroup, Args, Parser, Subcommand, ValueHint};
 use crate::network::transport::TransportMode;
 use crate::role::Role;
 
-const DEFAULT_LEVEL: i32 = 3;
+pub(crate) const DEFAULT_LEVEL: i32 = 3;
 const DEFAULT_FRAME_TARGET_MB: u64 = 64;
 const DEFAULT_THREADS: &str = "auto";
 const DEFAULT_MIN_READERS: usize = 1;
@@ -31,19 +31,62 @@ pub enum ThreadCountArg {
 }
 
 // Корневой CLI parser задаёт только shape аргументов.
-#[derive(Debug, Parser)]
-#[command(author, version, about)]
+#[derive(Debug, Clone, Parser)]
+#[command(
+    author,
+    version,
+    about = "Stream a resumable directory dump to a remote .tar.zst archive",
+    long_about = "Stream a directory to a remote host using resumable, durable bundle boundaries.\nRun without a command in a terminal to open the setup wizard.\nSender and receiver are named by data flow, independently of who connects.",
+    after_help = "Examples:\n  fast-dump\n  fast-dump receiver --listen 0.0.0.0:7001 --data-dir ./dumps\n  fast-dump sender --connect 192.168.1.20:7001 --source ./data\n  fast-dump --no-gui sender --connect 192.168.1.20:7001 --source ./data\n\nAfter interruption, repeat the same commands to resume durable progress.\nUse 'help sender' or 'help receiver' for role-specific options."
+)]
 pub struct Cli {
-    #[arg(long, global = true)]
+    #[arg(
+        long,
+        global = true,
+        help = "Enable diagnostic logging (shown in the dashboard Log tab)"
+    )]
     pub debug: bool,
+
+    #[arg(
+        long,
+        global = true,
+        help = "Disable the terminal dashboard and wizard; keep plain output"
+    )]
+    pub no_gui: bool,
+
+    #[arg(
+        long,
+        global = true,
+        value_name = "N",
+        help = "Extra attempts after network errors; default: 10 in GUI, 0 in plain mode (0 disables)"
+    )]
+    pub retries: Option<u32>,
+
+    #[arg(
+        long,
+        global = true,
+        default_value_t = 10,
+        value_name = "SECONDS",
+        value_parser = clap::value_parser!(u32).range(1..),
+        help = "Delay between network retry attempts"
+    )]
+    pub retry_delay_secs: u32,
 
     #[command(subcommand)]
     pub command: Command,
 }
 
-#[derive(Debug, Subcommand)]
+#[derive(Debug, Clone, Subcommand)]
 pub enum Command {
+    #[command(
+        about = "Read a source directory, compress it, and send its contents",
+        after_help = "Push: sender --connect <IP:PORT> --source <DIR>\nPull: sender --listen <IP:PORT> --source <DIR>\nPair with a receiver using the opposite transport selector.\nRepeat the same source and dump ID to resume; completed archives are preserved."
+    )]
     Sender(SenderArgs),
+    #[command(
+        about = "Receive a dump and save a durable, resumable .tar.zst archive",
+        after_help = "Push: receiver --listen <IP:PORT> --data-dir <DIR>\nPull: receiver --connect <IP:PORT> --data-dir <DIR>\nListen mode keeps accepting sessions until stopped.\nKeep partial archive, WAL, catalog, and lock files together to resume."
+    )]
     Receiver(ReceiverArgs),
 }
 
@@ -63,39 +106,42 @@ impl Command {
     }
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Clone, Args)]
 pub struct SenderArgs {
     #[command(flatten)]
     pub transport: TransportArgs,
-    #[arg(long, value_hint = ValueHint::DirPath)]
+    #[arg(long, value_hint = ValueHint::DirPath, help = "Source directory; files and readable symlinks are included")]
     pub source: PathBuf,
-    #[arg(long)]
+    #[arg(
+        long,
+        help = "Portable archive name; defaults to the final source path component"
+    )]
     pub dump_id: Option<String>,
-    #[arg(long)]
+    #[arg(long, help = "Shared handshake token; must match the other peer")]
     pub token: Option<String>,
-    #[arg(short = 'l', long, default_value_t = DEFAULT_LEVEL)]
+    #[arg(short = 'l', long, default_value_t = DEFAULT_LEVEL, help = "Zstd compression level")]
     pub level: i32,
-    #[arg(long, default_value = DEFAULT_THREADS, value_parser = parse_thread_count_arg)]
+    #[arg(long, default_value = DEFAULT_THREADS, value_parser = parse_thread_count_arg, help = "Zstd workers; auto uses logical parallelism minus one, minimum 1")]
     pub threads: ThreadCountArg,
-    #[arg(long, default_value_t = DEFAULT_MIN_READERS)]
+    #[arg(long, default_value_t = DEFAULT_MIN_READERS, help = "Minimum requested file readers; small pending sets cap actual workers")]
     pub min_readers: usize,
-    #[arg(long, default_value_t = crate::cpu::available_physical_cores())]
+    #[arg(long, default_value_t = crate::cpu::available_physical_cores(), help = "Maximum requested file readers; defaults to detected physical cores")]
     pub max_readers: usize,
-    #[arg(long, default_value_t = DEFAULT_READ_BUFFER_KB)]
+    #[arg(long, default_value_t = DEFAULT_READ_BUFFER_KB, help = "Legacy read buffer in KiB; validated but does not tune the v4 data path")]
     pub read_buffer_kb: u64,
-    #[arg(long, default_value_t = DEFAULT_FRAME_TARGET_MB)]
+    #[arg(long, default_value_t = DEFAULT_FRAME_TARGET_MB, help = "Bundle target and large-file streaming threshold in MiB")]
     pub frame_target_mb: u64,
 }
 
-#[derive(Debug, Args)]
+#[derive(Debug, Clone, Args)]
 pub struct ReceiverArgs {
     #[command(flatten)]
     pub transport: TransportArgs,
-    #[arg(long, value_hint = ValueHint::DirPath)]
+    #[arg(long, value_hint = ValueHint::DirPath, help = "Directory for archives and durable resume state")]
     pub data_dir: PathBuf,
-    #[arg(long)]
+    #[arg(long, help = "Shared handshake token; must match the other peer")]
     pub token: Option<String>,
-    #[arg(long, default_value_t = DEFAULT_MAX_SESSIONS)]
+    #[arg(long, default_value_t = DEFAULT_MAX_SESSIONS, help = "Maximum concurrent receiver sessions in listen mode")]
     pub max_sessions: usize,
 }
 
@@ -106,9 +152,17 @@ pub struct ReceiverArgs {
         .args(["listen", "connect"])
 ))]
 pub struct TransportArgs {
-    #[arg(long)]
+    #[arg(
+        long,
+        value_name = "IP:PORT",
+        help = "Listen for the other peer (IPv6 uses [address]:port)"
+    )]
     pub listen: Option<SocketAddr>,
-    #[arg(long)]
+    #[arg(
+        long,
+        value_name = "IP:PORT",
+        help = "Connect to the other peer (IPv6 uses [address]:port)"
+    )]
     pub connect: Option<SocketAddr>,
 }
 
@@ -226,6 +280,60 @@ mod tests {
     use crate::role::Role;
 
     #[test]
+    fn global_retry_flags_parse_on_either_side_of_command() {
+        for before in [true, false] {
+            let mut argv = vec!["fast-dump"];
+            let flags = ["--retries", "0", "--retry-delay-secs", "7"];
+            if before {
+                argv.extend(flags);
+            }
+            argv.extend(["sender", "--connect", "127.0.0.1:7001", "--source", "input"]);
+            if !before {
+                argv.extend(flags);
+            }
+            let cli = Cli::try_parse_from(argv).unwrap();
+            assert_eq!(cli.retries, Some(0));
+            assert_eq!(cli.retry_delay_secs, 7);
+        }
+        let cli = Cli::try_parse_from([
+            "fast-dump",
+            "receiver",
+            "--listen",
+            "0.0.0.0:7001",
+            "--data-dir",
+            "state",
+        ])
+        .unwrap();
+        assert_eq!(cli.retries, None);
+        assert_eq!(cli.retry_delay_secs, 10);
+    }
+
+    #[test]
+    fn retry_flags_reject_invalid_values() {
+        for (flag, value) in [
+            ("--retries", "-1"),
+            ("--retries", "4294967296"),
+            ("--retry-delay-secs", "0"),
+            ("--retry-delay-secs", "-1"),
+            ("--retry-delay-secs", "invalid"),
+        ] {
+            assert!(
+                Cli::try_parse_from([
+                    "fast-dump",
+                    "receiver",
+                    "--connect",
+                    "127.0.0.1:7001",
+                    "--data-dir",
+                    "state",
+                    flag,
+                    value
+                ])
+                .is_err()
+            );
+        }
+    }
+
+    #[test]
     fn sender_cli_parses_connect_mode() {
         let cli = Cli::try_parse_from([
             "fast-dump",
@@ -248,6 +356,7 @@ mod tests {
         };
         assert_eq!(args.source, PathBuf::from("input"));
         assert_eq!(args.resolve_dump_id().unwrap(), "input");
+        assert_eq!(args.level, 3);
         assert_eq!(args.threads, ThreadCountArg::Auto);
         assert_eq!(args.min_readers, 1);
         let default_readers = crate::sender::BundlePlanOptions::default().readers;
@@ -259,6 +368,7 @@ mod tests {
             .map(|parallelism| parallelism.get().saturating_sub(1).max(1) as u32)
             .unwrap_or(1);
         assert_eq!(runtime.threads, expected_threads);
+        assert_eq!(runtime.level, 3);
         assert_eq!(runtime.bundle_target_bytes, 64 * 1024 * 1024);
         assert_eq!(runtime.min_readers, 1);
         assert_eq!(runtime.max_readers, default_readers);

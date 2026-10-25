@@ -10,13 +10,57 @@ Names are defined by data flow. Active wire/runtime contract: protocol `v4`.
 ## Common
 
 ```text
-fast-dump [--debug] <sender|receiver> ...
+fast-dump [--debug] [--no-gui] [--retries <N>] [--retry-delay-secs <SECONDS>] [sender|receiver] ...
 ```
 
 Each subcommand requires exactly one transport selector:
 
 - `--listen <ADDR>`
 - `--connect <ADDR>`
+
+With no subcommand, interactive terminals open an English setup wizard.
+Complete commands open a live dashboard; missing required flags on an explicit
+subcommand remain errors. Global `--no-gui`, redirected stdin/stdout/stderr,
+and `TERM=dumb` use plain output. Omitting the command in plain mode is a usage error.
+`--help`, `help sender`, `help receiver`, and `--version` bypass terminal setup.
+The wizard defaults Listen to `0.0.0.0:7000`; Connect keeps a separate address
+(`127.0.0.1:7000` for local use). For remote transfers, Connect must use the
+listening host's network IP. Each mode retains its edited address.
+Sender setup includes a `Zstd level` field, default `3`, and validates the linked
+zstd library's supported range before starting. Negative fast levels and `0`
+(zstd default) are accepted. The chosen level survives role/transport switches
+and appears on Review and in the dashboard; receiver setup omits this field.
+CLI launches use `--level <N>`, with `--level=-1` syntax for a negative level.
+
+The dashboard shows compressed payload throughput, current-session entry
+counts, durable archive size, a separate resume baseline, and bounded logs.
+It refreshes at most 5 Hz and honors `NO_COLOR`. Whole-transfer percent and
+ETA are intentionally absent because the source scan streams concurrently.
+Use F1 for help, Tab/Shift+Tab for focus, arrows/Enter for selection, and
+PgUp/PgDn/End for log scrolling/following. Tokens stay masked in the wizard.
+
+Ctrl+C safely stops either presentation mode and returns exit code 130 after
+worker cleanup. Repeat the same command to resume an unfinished dump. A current
+filesystem operation may delay stopping; an already-started finalization can
+finish, and a completed archive is preserved. Only the executable installs the
+signal handler. Aggregate stdout remains unchanged.
+Receiver Listen keeps accepting connections after an individual session fails.
+Sender and receiver Connect support global `--retries <N>` (additional attempts
+after the initial attempt) and `--retry-delay-secs <SECONDS>` (default `10`,
+minimum `1`). Plain mode defaults to `0` retries; GUI mode defaults to `10`.
+Explicit values override these defaults, including `--retries 0` in the wizard.
+The GUI default is resolved at launch when the terminal is selected; a later
+terminal rendering failure does not change the chosen policy.
+
+Only transient errors originating from network I/O qualify. Validation, local
+file/storage failures, known protocol/authentication rejections, and completed
+archives stop the run. A remote failure whose error response is lost can still
+look like a disconnect. Each attempt cleans up before the delay; Ctrl+C cancels
+the countdown without another attempt. Resume uses the same dump ID, source,
+and data directory. The retry budget covers the entire invocation. Receiver
+Listen keeps serving sessions independently and ignores the restart budget.
+A listening sender starts listening again after a retry delay; its receiver
+must reconnect too. Existing per-file immediate attempts are unchanged.
 
 Supported pairings:
 
@@ -85,9 +129,11 @@ The current `v4` data path uses `--level`, `--frame-target-mb`, `--threads`,
   `4 MiB`. The next whole entry is carried forward, without being skipped.
 
 `--read-buffer-kb` remains accepted and validated but does not currently tune the
-data path. Directory scanning independently uses up to `8` subtree workers while
-preserving deterministic depth-first traversal. Compression contexts are reused
-between bundles and retries, with a separate zstd frame for each attempt.
+data path. Directory scanning independently uses up to `2` subtree workers on
+Windows and `8` on other platforms, preserving deterministic depth-first
+traversal. Compression contexts are reused across successfully completed frames,
+with a separate zstd frame for each attempt. After unfinished, failed, or aborted
+compression, the context is recreated with the same settings before the next attempt.
 Streamed attempts reuse four `4 MiB` compressed buffers and one `1 MiB`
 source-read buffer across files in the session; these buffers are allocated on
 first use. The producer is still scoped to each attempt.

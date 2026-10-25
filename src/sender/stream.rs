@@ -12,6 +12,8 @@ use zstd::zstd_safe::zstd_sys::ZSTD_EndDirective;
 use zstd::zstd_safe::{CCtx, InBuffer};
 
 use crate::network::protocol::{BundleEntryDescriptor, BundlePlanDescriptor, wire};
+use crate::progress::{self, PipelineStage, PipelineState};
+use crate::runtime::SessionControl;
 
 use super::compress::{BundleCompressor, CompressionOutput, compress_into_vec};
 use super::plan::MaterializedPayload;
@@ -106,6 +108,7 @@ struct Chunk {
 
 // Два готовых чанка перекрывают чтение/сжатие с блокирующей записью в сеть.
 // Вместе с producer и consumer используются ровно четыре переиспользуемых буфера.
+#[cfg(test)]
 pub(crate) fn send_streamed_attempt_with_workspace(
     stream: &mut impl Write,
     file: &mut StreamedRegularFile,
@@ -114,6 +117,20 @@ pub(crate) fn send_streamed_attempt_with_workspace(
     compressor: &mut BundleCompressor,
     workspace: &mut StreamWorkspace,
 ) -> Result<StreamAttempt> {
+    send_streamed_attempt_controlled(
+        stream, file, bundle_no, attempt_no, compressor, workspace, None,
+    )
+}
+
+pub(crate) fn send_streamed_attempt_controlled(
+    stream: &mut impl Write,
+    file: &mut StreamedRegularFile,
+    bundle_no: u64,
+    attempt_no: u32,
+    compressor: &mut BundleCompressor,
+    workspace: &mut StreamWorkspace,
+    control: Option<&SessionControl>,
+) -> Result<StreamAttempt> {
     send_attempt_with_workspace(
         stream,
         BundleInput::Streamed(file),
@@ -121,15 +138,28 @@ pub(crate) fn send_streamed_attempt_with_workspace(
         attempt_no,
         compressor,
         workspace,
+        control,
     )
 }
 
+#[cfg(test)]
 pub(crate) fn send_materialized_attempt_with_workspace(
     stream: &mut impl Write,
     descriptor: &BundlePlanDescriptor,
     payloads: Vec<MaterializedPayload>,
     compressor: &mut BundleCompressor,
     workspace: &mut StreamWorkspace,
+) -> Result<StreamAttempt> {
+    send_materialized_attempt_controlled(stream, descriptor, payloads, compressor, workspace, None)
+}
+
+pub(crate) fn send_materialized_attempt_controlled(
+    stream: &mut impl Write,
+    descriptor: &BundlePlanDescriptor,
+    payloads: Vec<MaterializedPayload>,
+    compressor: &mut BundleCompressor,
+    workspace: &mut StreamWorkspace,
+    control: Option<&SessionControl>,
 ) -> Result<StreamAttempt> {
     anyhow::ensure!(
         descriptor.entries.len() == payloads.len(),
@@ -145,6 +175,7 @@ pub(crate) fn send_materialized_attempt_with_workspace(
         1,
         compressor,
         workspace,
+        control,
     )
 }
 
@@ -163,7 +194,14 @@ fn send_attempt_with_workspace(
     attempt_no: u32,
     compressor: &mut BundleCompressor,
     workspace: &mut StreamWorkspace,
+    control: Option<&SessionControl>,
 ) -> Result<StreamAttempt> {
+    super::check_control(control)?;
+    let _data = progress::stage(
+        control,
+        PipelineStage::Data,
+        PipelineState::WaitingCompression,
+    );
     let (chunks_tx, chunks_rx) = bounded(QUEUED_CHUNKS);
     let (buffers_tx, buffers_rx) = bounded(QUEUED_CHUNKS + 1);
     for _ in 0..QUEUED_CHUNKS + 1 {
@@ -184,15 +222,45 @@ fn send_attempt_with_workspace(
         let producer = thread::Builder::new()
             .name("dump-stream".into())
             .spawn_scoped(scope, move || {
-                produce_attempt(
-                    input, compressor, chunks_tx, buffers_rx, cancelled, pending, scratch,
-                )
+                let result = produce_attempt(
+                    input,
+                    compressor,
+                    chunks_tx,
+                    buffers_rx,
+                    AttemptCancellation {
+                        local: cancelled,
+                        control,
+                    },
+                    pending,
+                    scratch,
+                );
+                if result.is_err()
+                    && !cancelled.load(Ordering::Relaxed)
+                    && !control.is_some_and(SessionControl::is_cancelled)
+                {
+                    progress::set_stage(control, PipelineStage::Compress, PipelineState::Failed);
+                }
+                result
             })
             .context("failed to start v4 streamed bundle producer")?;
 
         let mut send_duration = Duration::ZERO;
         let send_result = (|| -> Result<()> {
-            while let Ok(mut chunk) = chunks_rx.recv() {
+            loop {
+                super::check_control(control)?;
+                let mut chunk = if control.is_some() {
+                    match chunks_rx.recv_timeout(Duration::from_millis(50)) {
+                        Ok(chunk) => chunk,
+                        Err(crossbeam_channel::RecvTimeoutError::Timeout) => continue,
+                        Err(crossbeam_channel::RecvTimeoutError::Disconnected) => break,
+                    }
+                } else {
+                    match chunks_rx.recv() {
+                        Ok(chunk) => chunk,
+                        Err(_) => break,
+                    }
+                };
+                let sending = progress::stage(control, PipelineStage::Data, PipelineState::Sending);
                 let started = Instant::now();
                 wire::write_bundle_data_message(
                     stream,
@@ -201,16 +269,30 @@ fn send_attempt_with_workspace(
                     chunk.is_last,
                     &chunk.bytes,
                 )?;
+                if let Some(progress) = control.and_then(SessionControl::progress) {
+                    progress
+                        .transferred_bytes
+                        .fetch_add(chunk.bytes.len() as u64, Ordering::Relaxed);
+                }
                 send_duration += started.elapsed();
+                drop(sending);
                 chunk.bytes.clear();
                 // Receiver может уже завершиться; возврат буфера не должен задерживать сеть.
                 let _ = buffers_tx.try_send(chunk.bytes);
             }
             let started = Instant::now();
-            stream.flush().context("failed to flush v4 streamed data")?;
+            let _sending = progress::stage(control, PipelineStage::Data, PipelineState::Sending);
+            stream
+                .flush()
+                .map_err(crate::network::network_io)
+                .context("failed to flush v4 streamed data")?;
             send_duration += started.elapsed();
             Ok(())
         })();
+
+        if send_result.is_err() && !control.is_some_and(SessionControl::is_cancelled) {
+            progress::set_stage(control, PipelineStage::Data, PipelineState::Failed);
+        }
 
         // При сетевой ошибке сначала снимаем оба вида backpressure, затем ждём producer.
         // Текущую попытку полностью завершаем до BundleAbort, исключая поздние записи из worker.
@@ -219,8 +301,10 @@ fn send_attempt_with_workspace(
         drop(buffers_tx);
         let produced = producer.join();
         send_result?;
-        let mut attempt =
-            produced.map_err(|_| anyhow::anyhow!("v4 streamed bundle producer panicked"))??;
+        let mut attempt = produced.map_err(|_| {
+            progress::set_stage(control, PipelineStage::Compress, PipelineState::Failed);
+            anyhow::anyhow!("v4 streamed bundle producer panicked")
+        })??;
         attempt.send_duration = send_duration;
         Ok(attempt)
     })
@@ -231,10 +315,15 @@ fn produce_attempt(
     compressor: &mut BundleCompressor,
     chunks: Sender<Chunk>,
     buffers: Receiver<RecycledBuffer>,
-    cancelled: &AtomicBool,
+    cancelled: AttemptCancellation<'_>,
     pending: RecycledBuffer,
     scratch: &mut [u8],
 ) -> Result<StreamAttempt> {
+    let _compressing = progress::stage(
+        cancelled.control,
+        PipelineStage::Compress,
+        PipelineState::Compressing,
+    );
     let started = Instant::now();
     let mut sink = ChunkProducer {
         chunks,
@@ -243,6 +332,7 @@ fn produce_attempt(
         compressed_bytes: 0,
         checksum: Xxh3Default::new(),
         queue_wait: Duration::ZERO,
+        cancelled,
     };
     let file = match input {
         BundleInput::Streamed(file) => file,
@@ -252,10 +342,19 @@ fn produce_attempt(
         } => {
             let mut writer = BufferedBundleWriter::new(compressor, &mut sink)?;
             for (descriptor, payload) in descriptors.iter().zip(payloads) {
-                if cancelled.load(Ordering::Relaxed) {
-                    return Err(consumer_disconnected().into());
-                }
-                writer.append_payload(descriptor, payload.mode, &payload.contents)?;
+                cancelled.check()?;
+                let source = cancelled
+                    .control
+                    .and_then(SessionControl::progress)
+                    .map(|progress| {
+                        progress.source_file(&descriptor.relative_path, descriptor.size_at_open)
+                    });
+                writer.append_payload(
+                    descriptor,
+                    payload.mode,
+                    &payload.contents,
+                    source.as_ref(),
+                )?;
                 // После append payload больше не нужен; shared slab освобождается
                 // после последнего slice, а descriptors остаются у уже отправленного плана.
             }
@@ -275,6 +374,12 @@ fn produce_attempt(
         }
     };
     let forced_short_limit = file.take_forced_short_read_limit();
+    let source = cancelled
+        .control
+        .and_then(SessionControl::progress)
+        .map(|progress| {
+            progress.source_file(&file.descriptor.relative_path, file.descriptor.size_at_open)
+        });
     let mut reader = ExactFileReader::new(
         &mut file.file,
         &file.abs_path,
@@ -294,6 +399,7 @@ fn produce_attempt(
                 cancelled,
             },
             scratch,
+            source.as_ref(),
         );
         let tar_bytes = writer.bytes_written();
         if appended.is_ok() {
@@ -327,17 +433,19 @@ fn produce_attempt(
     })
 }
 
-struct ChunkProducer {
+struct ChunkProducer<'a> {
     chunks: Sender<Chunk>,
     buffers: Receiver<RecycledBuffer>,
     pending: RecycledBuffer,
     compressed_bytes: u64,
     checksum: Xxh3Default,
     queue_wait: Duration,
+    cancelled: AttemptCancellation<'a>,
 }
 
-impl ChunkProducer {
+impl ChunkProducer<'_> {
     fn emit(&mut self, is_last: bool) -> io::Result<()> {
+        self.cancelled.check().map_err(io::Error::other)?;
         if self.pending.is_empty() && !is_last {
             return Ok(());
         }
@@ -350,9 +458,19 @@ impl ChunkProducer {
                 pool: self.pending.pool.clone(),
             }
         } else {
+            let _waiting = progress::stage(
+                self.cancelled.control,
+                PipelineStage::Compress,
+                PipelineState::WaitingBuffer,
+            );
             self.buffers.recv().map_err(|_| consumer_disconnected())?
         };
         let bytes = std::mem::replace(&mut self.pending, next);
+        let _waiting = progress::stage(
+            self.cancelled.control,
+            PipelineStage::Compress,
+            PipelineState::WaitingConsumer,
+        );
         let result = self
             .chunks
             .send(Chunk { bytes, is_last })
@@ -362,13 +480,14 @@ impl ChunkProducer {
     }
 }
 
-impl CompressionOutput for &mut ChunkProducer {
+impl CompressionOutput for &mut ChunkProducer<'_> {
     fn compress(
         &mut self,
         context: &mut CCtx<'static>,
         input: &mut InBuffer<'_>,
         directive: ZSTD_EndDirective,
     ) -> io::Result<usize> {
+        self.cancelled.check().map_err(io::Error::other)?;
         if self.pending.len() == wire::MAX_DATA_CHUNK_BYTES {
             self.emit(false)?;
         }
@@ -395,15 +514,34 @@ fn consumer_disconnected() -> io::Error {
 
 struct CancellableReader<'a, R> {
     inner: &'a mut R,
-    cancelled: &'a AtomicBool,
+    cancelled: AttemptCancellation<'a>,
 }
 
 impl<R: Read> Read for CancellableReader<'_, R> {
     fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
-        if self.cancelled.load(Ordering::Relaxed) {
-            return Err(consumer_disconnected());
-        }
+        self.cancelled.check().map_err(io::Error::other)?;
+        let _reading = progress::stage(
+            self.cancelled.control,
+            PipelineStage::Compress,
+            PipelineState::Reading,
+        );
         self.inner.read(bytes)
+    }
+}
+
+#[derive(Clone, Copy)]
+struct AttemptCancellation<'a> {
+    local: &'a AtomicBool,
+    control: Option<&'a SessionControl>,
+}
+
+impl AttemptCancellation<'_> {
+    fn check(self) -> Result<()> {
+        super::check_control(self.control)?;
+        if self.local.load(Ordering::Relaxed) {
+            return Err(consumer_disconnected().into());
+        }
+        Ok(())
     }
 }
 
@@ -430,6 +568,168 @@ mod tests {
 
     const FIXTURE_BYTES: usize = 16 * 1024 * 1024 + 73;
     const COMPLETION_TIMEOUT: Duration = Duration::from_secs(15);
+
+    #[test]
+    fn pipeline_distinguishes_buffer_and_consumer_backpressure() {
+        for blocked_state in [PipelineState::WaitingBuffer, PipelineState::WaitingConsumer] {
+            let run = crate::runtime::RunControl::new(Some(Arc::new(
+                crate::progress::ProgressHub::new(),
+            )));
+            let control = run.session(crate::role::Role::Sender, "dump", "peer");
+            let progress = control.progress().unwrap();
+            progress.set_stage(PipelineStage::Compress, PipelineState::Compressing);
+            let (chunks_tx, chunks_rx) = bounded(QUEUED_CHUNKS);
+            let (buffers_tx, buffers_rx) = bounded(1);
+            if blocked_state == PipelineState::WaitingConsumer {
+                buffers_tx
+                    .send(StreamWorkspace::new().take_buffer())
+                    .unwrap();
+                for _ in 0..QUEUED_CHUNKS {
+                    chunks_tx
+                        .send(Chunk {
+                            bytes: StreamWorkspace::new().take_buffer(),
+                            is_last: false,
+                        })
+                        .unwrap();
+                }
+            }
+            thread::scope(|scope| {
+                let worker = scope.spawn(|| {
+                    let mut sink = producer(chunks_tx, buffers_rx);
+                    sink.cancelled.control = Some(&control);
+                    sink.emit(false)
+                });
+                let deadline = Instant::now() + COMPLETION_TIMEOUT;
+                loop {
+                    let snapshot = progress.snapshot();
+                    if snapshot.pipelines.iter().any(|stage| {
+                        stage.stage == PipelineStage::Compress && stage.state == blocked_state
+                    }) {
+                        break;
+                    }
+                    assert!(
+                        Instant::now() < deadline,
+                        "producer did not expose its wait"
+                    );
+                    thread::yield_now();
+                }
+                drop(chunks_rx);
+                drop(buffers_tx);
+                assert_eq!(
+                    worker.join().unwrap().unwrap_err().kind(),
+                    io::ErrorKind::BrokenPipe
+                );
+            });
+            let snapshot = progress.snapshot();
+            assert_eq!(
+                snapshot
+                    .pipelines
+                    .iter()
+                    .find(|stage| stage.stage == PipelineStage::Compress)
+                    .unwrap()
+                    .state,
+                PipelineState::Compressing
+            );
+        }
+    }
+
+    #[test]
+    fn cancellation_after_first_chunk_releases_producer_and_counts_only_sent_payload() {
+        completes_without_deadlock(|| {
+            struct CancelAfterChunk(SessionControl);
+            impl Write for CancelAfterChunk {
+                fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+                    assert_eq!(
+                        self.0
+                            .progress()
+                            .unwrap()
+                            .snapshot()
+                            .pipelines
+                            .iter()
+                            .find(|stage| stage.stage == PipelineStage::Data)
+                            .unwrap()
+                            .state,
+                        PipelineState::Sending,
+                    );
+                    if bytes.len() == wire::MAX_DATA_CHUNK_BYTES {
+                        self.0.cancel();
+                    }
+                    Ok(bytes.len())
+                }
+                fn flush(&mut self) -> io::Result<()> {
+                    Ok(())
+                }
+            }
+            let (_dir, _bytes, mut file) = fixture(FIXTURE_BYTES);
+            let run = crate::runtime::RunControl::new(Some(Arc::new(
+                crate::progress::ProgressHub::new(),
+            )));
+            let control = run.session(crate::role::Role::Sender, "dump", "peer");
+            let mut compressor = BundleCompressor::new(1, 1).unwrap();
+            let mut workspace = StreamWorkspace::new();
+            let error = send_streamed_attempt_controlled(
+                &mut CancelAfterChunk(control.clone()),
+                &mut file,
+                1,
+                1,
+                &mut compressor,
+                &mut workspace,
+                Some(&control),
+            )
+            .err()
+            .expect("cancelled stream unexpectedly completed");
+            assert!(error.downcast_ref::<crate::runtime::Cancelled>().is_some());
+            let progress = control.progress().unwrap();
+            assert_eq!(
+                progress.transferred_bytes.load(Ordering::Relaxed),
+                wire::MAX_DATA_CHUNK_BYTES as u64
+            );
+            assert_eq!(progress.retries.load(Ordering::Relaxed), 0);
+            assert_eq!(progress.skips.load(Ordering::Relaxed), 0);
+            assert_eq!(workspace.buffers.lock().unwrap().len(), STREAM_BUFFERS);
+        });
+    }
+
+    #[test]
+    fn data_write_failure_remains_visible_after_producer_cleanup() {
+        let (_dir, _bytes, mut file) = fixture(4096);
+        let run =
+            crate::runtime::RunControl::new(Some(Arc::new(crate::progress::ProgressHub::new())));
+        let control = run.session(crate::role::Role::Sender, "dump", "peer");
+        let mut writer = FailingWriter {
+            failure: WriterFailure::BrokenPipe,
+            fail_after: 0,
+            written: 0,
+            flushes: 0,
+        };
+        let mut compressor = BundleCompressor::new(1, 1).unwrap();
+        let mut workspace = StreamWorkspace::new();
+        assert!(
+            send_streamed_attempt_controlled(
+                &mut writer,
+                &mut file,
+                1,
+                1,
+                &mut compressor,
+                &mut workspace,
+                Some(&control),
+            )
+            .is_err()
+        );
+        assert_eq!(
+            control
+                .progress()
+                .unwrap()
+                .snapshot()
+                .pipelines
+                .iter()
+                .find(|stage| stage.stage == PipelineStage::Data)
+                .unwrap()
+                .state,
+            PipelineState::Failed
+        );
+        assert_eq!(pool_pointers(&workspace).len(), STREAM_BUFFERS);
+    }
 
     fn fixture(size: usize) -> (TestDir, Vec<u8>, StreamedRegularFile) {
         let directory = TestDir::new();
@@ -500,7 +800,8 @@ mod tests {
         )
     }
 
-    fn producer(chunks: Sender<Chunk>, buffers: Receiver<RecycledBuffer>) -> ChunkProducer {
+    fn producer<'a>(chunks: Sender<Chunk>, buffers: Receiver<RecycledBuffer>) -> ChunkProducer<'a> {
+        static NEVER_CANCELLED: AtomicBool = AtomicBool::new(false);
         let mut pending = StreamWorkspace::new().take_buffer();
         pending.resize(wire::MAX_DATA_CHUNK_BYTES, 0xa5);
         ChunkProducer {
@@ -510,6 +811,10 @@ mod tests {
             compressed_bytes: 0,
             checksum: Xxh3Default::new(),
             queue_wait: Duration::ZERO,
+            cancelled: AttemptCancellation {
+                local: &NEVER_CANCELLED,
+                control: None,
+            },
         }
     }
 
@@ -553,6 +858,7 @@ mod tests {
             .unwrap()
             .unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::BrokenPipe);
+        assert!(!crate::network::is_retryable_error(&error.into()));
         worker.join().unwrap();
     }
 
@@ -653,6 +959,7 @@ mod tests {
             assert_eq!(workspace.buffers.lock().unwrap().len(), STREAM_BUFFERS);
             assert_eq!(writer.written, 2 * wire::MAX_DATA_CHUNK_BYTES);
             assert_eq!(writer.flushes, 0);
+            assert!(crate::network::is_retryable_error(&error));
             assert!(error.chain().any(|cause| {
                 cause
                     .downcast_ref::<io::Error>()
@@ -707,6 +1014,7 @@ mod tests {
                 .unwrap();
             assert!(writer.written > 0);
             assert_eq!(writer.flushes, 1);
+            assert!(crate::network::is_retryable_error(&error));
             assert!(format!("{error:#}").contains("test flush failed"));
         });
     }
@@ -769,6 +1077,67 @@ mod tests {
             mode: 0o644,
             contents: contents.into(),
         }
+    }
+
+    #[test]
+    fn observed_streamed_retry_and_materialized_bundle_share_raw_accounting() {
+        let (_directory, contents, mut file) = fixture(1024 * 1024 + 17);
+        let run =
+            crate::runtime::RunControl::new(Some(Arc::new(crate::progress::ProgressHub::new())));
+        let control = run.session(crate::role::Role::Sender, "dump", "peer");
+        let progress = control.progress().unwrap();
+        let task = materialized_task(vec![materialized_entry("buffered.bin", contents.clone())]);
+        assert_eq!(progress.snapshot().raw_processed_bytes, 0);
+        let mut compressor = BundleCompressor::new(1, 1).unwrap();
+        let mut workspace = StreamWorkspace::new();
+        file.forced_short_read_limit = Some(5000);
+        let first = send_streamed_attempt_controlled(
+            &mut Vec::new(),
+            &mut file,
+            7,
+            1,
+            &mut compressor,
+            &mut workspace,
+            Some(&control),
+        )
+        .unwrap();
+        assert!(first.result.is_err());
+        assert_eq!(progress.snapshot().raw_processed_bytes, 5000);
+        assert!(progress.snapshot().current_file.is_none());
+        assert!(matches!(
+            file.reopen_for_retry().unwrap(),
+            super::super::read::ReopenDecision::Opened
+        ));
+        let retry = send_streamed_attempt_controlled(
+            &mut Vec::new(),
+            &mut file,
+            7,
+            2,
+            &mut compressor,
+            &mut workspace,
+            Some(&control),
+        )
+        .unwrap();
+        assert!(retry.result.is_ok());
+        assert_eq!(
+            progress.snapshot().raw_processed_bytes,
+            5000 + contents.len() as u64
+        );
+        let materialized = send_materialized_attempt_controlled(
+            &mut Vec::new(),
+            &task.descriptor,
+            task.payloads,
+            &mut compressor,
+            &mut workspace,
+            Some(&control),
+        )
+        .unwrap();
+        assert!(materialized.result.is_ok());
+        assert_eq!(
+            progress.snapshot().raw_processed_bytes,
+            5000 + 2 * contents.len() as u64
+        );
+        assert!(progress.snapshot().current_file.is_none());
     }
 
     fn materialized_task(entries: Vec<MaterializedEntry>) -> MaterializedBundleTask {
@@ -978,7 +1347,10 @@ mod tests {
                     )
                 }));
                 match failure {
-                    WriterFailure::BrokenPipe => assert!(result.unwrap().is_err()),
+                    WriterFailure::BrokenPipe => {
+                        let error = result.unwrap().err().unwrap();
+                        assert!(crate::network::is_retryable_error(&error));
+                    }
                     WriterFailure::Panic => assert!(result.is_err()),
                     WriterFailure::Flush => unreachable!(),
                 }
@@ -1100,6 +1472,7 @@ mod tests {
         assert_eq!(aborted.read_bytes, forced_limit);
         let error = aborted.result.err().unwrap();
         assert!(format!("{error:#}").contains("short read"));
+        assert!(!crate::network::is_retryable_error(&error));
         let aborted_chunks = decode_chunks(&aborted_wire, 7, 1);
         assert!(aborted_chunks.iter().all(|chunk| !chunk.is_last));
         assert!(

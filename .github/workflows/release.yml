@@ -45,13 +45,19 @@ jobs:
           RELEASE_TARGET: ${{ matrix.target }}
           RELEASE_BINARY: ${{ matrix.binary }}
         run: |
-          $packageDir = 'target/release-artifacts/package'
+          $metadataJson = cargo metadata --locked --offline --no-deps --format-version 1
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $package = ($metadataJson | ConvertFrom-Json).packages | Where-Object name -eq 'fast-dump'
+          $revision = git rev-parse --short=7 HEAD
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $releaseDir = "releases/$($package.version)-$revision"
+          $packageDir = "$releaseDir/$env:RELEASE_TARGET"
           New-Item -ItemType Directory -Force -Path $packageDir | Out-Null
           $binaryPath = "target/$env:RELEASE_TARGET/release/$env:RELEASE_BINARY"
           ./scripts/write-release-manifest.ps1 -Binary $binaryPath -Target $env:RELEASE_TARGET -OutputPath "$packageDir/manifest.json"
           Copy-Item -LiteralPath $binaryPath -Destination $packageDir
           Copy-Item -LiteralPath Cargo.lock -Destination $packageDir
-          $archivePath = "target/release-artifacts/fast-dump-$env:RELEASE_TARGET.tar.gz"
+          $archivePath = "$releaseDir/fast-dump-$revision-$env:RELEASE_TARGET.tar.gz"
           tar -czf $archivePath -C $packageDir $env:RELEASE_BINARY manifest.json Cargo.lock
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $archiveHash = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
@@ -60,6 +66,6 @@ jobs:
         with:
           name: fast-dump-${{ matrix.target }}-${{ github.sha }}
           path: |
-            target/release-artifacts/*.tar.gz
-            target/release-artifacts/*.sha256
+            releases/*/*.tar.gz
+            releases/*/*.sha256
           if-no-files-found: error

@@ -8,6 +8,43 @@ use crate::network::protocol::PreparedBundle;
 
 static NEXT_TEST_DIRECTORY: AtomicU64 = AtomicU64::new(0);
 
+#[test]
+fn failed_error_reply_preserves_the_primary_protocol_failure() {
+    struct ResetReply(Cursor<Vec<u8>>);
+
+    impl Read for ResetReply {
+        fn read(&mut self, bytes: &mut [u8]) -> std::io::Result<usize> {
+            self.0.read(bytes)
+        }
+    }
+    impl Write for ResetReply {
+        fn write(&mut self, _: &[u8]) -> std::io::Result<usize> {
+            Err(std::io::ErrorKind::ConnectionReset.into())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let mut input = Vec::new();
+    wire::write_message(
+        &mut input,
+        &Message::ResumeQuery(ResumeQuery {
+            dump_id: "wrong".into(),
+        }),
+    )
+    .unwrap();
+    let error = respond_resume_query(
+        &mut ResetReply(Cursor::new(input)),
+        "expected",
+        ResumeState::default(),
+        None,
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("resume query dump id mismatch"));
+    assert!(!crate::network::is_retryable_error(&error));
+}
+
 struct TestDirectory(PathBuf);
 
 impl TestDirectory {
@@ -132,6 +169,97 @@ fn bundle(bundle_no: u64) -> PreparedBundle {
         },
         compressed_payload: payload,
     }
+}
+
+#[test]
+fn progress_tracks_written_payload_and_durable_entries_without_using_ordinals() {
+    use crate::network::protocol::{BundleEntryDescriptor, BundleEntryKind};
+    use crate::progress::ProgressHub;
+    use crate::role::Role;
+    use crate::runtime::RunControl;
+    let directory = TestDirectory::new();
+    let hub = std::sync::Arc::new(ProgressHub::new());
+    let run = RunControl::new(Some(hub));
+    let control = run.session(Role::Receiver, "boundaries", "peer");
+    let progress = control.progress().unwrap();
+    let mut receiver =
+        ReceiverSession::open_controlled(directory.0.clone(), "boundaries", 1, Some(&control))
+            .unwrap();
+    let mut payload = bundle(1);
+    payload.descriptor.first_work_ordinal = 3;
+    payload.descriptor.last_work_ordinal = 9;
+    payload.descriptor.entries = [3, 9]
+        .into_iter()
+        .map(|work_ordinal| BundleEntryDescriptor {
+            work_ordinal,
+            relative_path: format!("{work_ordinal}.bin"),
+            kind: BundleEntryKind::Regular,
+            size_at_open: 1,
+            best_effort: false,
+        })
+        .collect();
+    let mut pending = PendingState::default();
+    pending.plan(&payload, 1);
+    let split = payload.compressed_payload.len() / 2;
+    pending
+        .data(
+            &mut receiver,
+            1,
+            1,
+            &payload.compressed_payload[..split],
+            false,
+        )
+        .unwrap();
+    assert_eq!(
+        progress.transferred_bytes.load(Ordering::Relaxed),
+        split as u64
+    );
+    assert_eq!(progress.durable_bytes.load(Ordering::Relaxed), 0);
+    assert_eq!(progress.committed_entries.load(Ordering::Relaxed), 0);
+    pending
+        .data(
+            &mut receiver,
+            1,
+            1,
+            &payload.compressed_payload[split..],
+            true,
+        )
+        .unwrap();
+    assert_eq!(progress.sent_entries.load(Ordering::Relaxed), 2);
+    assert_eq!(progress.committed_entries.load(Ordering::Relaxed), 0);
+    pending.abort(&mut receiver, 1, 1);
+    assert_eq!(progress.sent_entries.load(Ordering::Relaxed), 0);
+    assert_eq!(progress.durable_bytes.load(Ordering::Relaxed), 0);
+    pending.plan(&payload, 2);
+    pending
+        .data(&mut receiver, 1, 2, &payload.compressed_payload, true)
+        .unwrap();
+    assert_eq!(progress.sent_entries.load(Ordering::Relaxed), 2);
+    assert_eq!(
+        progress.transferred_bytes.load(Ordering::Relaxed),
+        2 * payload.compressed_payload.len() as u64
+    );
+    let ack = pending.commit(&mut receiver);
+    assert_eq!(
+        progress.durable_bytes.load(Ordering::Relaxed),
+        ack.archive_len
+    );
+    assert_eq!(progress.committed_entries.load(Ordering::Relaxed), 2);
+    assert_eq!(progress.bundles.load(Ordering::Relaxed), 1);
+    drop(receiver);
+    let resumed = run.session(Role::Receiver, "boundaries", "peer");
+    let _receiver =
+        ReceiverSession::open_controlled(directory.0.clone(), "boundaries", 1, Some(&resumed))
+            .unwrap();
+    let resumed_progress = resumed.progress().unwrap();
+    assert_eq!(
+        resumed_progress.resumed_bytes.load(Ordering::Relaxed),
+        ack.archive_len
+    );
+    assert_eq!(
+        resumed_progress.committed_entries.load(Ordering::Relaxed),
+        0
+    );
 }
 
 #[test]

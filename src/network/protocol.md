@@ -16,6 +16,50 @@ Mainline wire protocol for the current bundle-first runtime.
 
 ## Transport
 
+The terminal dashboard, `--no-gui`, and local cancellation do not add wire
+messages or change version `4`. Binary Ctrl+C stops new work and closes both
+channels, then joins owned workers/readers. Cancellation does not send `Finish`
+or record a terminal skip. Recovery still uses only durable bundle boundaries;
+an already-started archive/WAL commit or finalization follows the existing
+durability order. A completed archive can therefore exist after a lost final
+ACK and is never overwritten by a subsequent attempt.
+
+Local session retries (`--retries`, `--retry-delay-secs`) use the same v4
+handshake and durable resume flow, without new messages. Plain CLI defaults to
+zero retries; GUI defaults to ten additional attempts ten seconds apart.
+Explicit zero disables retries. Sender and receiver Connect first close/join
+the failed attempt, then wait interruptibly before establishing a fresh session.
+Receiver Listen already serves subsequent sessions and is not restarted.
+Only typed transient socket I/O failures qualify, not malformed decoded bodies,
+local storage failures, or known peer rejections. Receiver initialization errors
+are reported best-effort using the existing `Error` message; a lost error reply
+can still be observed as a disconnect. A retry after a lost final ACK must reject
+an already-completed archive rather than overwrite it or infer success.
+
+Connection establishment and initialization-lock waiting are interruptible by
+local cancellation. The existing handshake timeouts remain; cancellation does
+not introduce a general session idle deadline. Dashboard bytes are local
+observations: sent payload includes attempts, sender durable size follows
+validated ACKs, and receiver durable size follows archive/WAL sync. Receiver
+`Written` counts successful archive appends, including writes later rolled back,
+but excludes discarded late/orphan data. Aborted completed attempts are removed
+from its received-entry counter.
+
+The dashboard's per-stage pipeline states are local observations, without wire
+messages. They distinguish preparation, compression, queue/buffer waits, socket
+I/O, peer ACK waits, archive writes, and durable sync. State durations measure
+elapsed wall time rather than CPU time; socket I/O includes blocking inside the
+operation. A long wait alone is not a detected network failure. These diagnostics
+do not change idle deadlines, retry decisions, packet limits, or commit ordering.
+
+Sender source-processing diagnostics are also local: current tar entry path,
+`size_at_open` (zero for symlinks), payload bytes accepted by tar/zstd, and their
+five-second rate.
+The cumulative payload counter includes retries but excludes read-ahead,
+tar headers/padding, and symlink metadata. Per-file progress resets on an attempt
+and clears when the entry ends. Buffered input acceptance is not compression
+completion or durable progress; compressed network speed remains separate.
+
 `v4` opens two TCP channels per dump session against the same address.
 
 Current mainline transport preserves both pairings:
@@ -146,6 +190,29 @@ so normal tar readers see all entries across bundle boundaries.
 
 ## Sender Preparation
 
+Linux senders classify source filesystems by type. They prune procfs, sysfs,
+debugfs, tracefs, cgroup v1/v2, resctrl, configfs, binfmt_misc, securityfs,
+selinuxfs, smackfs, bpffs, nsfs, efivarfs, mqueue, devpts, fusectl, rpc_pipefs,
+and nfsd before enumerating a directory. Nested mounts below a pruned directory
+are also omitted. A source root on an excluded filesystem is rejected.
+Every new regular-file handle, including retries, is checked before payload
+reads to cover individual bind-mounted system files. Excluded handles become
+immediate `UnsupportedEntry` skips, without retrying the exclusion. Classification
+I/O failures are errors rather than an allow decision. Unknown filesystem types,
+normal FUSE/network filesystems, OverlayFS, tmpfs/ramfs/hugetlbfs, and ordinary
+large/sparse files remain eligible. Windows selection is unchanged.
+
+A pruned directory produces one existing `SkippedEntry` with reason
+`UnsupportedEntry` and ordinal `0`. Its path names only the excluded directory;
+unvisited descendants receive no ordinals or skip records. Filesystem names and
+explanations are local diagnostics, not new wire fields. `SkipEntries`/`SkipAck`
+durability and the issues report remain unchanged. Records retain exact-path
+semantics; a later mount-layout change can introduce new descendant candidates.
+Pruning can shift later ordinals relative to older sender versions. Existing
+committed ordinal/path validation must reject an incompatible resume without
+resetting acknowledged state. Use a new dump ID for an older root-dump test;
+no wire-version, WAL, or catalog migration is introduced.
+
 Up to `2` workers on Windows and `8` on other platforms scan independent
 subtrees. Entries and work ordinals retain deterministic depth-first order with
 each directory sorted by normalized relative path. Each directory is fully
@@ -202,6 +269,9 @@ A shared slab is freed after its last slice is released, including slices carrie
 to the next bundle.
 
 Compression may use synchronous zstd or multiple workers within a frame.
+The sender selects its zstd level before the session through `--level` or the
+GUI setup field; both default to `3`. The level is local compressor configuration,
+does not add a wire field, and needs no matching receiver option.
 Materialized bundles and streamed files share one sender context across
 successfully completed frames, but each attempt starts an independent frame.
 After unfinished, failed, or aborted compression, the sender recreates the

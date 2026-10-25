@@ -5,9 +5,9 @@ param(
 $ErrorActionPreference = 'Stop'
 
 $repoRoot = Split-Path -Parent $PSScriptRoot
-$distDir = Join-Path $repoRoot 'dist'
+$artifactDir = Join-Path $repoRoot 'releases/local'
 
-New-Item -ItemType Directory -Force -Path $distDir | Out-Null
+New-Item -ItemType Directory -Force -Path $artifactDir | Out-Null
 
 function Get-InstalledTargets {
     $targets = @{}
@@ -190,7 +190,7 @@ try {
             throw "expected build artifact is missing: $builtPath"
         }
 
-        $artifactPath = Join-Path $distDir $spec.artifact
+        $artifactPath = Join-Path $artifactDir $spec.artifact
         Copy-Item $builtPath $artifactPath -Force
 
         [pscustomobject]@{

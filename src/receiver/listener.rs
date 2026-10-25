@@ -15,8 +15,9 @@ use log::debug;
 use crate::network::protocol::wire;
 use crate::network::transport::{self, BoundListener, PendingChannels, PendingSessionKey, Session};
 use crate::role::Role;
+use crate::runtime::{RunControl, SessionControl, SocketRegistration};
 
-use super::network::receive_dump;
+use super::network::receive_dump_profile_controlled;
 
 fn reject_busy_session(stream: &mut std::net::TcpStream, max_sessions: usize) {
     let _ = wire::send_error(
@@ -64,12 +65,6 @@ pub(crate) fn serve_listener(
     token: Option<String>,
 ) -> Result<()> {
     let data_dir = data_dir.into();
-    debug!(
-        "v4 receiver listener entering serve loop: addr={} data_dir={} max_sessions={}",
-        listener.local_addr(),
-        data_dir.display(),
-        max_sessions
-    );
     let _ = serve_listener_until(listener, data_dir, max_sessions, token, None)?;
     Ok(())
 }
@@ -81,6 +76,72 @@ pub(crate) fn serve_listener_until(
     token: Option<String>,
     stop_after_terminated_sessions: Option<usize>,
 ) -> Result<usize> {
+    serve_listener_inner(
+        listener,
+        data_dir,
+        max_sessions,
+        token,
+        stop_after_terminated_sessions,
+        &RunControl::new(None),
+    )
+}
+
+pub(crate) fn serve_listener_controlled(
+    listener: BoundListener,
+    data_dir: PathBuf,
+    max_sessions: usize,
+    token: Option<String>,
+    run: &RunControl,
+) -> Result<()> {
+    serve_listener_inner(listener, data_dir, max_sessions, token, None, run).map(|_| ())
+}
+
+struct ListenerWorkers {
+    control: SessionControl,
+    handles: Vec<(SessionControl, thread::JoinHandle<()>)>,
+}
+
+impl ListenerWorkers {
+    fn reap(&mut self) {
+        let mut index = 0;
+        while index < self.handles.len() {
+            if self.handles[index].1.is_finished() {
+                let _ = self.handles.swap_remove(index).1.join();
+            } else {
+                index += 1;
+            }
+        }
+    }
+}
+
+impl Drop for ListenerWorkers {
+    fn drop(&mut self) {
+        // Этот control владеет регистрациями всех listener-сокетов; остановка
+        // снимает сетевые ожидания до join даже при ошибке accept или панике.
+        self.control.cancel();
+        for (control, _) in &self.handles {
+            control.cancel();
+        }
+        for (_, handle) in self.handles.drain(..) {
+            let _ = handle.join();
+        }
+    }
+}
+
+fn serve_listener_inner(
+    listener: BoundListener,
+    data_dir: PathBuf,
+    max_sessions: usize,
+    token: Option<String>,
+    stop_after_terminated_sessions: Option<usize>,
+    run: &RunControl,
+) -> Result<usize> {
+    debug!(
+        "v4 receiver listener entering serve loop: addr={} data_dir={} max_sessions={}",
+        listener.local_addr(),
+        data_dir.display(),
+        max_sessions
+    );
     if max_sessions == 0 {
         bail!("max_sessions must be at least 1");
     }
@@ -90,10 +151,19 @@ pub(crate) fn serve_listener_until(
     let (terminated_tx, terminated_rx) = unbounded::<()>();
     let mut terminated_sessions = 0_usize;
     let mut pending_channels = HashMap::<PendingSessionKey, PendingChannels>::new();
+    let mut pending_guards = HashMap::<PendingSessionKey, Vec<SocketRegistration>>::new();
+    let listener_control = run.unobserved_session();
+    let mut workers = ListenerWorkers {
+        control: listener_control.clone(),
+        handles: Vec::new(),
+    };
 
     loop {
+        run.check()?;
+        workers.reap();
         terminated_sessions += drain_terminated_sessions(&terminated_rx);
         transport::drop_expired_pending_channels(&mut pending_channels);
+        pending_guards.retain(|key, _| pending_channels.contains_key(key));
         if stop_after_terminated_sessions.is_some_and(|limit| {
             terminated_sessions >= limit && active_sessions.load(Ordering::SeqCst) == 0
         }) {
@@ -102,6 +172,7 @@ pub(crate) fn serve_listener_until(
 
         match listener.try_accept_stream() {
             Ok((stream, peer_addr)) => {
+                let registration = listener_control.register(&stream)?;
                 terminated_sessions += drain_terminated_sessions(&terminated_rx);
                 match transport::establish_stream_session(
                     stream,
@@ -112,8 +183,14 @@ pub(crate) fn serve_listener_until(
                     None,
                 ) {
                     Ok(channel) => {
+                        let key = transport::pending_session_key(&channel);
+                        pending_guards
+                            .entry(key.clone())
+                            .or_default()
+                            .push(registration);
                         match transport::insert_pending_channel(&mut pending_channels, channel) {
                             Ok(Some(mut session)) => {
+                                let registrations = pending_guards.remove(&key).unwrap_or_default();
                                 if active_sessions.load(Ordering::SeqCst) >= max_sessions {
                                     debug!(
                                         "v4 receiver listener rejected session from {} because max_sessions={} is reached",
@@ -127,33 +204,41 @@ pub(crate) fn serve_listener_until(
                                 let session_data_dir = data_dir.clone();
                                 let session_active = active_sessions.clone();
                                 let session_terminated_tx = terminated_tx.clone();
-                                thread::spawn(move || {
-                                    let _slot_guard = SessionSlotGuard {
-                                        active_sessions: session_active,
-                                        terminated_tx: session_terminated_tx,
-                                    };
-                                    if let Err(error) =
-                                        run_listener_session(session, session_data_dir)
-                                    {
-                                        eprintln!(
-                                            "v4 receiver session {} failed: {error:#}",
-                                            peer_addr
-                                        );
+                                let session_control = run.session(
+                                    Role::Receiver,
+                                    session.peer_dump_id.as_deref().unwrap_or_default(),
+                                    &peer_addr.to_string(),
+                                );
+                                let worker_control = session_control.clone();
+                                let slot_guard = SessionSlotGuard {
+                                    active_sessions: session_active,
+                                    terminated_tx: session_terminated_tx,
+                                };
+                                let handle = thread::Builder::new().name("dump-receive".to_owned()).spawn(move || {
+                                    let _slot_guard = slot_guard;
+                                    let _registrations = registrations;
+                                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                        run_listener_session(session, session_data_dir, &session_control)
+                                    })).unwrap_or_else(|_| Err(anyhow::anyhow!("receiver session panicked")));
+                                    session_control.finish(&result);
+                                    if let Err(error) = result
+                                        && !session_control.is_cancelled() {
+                                        session_control.log(log::Level::Error, &format!("v4 receiver session {peer_addr} failed: {error:#}"));
                                     }
-                                });
+                                }).context("failed to spawn receiver session")?;
+                                workers.handles.push((worker_control, handle));
                             }
                             Ok(None) => {}
                             Err(error) => {
-                                eprintln!(
-                                    "v4 receiver failed to pair incoming channel from {peer_addr}: {error:#}"
-                                );
+                                pending_channels.remove(&key);
+                                pending_guards.remove(&key);
+                                run.log(log::Level::Error, &format!("v4 receiver failed to pair incoming channel from {peer_addr}: {error:#}"));
                             }
                         }
                     }
                     Err(error) => {
-                        eprintln!(
-                            "v4 receiver failed to establish incoming channel from {peer_addr}: {error:#}"
-                        );
+                        run.check()?;
+                        run.log(log::Level::Error, &format!("v4 receiver failed to establish incoming channel from {peer_addr}: {error:#}"));
                     }
                 }
             }
@@ -177,14 +262,21 @@ fn drain_terminated_sessions(terminated_rx: &crossbeam_channel::Receiver<()>) ->
     }
 }
 
-fn run_listener_session(session: Session, data_dir: PathBuf) -> Result<()> {
+fn run_listener_session(
+    session: Session,
+    data_dir: PathBuf,
+    control: &SessionControl,
+) -> Result<()> {
+    let _control_registration = control.register(&session.control_stream)?;
+    let _data_registration = control.register(&session.data_stream)?;
     let peer_addr = session.peer_addr;
     let peer_dump_id = session.peer_dump_id.clone();
-    let report = receive_dump(
+    let (report, _) = receive_dump_profile_controlled(
         session.control_stream,
         session.data_stream,
         data_dir,
         peer_dump_id.as_deref().unwrap(),
+        control,
     )?;
     debug!(
         "v4 receiver listener session completed: peer={} dump_id={} final_archive={}",
@@ -203,6 +295,53 @@ mod tests {
     use crate::network::transport::connect_once;
     use crate::sender::{BundlePlanOptions, send_dump};
     use crate::tests::{TestDir, read_archive_entries};
+
+    #[test]
+    fn cancelling_listener_joins_active_sessions_and_interrupts_pending_handshake() {
+        let listener = BoundListener::bind("127.0.0.1:0".parse().unwrap()).unwrap();
+        let addr = listener.local_addr();
+        let directory = TestDir::new();
+        let data_dir = directory.path().to_owned();
+        let run = RunControl::new(None);
+        let worker_run = run.clone();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let worker = thread::spawn(move || {
+            done_tx
+                .send(serve_listener_controlled(
+                    listener,
+                    data_dir,
+                    2,
+                    None,
+                    &worker_run,
+                ))
+                .unwrap();
+        });
+        let mut first = connect_once(Role::Sender, addr, Some("first"), None).unwrap();
+        wire::request_resume_state(&mut first.control_stream, "first").unwrap();
+        let mut second = connect_once(Role::Sender, addr, Some("second"), None).unwrap();
+        wire::request_resume_state(&mut second.control_stream, "second").unwrap();
+        let pending = std::net::TcpStream::connect(addr).unwrap();
+        run.cancel();
+        let completed = done_rx.recv_timeout(Duration::from_secs(2));
+        // Peers ещё открыты: успех означает, что listener сам завершил своих readers.
+        assert!(
+            completed
+                .expect("listener did not join cancelled sessions")
+                .unwrap_err()
+                .is::<crate::runtime::Cancelled>()
+        );
+        worker.join().unwrap();
+        for dump_id in ["first", "second"] {
+            let receiver = super::super::session::ReceiverSession::open(
+                directory.path().to_owned(),
+                dump_id,
+                1,
+            )
+            .unwrap();
+            assert_eq!(receiver.resume_state().archive_len, 0);
+        }
+        drop((first, second, pending));
+    }
 
     #[test]
     fn serve_listener_rejects_new_session_when_max_sessions_is_reached() {

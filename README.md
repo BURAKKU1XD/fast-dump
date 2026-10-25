@@ -51,10 +51,122 @@ completion.
 
 ## CLI
 
+Run `fast-dump` without arguments in a terminal to open the setup wizard. It
+guides you through the role, transport, address, paths, optional dump ID,
+sender zstd level, and masked token. A complete `sender` or `receiver` command
+starts the transfer directly with a live terminal dashboard. Explicit incomplete
+commands remain argument errors; the wizard does not silently fill missing
+command flags.
+In the wizard, Listen defaults to `0.0.0.0:7000` (all IPv4 interfaces).
+Connect uses a separate address field: `127.0.0.1:7000` is only for peers on
+the same host; enter the listening host's network IP for a remote transfer.
+Changing transport modes preserves the address entered for each mode.
+The sender's `Zstd level` field defaults to `3`; the review screen and dashboard
+show the selected level. The wizard accepts levels supported by the linked zstd
+library, including negative fast levels and `0` for zstd's default. Switching
+roles or transport modes preserves the edited sender level. Receiver setup has
+no compression-level field. For command-line launches use `--level 3` (or, for
+example, `--level 1`); write negative levels as `--level=-1`.
+
+The English dashboard uses a dark cyan/violet theme, speed and durability
+cards, a one-minute throughput graph, session details, and a bounded log.
+Speed is smoothed over the latest five seconds; the session average is shown
+separately. Sender details distinguish an ongoing scan from a completed scan.
+Sender details also show `Current file`, its `File size` captured at open,
+`File processed` as processed/size, and `Source processing` speed over the latest
+five seconds. Symlink entries have zero payload size and processed bytes.
+Source processing counts regular-file payload accepted by the tar/zstd input,
+including repeated work on retries. It excludes tar headers, padding, symlink
+metadata, and read-ahead; it is not a disk-throughput or durability measurement.
+Materialized input can still be in the tar input buffer when counted. The
+current-file position resets on each attempt and disappears when the entry ends;
+the session total remains cumulative. Network speed continues to count compressed
+payload separately. A highly compressible file can therefore have high source
+processing speed and low network speed without being stalled.
+The `Pipeline` panel shows each local stage's current operation and time in that
+state. Sender stages are Scan, Read, Plan, Compress, Data, and Control; receiver
+stages are Data, Control, and Storage. Wait reasons distinguish scanner/readers,
+bundle preparation, compressed output, downstream queues, free buffers, peer
+ACKs, and storage locks. Storage also shows archive writes and archive/WAL sync.
+`Read` describes ordered file preparation; a large streamed file's source reads
+appear under `Compress`. Socket read/write states include time blocked inside
+that operation: they do not prove data is moving or identify packet loss.
+An idle connection or a long wait is not reported as a network error. Detected
+errors remain in session details and the activity log. Timers measure elapsed
+wall time, not CPU usage, and freeze when the session ends.
+On narrow terminals the pipeline takes priority over the throughput graph;
+`Tab` opens details and their scrollable configuration/error text.
+It adapts to terminal size, updates at most five times per second, and does
+not require special fonts. `NO_COLOR` selects a monochrome presentation.
+`F1` opens help, `Tab` changes focus, arrows select items, and `PgUp`/`PgDn`
+scroll the log; `End` resumes following new messages.
+
+Use global `--no-gui` before or after the subcommand for plain output:
+
+```text
+fast-dump --no-gui sender --connect 192.168.1.20:7001 --source ./data
+```
+
+The dashboard is automatically disabled if stdin, stdout, or stderr is not
+a terminal, or if `TERM=dumb`. Help and version never initialize the terminal.
+Without a command in plain mode, the program reports usage and exits with an
+error. Sender stdout keeps its existing aggregate fields; terminal rendering
+uses stderr, and success summaries are printed after restoring the terminal.
+
+Live sender `Sent` bytes count compressed payload in the current session,
+including retried attempts, not TCP headers. Receiver `Written` counts payload
+successfully appended locally, including subsequently rolled-back attempts;
+discarded late/orphan packets are excluded. The durable archive size includes
+previously resumed data, whose starting boundary is displayed separately.
+Sender durability advances only on validated receiver ACKs and describes the
+committed bundle boundary (the receiver's final tar-termination frame is not
+included in those ACKs); receiver durability advances after archive and WAL
+sync. Entry counts include regular files and
+symlinks, and resumed ordinals are not reported as successful file counts.
+The receiver cannot know the sender's complete scan count. No overall percentage
+or ETA is displayed because scanning overlaps transfer and the total is unknown.
+Listener mode shows active sessions and the latest twenty completed sessions.
+
+`Ctrl+C` requests a safe stop in both dashboard and plain modes. It interrupts
+network waits, stops new work, and waits for worker cleanup; the exit code is
+`130`. A current filesystem operation or compression call may delay cleanup.
+Repeated interrupts do not force termination. Repeat the same commands to
+resume an unfinished dump from durable boundaries. A finalization already in
+progress may complete before stopping, even if its final ACK is lost; existing
+completed archives are always preserved. A full-command launch exits when
+finished; a wizard launch keeps the result visible until dismissed. Receiver
+listen mode stays active until stopped.
+
+A failed incoming channel or transfer does not stop `receiver --listen`: it
+releases that session and waits for another connection. A `Failed` session in
+the dashboard does not mean that the listener stopped. Sender runs and
+`receiver --connect` can restart after transient network failures using
+`--retries <N>` and `--retry-delay-secs <SECONDS>`. Plain mode defaults to no
+retries; the GUI defaults to **10 retries with a 10-second delay**. An explicit
+`--retries 0` disables retries in either mode. The count means additional
+attempts after the first one, and the delay must be at least one second.
+
+```text
+fast-dump --no-gui --retries 5 --retry-delay-secs 10 sender --connect 192.168.1.20:7001 --source ./data
+fast-dump --retries 0
+```
+
+Each failed attempt finishes worker/socket cleanup before the delay starts.
+The dashboard shows the next retry and a countdown; `Ctrl+C` interrupts the
+wait. Retries reuse the same parameters and resume from durable boundaries.
+The budget applies to the entire invocation and does not reset after partial
+progress. Validation, local storage errors, protocol/authentication rejection,
+and an already-completed archive are not retried when their cause is known.
+If the peer's error response is lost, its failure can appear as a network
+disconnect and use the retry budget. No idle-session timeout is added.
+`receiver --listen` remains a persistent listener and does not restart or
+disconnect other sessions according to these flags. With a listening sender,
+the connecting receiver must also reconnect (manually or with retries).
+
 Top-level help:
 
 ```text
-fast-dump [OPTIONS] <COMMAND>
+fast-dump [OPTIONS] [COMMAND]
 ```
 
 Commands:
@@ -65,6 +177,9 @@ Commands:
 Global options:
 
 - `--debug`
+- `--no-gui`
+- `--retries <N>`: extra network attempts; default `0` in plain mode, `10` in GUI
+- `--retry-delay-secs <SECONDS>`: default `10`, minimum `1`
 
 ### Sender
 
@@ -227,6 +342,8 @@ paging; the successful-file count does not impose this particular limit.
 
 - The archive contains regular files that were successfully captured and
   readable symlink entries without dereferencing.
+- Linux senders automatically exclude the kernel/control filesystems listed
+  below, wherever mounted. Other platforms keep their existing selection rules.
 - Empty directories and directory metadata are ignored.
 - Source traversal is deterministic:
   - depth-first
@@ -337,6 +454,49 @@ the same detected physical-core count as the CLI, with a minimum of `1`, and
 `1` compression thread. The actual reader count still obeys the pending-entry
 cap.
 
+### Linux system-filesystem exclusions
+
+The sender identifies filesystems by their actual type, not by directory names.
+It checks directories before listing them and prunes excluded trees, including
+any mounts below them. It also checks every newly opened regular-file handle,
+including retries, before reading payload. This catches a single procfs file
+bind-mounted inside an otherwise ordinary directory. An excluded source root is
+an error rather than an empty successful dump.
+
+| Filesystem types | Reason for exclusion |
+| --- | --- |
+| `procfs` | Live process/kernel state, including the enormous virtual `/proc/kcore` image. |
+| `sysfs` | Device and kernel-object attributes exposed through file operations. |
+| `debugfs`, `tracefs` | Debug interfaces and event streams that can block or consume events. |
+| `cgroup` v1/v2, `resctrl` | Runtime process and resource controls. |
+| `configfs`, `binfmt_misc` | Kernel-object and executable-format configuration interfaces. |
+| `securityfs`, `selinuxfs`, `smackfs` | Active kernel security interfaces; ordinary configuration files in `/etc` remain included. |
+| `bpffs`, `nsfs` | Kernel BPF objects and namespace handles, not portable file payloads. |
+| `efivarfs` | Firmware variables requiring a dedicated backup/restore procedure. |
+| `mqueue`, `devpts` | Live message queues and pseudoterminals. |
+| `fusectl`, `rpc_pipefs`, `nfsd` | Kernel/service control and communication interfaces. |
+
+Ordinary FUSE, NFS and other network filesystems, OverlayFS, tmpfs, ramfs,
+hugetlbfs, and unknown filesystem types remain eligible. Directories named
+`proc` or `sys` on an ordinary filesystem are unaffected. There is no blanket
+exclusion for `/dev`, `/run`, `/tmp`, or `/mnt`, and large/sparse files are not
+excluded merely because of their size. Device nodes, FIFOs, and sockets remain
+unsupported; readable symlinks outside pruned trees remain symlinks.
+
+Each pruned directory produces one `unsupported_entry` record with ordinal `0`,
+not a record for every unvisited descendant. Local diagnostics name the path,
+filesystem, and reason; a skip is durable only after the receiver acknowledges
+it, and appears in the final issues report. The record names that exact path;
+it is not a permanent prefix exclusion if the mount layout later changes.
+Filesystem detection errors are reported, not treated as permission to read
+unclassified payload.
+
+Pruning changes later work ordinals compared with older sender versions. Resume
+still validates the committed ordinal/path and rejects a mismatch without
+resetting acknowledged data. Use a new `--dump-id` when repeating an older `/`
+test with the new exclusions. Existing archives and partial state are preserved;
+wire version `4` and receiver formats do not change.
+
 Receiver library calls now require `CloneableStream` for both channels.
 Custom implementations must provide `shutdown_stream` that prevents further I/O
 and interrupts pending reads across clones. This is a Rust source API change;
@@ -353,6 +513,7 @@ closed when the call returns, including successful completion.
 - `src/receiver/`: active receiver implementation.
 - `tests/connectivity/`: end-to-end and protocol-flow coverage.
 - `benches/`: criterion microbenchmarks plus the loopback matrix runner.
+- [`releases/index.html`](./releases/index.html): local saved binaries and packages.
 
 ## Development
 
@@ -381,13 +542,25 @@ The manual **Release artifacts** workflow builds the selected branch/tag only
 after CI and release stress checks pass. It produces Windows MSVC and Linux GNU
 archives with a build manifest and SHA-256 checksums; it does not publish a release.
 The manifest records the clean source commit/tree, compiler, target, lockfile,
-and binary hash. The existing local MUSL build script remains separate.
+and binary hash. Packages use
+`releases/<version>-<short-commit>/<Rust target triple>/` for the binary,
+`manifest.json`, and `Cargo.lock`; `.tar.gz` archives and their `.sha256` files
+sit in the version directory. Open the local [release index](./releases/index.html)
+to browse saved copies. The existing `0.1.0-92012a0` and `0.1.0-b6dc3f9` copies
+retain their original provenance; the older copy uses its historical
+`verification.json`.
 
-For a local default-feature release, build from a clean commit and record it:
+`releases/` is ignored by Git and survives `cargo clean`. The local
+`scripts/build-artifacts.ps1` helper copies replaceable binaries into
+`releases/local/`; these builds do not run the release workflow's stress gates.
+Cargo compilation output remains under `target/release/` (or the target-specific
+`target/<Rust target triple>/release/`).
+
+For a local default-feature build, build from a clean commit and record it:
 
 ```powershell
 cargo build --locked --release --bin fast-dump
-./scripts/write-release-manifest.ps1 -Binary target/release/fast-dump.exe -Target x86_64-pc-windows-msvc -OutputPath target/release-artifacts/manifest.json
+./scripts/write-release-manifest.ps1 -Binary target/release/fast-dump.exe -Target x86_64-pc-windows-msvc -OutputPath releases/local/windows-manifest.json
 ```
 
 The Windows/Linux scheduled stress workflow runs three explicit ignored tests:
@@ -520,6 +693,14 @@ cargo bench --bench loopback_send_dump -- --dataset manySmallFiles,bigFiles,mixe
 The matrix runner writes `benchmark_plan.md`, `results_raw.csv`,
 `results_summary.csv`, and `benchmark_report.md` under `target/bench-matrix`
 (or `FAST_DUMP_BENCH_MATRIX_DIR`).
+
+Local historical results from the 2026-10-24 cleanup are in
+`results/history/2026-10-24/`; open its [index.html](./results/history/2026-10-24/index.html)
+to browse reports. Copies retain their original relative paths, including
+`target/bench-*`. The archive includes `manifest.csv` with SHA-256 checksums and
+original modification times, `inventory-before.json`, and a cleanup report.
+`results/history/` is ignored by Git. Keep future result copies outside `target/`
+so `cargo clean` does not erase the history.
 
 Use `--executor default` for new runs. Without it, the legacy Unix default runs
 both `default` and `abs_path` labels; both use the same v4 implementation and do

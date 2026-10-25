@@ -4,7 +4,97 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 use super::*;
+use crate::progress::ProgressHub;
 use crate::tests::TestDir;
+
+#[test]
+fn cancelled_receiver_joins_readers_and_preserves_acknowledged_progress() {
+    use crate::role::Role;
+    use crate::runtime::{Cancelled, RunControl};
+    let directory = TestDir::new();
+    let source = TestDir::new();
+    std::fs::write(source.path().join("durable.txt"), b"durable payload").unwrap();
+    let prepared = crate::sender::prepare_dump(
+        source.path(),
+        &ResumeState::default(),
+        crate::sender::BundlePlanOptions::default(),
+    )
+    .unwrap();
+    let bundle = &prepared.bundles[0];
+    let live_handles = Arc::new(AtomicUsize::new(0));
+    let (mut control, server_control) = pair(&live_handles);
+    let (mut data, server_data) = pair(&live_handles);
+    let hub = Arc::new(ProgressHub::new());
+    let run = RunControl::new(Some(hub));
+    let session = run.session(Role::Receiver, "cancelled", "peer");
+    let progress = session.progress().unwrap().clone();
+    let _control_guard = session.register(&server_control.stream).unwrap();
+    let _data_guard = session.register(&server_data.stream).unwrap();
+    let path = directory.path().to_owned();
+    let (done_tx, done_rx) = bounded(1);
+    let worker = thread::spawn(move || {
+        let result = receive_dump_profile_controlled(
+            server_control,
+            server_data,
+            path,
+            "cancelled",
+            &session,
+        );
+        done_tx.send(result).unwrap();
+    });
+    wire::request_resume_state(&mut control, "cancelled").unwrap();
+    assert_pipeline_state(
+        &progress,
+        PipelineStage::Storage,
+        PipelineState::WaitingEvent,
+    );
+    assert_pipeline_state(&progress, PipelineStage::Control, PipelineState::Receiving);
+    assert_pipeline_state(&progress, PipelineStage::Data, PipelineState::Receiving);
+    wire::write_message(
+        &mut control,
+        &Message::BundlePlan(wire::BundlePlan {
+            attempt_no: 1,
+            descriptor: BundlePlanDescriptor::from_bundle_descriptor(&bundle.descriptor),
+        }),
+    )
+    .unwrap();
+    wire::write_bundle_data_message(&mut data, 1, 1, true, &bundle.compressed_payload).unwrap();
+    wire::write_message(
+        &mut control,
+        &Message::BundleCommit(BundleCommit {
+            attempt_no: 1,
+            descriptor: BundleCommitDescriptor::from_bundle_descriptor(&bundle.descriptor),
+        }),
+    )
+    .unwrap();
+    let Message::BundleAck(ack) = wire::read_message(&mut control).unwrap() else {
+        panic!("receiver did not durably acknowledge the bundle");
+    };
+    run.cancel();
+    let completed = done_rx.recv_timeout(Duration::from_secs(2));
+    let live_at_return = live_handles.load(Ordering::SeqCst);
+    let _ = control.shutdown_stream();
+    let _ = data.shutdown_stream();
+    worker.join().unwrap();
+    assert!(
+        completed
+            .expect("receiver ignored cancellation")
+            .unwrap_err()
+            .is::<Cancelled>()
+    );
+    assert_eq!(
+        live_at_return, 0,
+        "reader handles survived cancelled session"
+    );
+    let reopened = ReceiverSession::open(directory.path().to_owned(), "cancelled", 1).unwrap();
+    assert!(reopened.resume_state().terminal_skips.is_empty());
+    assert_eq!(reopened.resume_state().archive_len, ack.archive_len);
+    assert_eq!(reopened.resume_state().last_committed_bundle_no, 1);
+    assert_eq!(
+        std::fs::read(directory.path().join("cancelled.tar.zst.part")).unwrap(),
+        bundle.compressed_payload
+    );
+}
 
 struct TrackedStream {
     stream: TcpStream,
@@ -63,6 +153,69 @@ fn pair(live_handles: &Arc<AtomicUsize>) -> (TcpStream, TrackedStream) {
             live_handles: Arc::clone(live_handles),
         },
     )
+}
+
+#[test]
+fn initialization_failure_reports_a_permanent_error_and_preserves_completed_archive() {
+    let directory = TestDir::new();
+    let unavailable_dir = directory.path().join("storage-file");
+    std::fs::write(&unavailable_dir, b"not a directory").unwrap();
+    let completed_dir = directory.path().join("completed");
+    std::fs::create_dir(&completed_dir).unwrap();
+    let archive = completed_dir.join("failed-init.tar.zst");
+    std::fs::write(&archive, b"completed archive").unwrap();
+
+    for (path, expected) in [
+        (unavailable_dir, "failed to create v4 receiver directory"),
+        (completed_dir, "completed v4 dump already exists"),
+    ] {
+        for request_resume in [false, true] {
+            let live_handles = Arc::new(AtomicUsize::new(0));
+            let (mut control, server_control) = pair(&live_handles);
+            let (data, server_data) = pair(&live_handles);
+            let (done_tx, done_rx) = bounded(1);
+            let path = path.clone();
+            let worker = thread::spawn(move || {
+                let result = receive_dump(server_control, server_data, path, "failed-init");
+                done_tx.send(result).unwrap();
+            });
+            let response = if request_resume {
+                wire::request_resume_state(&mut control, "failed-init").map(Message::ResumeState)
+            } else {
+                wire::read_message(&mut control)
+            };
+            let completed = done_rx.recv_timeout(Duration::from_secs(5));
+            let live_at_return = live_handles.load(Ordering::SeqCst);
+            // Проверяем завершение до закрытия второго peer-канала.
+            let _ = control.shutdown(Shutdown::Both);
+            let _ = data.shutdown(Shutdown::Both);
+            worker.join().unwrap();
+
+            let error = completed
+                .expect("initialization failure did not stop session")
+                .unwrap_err();
+            assert!(error.to_string().contains(expected), "{error:#}");
+            assert!(!crate::network::is_retryable_error(&error));
+            match (request_resume, response) {
+                (false, Ok(Message::Error(response))) => {
+                    assert!(response.message.contains(expected), "{}", response.message);
+                }
+                (true, Err(error)) => {
+                    // ResumeQuery может пересечься с закрытием сокета: peer видит
+                    // исходный Error или сетевой reset, но никогда успешный resume.
+                    assert!(
+                        format!("{error:#}").contains(expected)
+                            || crate::network::is_retryable_error(&error),
+                        "unexpected sender resume error: {error:#}"
+                    );
+                }
+                (_, response) => panic!("unexpected initialization failure response: {response:?}"),
+            }
+            assert_eq!(live_at_return, 0);
+            assert_eq!(std::fs::read(&archive).unwrap(), b"completed archive");
+        }
+    }
+    assert_eq!(std::fs::read(archive).unwrap(), b"completed archive");
 }
 
 fn fail_pending_session(
@@ -174,6 +327,11 @@ fn orphan_data_eof_stops_session_while_control_remains_open() {
         error.to_string().contains("while waiting for bundle plan"),
         "{error:#}"
     );
+    assert!(crate::network::is_retryable_error(&error), "{error:#}");
+    assert_eq!(
+        error.downcast_ref::<io::Error>().map(io::Error::kind),
+        Some(io::ErrorKind::UnexpectedEof),
+    );
 }
 
 #[test]
@@ -256,10 +414,59 @@ fn session_exit_joins_readers_while_peer_keeps_other_channel_open() {
 }
 
 #[test]
+fn session_cancellation_stops_readers_before_their_cleanup() {
+    use crate::role::Role;
+    use crate::runtime::RunControl;
+
+    let live_handles = Arc::new(AtomicUsize::new(0));
+    let (control_peer, control_stream) = pair(&live_handles);
+    let (data_peer, data_stream) = pair(&live_handles);
+    let run = RunControl::new(Some(Arc::new(ProgressHub::new())));
+    let session = run.session(Role::Receiver, "cancel-readers", "peer");
+    let progress = session.progress().unwrap().clone();
+    let _control_registration = session.register(&control_stream.stream).unwrap();
+    let _data_registration = session.register(&data_stream.stream).unwrap();
+    let control_reader = spawn_control_reader_observed(
+        control_stream,
+        Some(progress.clone()),
+        Some(session.clone()),
+    )
+    .unwrap();
+    let data_reader =
+        spawn_data_reader_observed(data_stream, Some(progress.clone()), Some(session)).unwrap();
+    assert_pipeline_state(&progress, PipelineStage::Control, PipelineState::Receiving);
+    assert_pipeline_state(&progress, PipelineStage::Data, PipelineState::Receiving);
+
+    run.cancel();
+    // Владельцы reader-ов ещё живы, как при долгом sync storage после Ctrl+C.
+    assert!(
+        control_reader
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap()
+            .is_err()
+    );
+    assert!(
+        data_reader
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap()
+            .is_err()
+    );
+    assert_pipeline_state(&progress, PipelineStage::Control, PipelineState::Stopped);
+    assert_pipeline_state(&progress, PipelineStage::Data, PipelineState::Stopped);
+    drop(control_reader);
+    drop(data_reader);
+    assert_eq!(live_handles.load(Ordering::SeqCst), 0);
+    drop(control_peer);
+    drop(data_peer);
+}
+
+#[test]
 fn cancellation_unblocks_full_control_queue() {
     let live_handles = Arc::new(AtomicUsize::new(0));
     let (mut peer, stream) = pair(&live_handles);
-    let reader = spawn_control_reader(stream).unwrap();
+    let progress = ProgressHub::new().session("receiver".into(), "queue", "peer");
+    let reader = spawn_control_reader_observed(stream, Some(progress.clone()), None).unwrap();
+    assert_pipeline_state(&progress, PipelineStage::Control, PipelineState::Receiving);
     for _ in 0..READER_QUEUE_CAPACITY + 2 {
         wire::write_message(&mut peer, &Message::FinishAck).unwrap();
     }
@@ -268,6 +475,11 @@ fn cancellation_unblocks_full_control_queue() {
         thread::sleep(Duration::from_millis(1));
     }
     assert_eq!(reader.len(), READER_QUEUE_CAPACITY);
+    assert_pipeline_state(
+        &progress,
+        PipelineStage::Control,
+        PipelineState::WaitingConsumer,
+    );
     let (done_tx, done_rx) = bounded(1);
     let cleanup = thread::spawn(move || {
         drop(reader);
@@ -278,13 +490,15 @@ fn cancellation_unblocks_full_control_queue() {
     result.expect("full reader queue blocked cancellation");
     cleanup.join().unwrap();
     assert_eq!(live_handles.load(Ordering::SeqCst), 0);
+    assert_pipeline_state(&progress, PipelineStage::Control, PipelineState::Stopped);
 }
 
 #[test]
 fn data_failure_notification_bypasses_full_payload_queue() {
     let live_handles = Arc::new(AtomicUsize::new(0));
     let (mut peer, stream) = pair(&live_handles);
-    let reader = spawn_data_reader(stream).unwrap();
+    let progress = ProgressHub::new().session("receiver".into(), "failure", "peer");
+    let reader = spawn_data_reader_observed(stream, Some(progress.clone()), None).unwrap();
     let arranged: Result<()> = (|| {
         for _ in 0..READER_QUEUE_CAPACITY {
             wire::write_bundle_data_message(&mut peer, 1, 1, false, b"queued")?;
@@ -294,6 +508,7 @@ fn data_failure_notification_bypasses_full_payload_queue() {
     })();
     // Основная очередь заполнена payload: EOF должен сообщаться отдельно, без её чтения.
     let failure = reader.failed.recv_timeout(Duration::from_secs(5));
+    assert_pipeline_state(&progress, PipelineStage::Data, PipelineState::Failed);
     let queued_payloads = reader.len();
     let (done_tx, done_rx) = bounded(1);
     let cleanup = thread::spawn(move || {
@@ -316,13 +531,15 @@ fn data_failure_notification_bypasses_full_payload_queue() {
     completed.expect("full data queue blocked reader cancellation");
     assert_eq!(queued_payloads, READER_QUEUE_CAPACITY);
     assert_eq!(live_handles.load(Ordering::SeqCst), 0);
+    assert_pipeline_state(&progress, PipelineStage::Data, PipelineState::Failed);
 }
 
 #[test]
 fn cancellation_unblocks_pool_with_all_payload_buffers_retained() {
     let live_handles = Arc::new(AtomicUsize::new(0));
     let (mut peer, stream) = pair(&live_handles);
-    let reader = spawn_data_reader(stream).unwrap();
+    let progress = ProgressHub::new().session("receiver".into(), "pool", "peer");
+    let reader = spawn_data_reader_observed(stream, Some(progress.clone()), None).unwrap();
     let mut held = Vec::new();
     for index in 0..DATA_BUFFER_COUNT {
         wire::write_bundle_data_message(&mut peer, 1, 1, false, &[index as u8]).unwrap();
@@ -333,6 +550,7 @@ fn cancellation_unblocks_pool_with_all_payload_buffers_retained() {
                 .unwrap(),
         );
     }
+    assert_pipeline_state(&progress, PipelineStage::Data, PipelineState::WaitingBuffer);
     let (done_tx, done_rx) = bounded(1);
     let cleanup = thread::spawn(move || {
         drop(reader);
@@ -345,6 +563,27 @@ fn cancellation_unblocks_pool_with_all_payload_buffers_retained() {
     cleanup.join().unwrap();
     result.expect("retained buffers blocked reader cancellation");
     assert_eq!(live_handles.load(Ordering::SeqCst), 0);
+    assert_pipeline_state(&progress, PipelineStage::Data, PipelineState::Stopped);
+}
+
+fn assert_pipeline_state(progress: &SessionProgress, stage: PipelineStage, state: PipelineState) {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let snapshot = progress.snapshot();
+        let pipeline = snapshot
+            .pipelines
+            .iter()
+            .find(|pipeline| pipeline.stage == stage)
+            .unwrap();
+        if pipeline.state == state {
+            return;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "expected {stage:?} {state:?}, got {pipeline:?}"
+        );
+        thread::sleep(Duration::from_millis(1));
+    }
 }
 
 #[test]

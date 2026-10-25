@@ -2,6 +2,8 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{Read, Write};
 use std::ops::Deref;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -9,6 +11,7 @@ use anyhow::{Context, Result, bail};
 use crossbeam_channel::{Receiver, Sender, TryRecvError, bounded, select};
 use xxhash_rust::xxh3::Xxh3Default;
 
+use crate::network::network_io;
 use crate::network::protocol::wire::{
     self, BundleAbort, BundleAbortAck, BundleAck, BundleCommit, Finish, Message, ResumeQuery,
     SkipAck,
@@ -18,6 +21,8 @@ use crate::network::protocol::{
 };
 use crate::network::transport::CloneableStream;
 use crate::profile::ReceiverProfile;
+use crate::progress::{self, Phase, PipelineStage, PipelineState, SessionProgress};
+use crate::runtime::SessionControl;
 
 use super::session::ReceiverSession;
 
@@ -128,7 +133,20 @@ fn receive_next_event(
             recv(control_rx) -> event => event
                 .context("v4 control reader thread terminated unexpectedly")?
                 .map(ReceiveEvent::Control),
-            recv(data_failed) -> _ => bail!("v4 data reader failed while waiting for bundle plan"),
+            recv(data_failed) -> _ => {
+                // Reader публикует сигнал перед ошибкой в ограниченной очереди.
+                // Сессия уже завершается: освобождаем payload до исходной ошибки,
+                // не теряя её тип и не оставляя producer на заполненном канале.
+                loop {
+                    match data_rx.recv() {
+                        Ok(Ok(_)) => {},
+                        Ok(Err(error)) => return Err(error)
+                            .context("v4 data reader failed while waiting for bundle plan"),
+                        Err(error) => return Err(error)
+                            .context("v4 data reader failed while waiting for bundle plan"),
+                    }
+                }
+            },
         };
     }
     select! {
@@ -197,7 +215,7 @@ where
 }
 
 pub fn receive_dump_profile<TControl, TData>(
-    mut control_stream: TControl,
+    control_stream: TControl,
     data_stream: TData,
     data_dir: PathBuf,
     dump_id: &str,
@@ -206,9 +224,71 @@ where
     TControl: CloneableStream,
     TData: CloneableStream,
 {
+    receive_dump_profile_inner(control_stream, data_stream, data_dir, dump_id, None)
+}
+
+pub(crate) fn receive_dump_profile_controlled<TControl, TData>(
+    control_stream: TControl,
+    data_stream: TData,
+    data_dir: PathBuf,
+    dump_id: &str,
+    control: &SessionControl,
+) -> Result<(ReceiveReport, ReceiverProfile)>
+where
+    TControl: CloneableStream,
+    TData: CloneableStream,
+{
+    let result = receive_dump_profile_inner(
+        control_stream,
+        data_stream,
+        data_dir,
+        dump_id,
+        Some(control),
+    );
+    if result.is_err() {
+        control.check()?;
+    } else {
+        progress::set_stage(Some(control), PipelineStage::Storage, PipelineState::Done);
+    }
+    result
+}
+
+fn receive_dump_profile_inner<TControl, TData>(
+    mut control_stream: TControl,
+    data_stream: TData,
+    data_dir: PathBuf,
+    dump_id: &str,
+    control: Option<&SessionControl>,
+) -> Result<(ReceiveReport, ReceiverProfile)>
+where
+    TControl: CloneableStream,
+    TData: CloneableStream,
+{
     let total_started = Instant::now();
     let recovery_started = Instant::now();
-    let mut receiver = ReceiverSession::open(data_dir, dump_id, 3)?;
+    if let Some(progress) = control.and_then(SessionControl::progress) {
+        progress.set_phase(Phase::Preparing);
+    }
+    let mut receiver = match ReceiverSession::open_controlled(data_dir, dump_id, 3, control) {
+        Ok(receiver) => receiver,
+        Err(error) => {
+            progress::set_stage(
+                control,
+                PipelineStage::Storage,
+                if control.is_some_and(SessionControl::is_cancelled) {
+                    PipelineState::Stopped
+                } else {
+                    PipelineState::Failed
+                },
+            );
+            if !control.is_some_and(SessionControl::is_cancelled) {
+                // Ошибка storage должна дойти до peer как Error, а не выглядеть
+                // как временный EOF. Не заменяем её неудачной отправкой ответа.
+                let _ = wire::send_error(&mut control_stream, &format!("{error:#}"));
+            }
+            return Err(error);
+        }
+    };
     let mut profile = ReceiverProfile::default();
     profile.record_recovery(
         receiver.resume_state().archive_len,
@@ -218,10 +298,19 @@ where
         &mut control_stream,
         dump_id,
         receiver.resume_state().clone(),
+        control,
     )?;
+    if let Some(progress) = &receiver.progress {
+        progress.set_phase(Phase::Receiving);
+    }
 
-    let control_rx = spawn_control_reader(control_stream.try_clone_stream()?)?;
-    let data_rx = spawn_data_reader(data_stream)?;
+    let control_rx = spawn_control_reader_observed(
+        control_stream.try_clone_stream()?,
+        receiver.progress.clone(),
+        control.cloned(),
+    )?;
+    let data_rx =
+        spawn_data_reader_observed(data_stream, receiver.progress.clone(), control.cloned())?;
 
     let mut pending_bundles = VecDeque::<PendingBundle>::new();
     let mut orphan_data = HashMap::<AttemptKey, Vec<PendingDataChunk>>::new();
@@ -229,6 +318,19 @@ where
     let mut consecutive_controls = 0;
 
     loop {
+        if let Some(control) = control {
+            control.check()?;
+        }
+        let wait = if !orphan_data.is_empty() {
+            PipelineState::WaitingPlan
+        } else if pending_bundles.iter().any(|pending| !pending.data_finished) {
+            PipelineState::WaitingData
+        } else if !pending_bundles.is_empty() {
+            PipelineState::WaitingControl
+        } else {
+            PipelineState::WaitingEvent
+        };
+        let waiting = progress::stage(control, PipelineStage::Storage, wait);
         let event = receive_event_before_commit(
             &control_rx,
             &data_rx,
@@ -245,6 +347,10 @@ where
                 )
             },
         )?;
+        drop(waiting);
+        if let Some(control) = control {
+            control.check()?;
+        }
         match event {
             ReceiveEvent::Control(event) => match event {
                 Message::SkipEntries(chunk) => {
@@ -252,12 +358,14 @@ where
                         protocol_error(
                             &mut control_stream,
                             "unexpected v4 skip entries while bundle payload is in progress",
-                        )?;
+                        );
                         bail!("unexpected v4 skip entries while bundle payload is in progress");
                     }
                     let skip_duration = receiver.record_terminal_skips_profiled(&chunk.entries)?;
                     profile.record_skip_catalog(chunk.entries.len() as u64, skip_duration);
                     let ack_flush_started = Instant::now();
+                    let _sending =
+                        progress::stage(control, PipelineStage::Storage, PipelineState::Sending);
                     wire::write_message(
                         &mut control_stream,
                         &Message::SkipAck(SkipAck {
@@ -267,6 +375,7 @@ where
                     )?;
                     control_stream
                         .flush()
+                        .map_err(network_io)
                         .context("failed to flush v4 skip ack")?;
                     profile.record_bundle_ack_flush(ack_flush_started.elapsed());
                 }
@@ -276,7 +385,7 @@ where
                         protocol_error(
                             &mut control_stream,
                             "duplicate v4 bundle attempt in control stream",
-                        )?;
+                        );
                         bail!("duplicate v4 bundle attempt in control stream");
                     }
                     pending_bundles.push_back(PendingBundle {
@@ -312,7 +421,7 @@ where
                         protocol_error(
                             &mut control_stream,
                             "unexpected v4 bundle commit without bundle plan",
-                        )?;
+                        );
                         bail!("unexpected v4 bundle commit without bundle plan");
                     };
                     pending.commit = Some(descriptor);
@@ -321,6 +430,9 @@ where
                     bundle_no,
                     attempt_no,
                 }) => {
+                    if let Some(progress) = &receiver.progress {
+                        progress.retries.fetch_add(1, Ordering::Relaxed);
+                    }
                     let key = AttemptKey::new(bundle_no, attempt_no);
                     abort_bundle(
                         &mut receiver,
@@ -331,6 +443,8 @@ where
                     )?;
 
                     let ack_flush_started = Instant::now();
+                    let _sending =
+                        progress::stage(control, PipelineStage::Storage, PipelineState::Sending);
                     wire::write_message(
                         &mut control_stream,
                         &Message::BundleAbortAck(BundleAbortAck {
@@ -341,6 +455,7 @@ where
                     )?;
                     control_stream
                         .flush()
+                        .map_err(network_io)
                         .context("failed to flush v4 bundle abort ack")?;
                     profile.record_bundle_ack_flush(ack_flush_started.elapsed());
                 }
@@ -349,7 +464,7 @@ where
                         protocol_error(
                             &mut control_stream,
                             "unexpected orphaned v4 data before finish",
-                        )?;
+                        );
                         bail!("unexpected orphaned v4 data before finish");
                     }
                     if pending_bundles
@@ -359,7 +474,7 @@ where
                         protocol_error(
                             &mut control_stream,
                             "unexpected v4 finish before bundle commit",
-                        )?;
+                        );
                         bail!("unexpected v4 finish before bundle commit");
                     }
                     wait_for_pending_bundle_data(
@@ -374,7 +489,7 @@ where
                         protocol_error(
                             &mut control_stream,
                             "unexpected orphaned v4 data after finish",
-                        )?;
+                        );
                         bail!("unexpected orphaned v4 data after finish");
                     }
                     drain_ready_commits(
@@ -388,20 +503,35 @@ where
                         protocol_error(
                             &mut control_stream,
                             "unexpected incomplete v4 bundle state at finish",
-                        )?;
+                        );
                         bail!("unexpected incomplete v4 bundle state at finish");
                     }
 
-                    let (finalize_report, finalize_profile) = receiver.finalize_profiled()?;
+                    if let Some(control) = control {
+                        control.check()?;
+                    }
+                    if let Some(progress) = &receiver.progress {
+                        progress.set_phase(Phase::Finalizing);
+                    }
+                    let storage_progress = receiver.progress.clone();
+                    let (finalize_report, finalize_profile) =
+                        receiver.finalize_profiled().inspect_err(|_| {
+                            if let Some(progress) = &storage_progress {
+                                progress.set_stage(PipelineStage::Storage, PipelineState::Failed);
+                            }
+                        })?;
                     profile.record_finalize(
                         finalize_profile.total_duration,
                         finalize_profile.archive_finalize_duration,
                         finalize_profile.issue_finalize_duration,
                     );
                     let finish_ack_started = Instant::now();
+                    let _sending =
+                        progress::stage(control, PipelineStage::Storage, PipelineState::Sending);
                     wire::write_message(&mut control_stream, &Message::FinishAck)?;
                     control_stream
                         .flush()
+                        .map_err(network_io)
                         .context("failed to flush v4 finish ack")?;
                     profile.record_finish_ack_flush(finish_ack_started.elapsed());
                     profile.record_total(total_started.elapsed());
@@ -422,7 +552,7 @@ where
                             "unexpected v4 message in receiver loop: {:?}",
                             unexpected.kind()
                         ),
-                    )?;
+                    );
                     bail!(
                         "unexpected v4 message in receiver loop: {:?}",
                         unexpected.kind()
@@ -495,21 +625,40 @@ impl<T: CloneableStream, Item> Drop for ReaderThread<T, Item> {
     }
 }
 
-fn spawn_control_reader<T>(stream: T) -> Result<ReaderThread<T, Message>>
+fn spawn_control_reader_observed<T>(
+    stream: T,
+    progress: Option<Arc<SessionProgress>>,
+    control: Option<SessionControl>,
+) -> Result<ReaderThread<T, Message>>
 where
     T: CloneableStream,
 {
     ReaderThread::spawn(
         "dump-control-read",
         stream,
-        |mut stream, tx, _cancel, failed_tx| {
+        move |mut stream, tx, cancel, failed_tx| {
             loop {
+                if let Some(progress) = &progress {
+                    progress.set_stage(PipelineStage::Control, PipelineState::Receiving);
+                }
                 let item = wire::read_message(&mut stream);
                 let failed = item.is_err();
+                if let Some(progress) = &progress {
+                    progress.set_stage(
+                        PipelineStage::Control,
+                        reader_delivery_state(failed, &cancel, control.as_ref()),
+                    );
+                }
                 if failed {
                     let _ = failed_tx.try_send(());
                 }
-                if tx.send(item).is_err() || failed {
+                if tx.send(item).is_err() {
+                    if !failed && let Some(progress) = &progress {
+                        progress.set_stage(PipelineStage::Control, PipelineState::Stopped);
+                    }
+                    return;
+                }
+                if failed {
                     return;
                 }
             }
@@ -517,7 +666,19 @@ where
     )
 }
 
+#[cfg(test)]
 fn spawn_data_reader<T>(stream: T) -> Result<ReaderThread<T, PendingDataChunk>>
+where
+    T: CloneableStream,
+{
+    spawn_data_reader_observed(stream, None, None)
+}
+
+fn spawn_data_reader_observed<T>(
+    stream: T,
+    progress: Option<Arc<SessionProgress>>,
+    control: Option<SessionControl>,
+) -> Result<ReaderThread<T, PendingDataChunk>>
 where
     T: CloneableStream,
 {
@@ -536,14 +697,22 @@ where
                         allocated_buffers += 1;
                         Vec::new()
                     }
-                    Err(_) => select! {
-                        recv(recycle_rx) -> storage => match storage {
-                            Ok(storage) => storage,
-                            Err(_) => break,
-                        },
-                        recv(cancel) -> _ => break,
-                    },
+                    Err(_) => {
+                        if let Some(progress) = &progress {
+                            progress.set_stage(PipelineStage::Data, PipelineState::WaitingBuffer);
+                        }
+                        select! {
+                            recv(recycle_rx) -> storage => match storage {
+                                Ok(storage) => storage,
+                                Err(_) => break,
+                            },
+                            recv(cancel) -> _ => break,
+                        }
+                    }
                 };
+                if let Some(progress) = &progress {
+                    progress.set_stage(PipelineStage::Data, PipelineState::Receiving);
+                }
                 let item =
                     wire::read_bundle_data_message_into(&mut stream, &mut storage).map(|header| {
                         PendingDataChunk {
@@ -557,17 +726,48 @@ where
                         }
                     });
                 let failed = item.is_err();
+                if let Some(progress) = &progress {
+                    progress.set_stage(
+                        PipelineStage::Data,
+                        reader_delivery_state(failed, &cancel, control.as_ref()),
+                    );
+                }
                 if failed {
                     // Основная очередь может быть заполнена: orphan-ожидание должно
                     // увидеть ошибку без чтения дополнительных payload-пакетов.
                     let _ = failed_tx.try_send(());
                 }
-                if tx.send(item).is_err() || failed {
+                let disconnected = tx.send(item).is_err();
+                if failed {
+                    return;
+                }
+                if disconnected {
                     break;
                 }
             }
+            if let Some(progress) = &progress {
+                progress.set_stage(PipelineStage::Data, PipelineState::Stopped);
+            }
         },
     )
+}
+
+fn reader_delivery_state(
+    failed: bool,
+    cancellation: &Receiver<()>,
+    control: Option<&SessionControl>,
+) -> PipelineState {
+    if !failed {
+        PipelineState::WaitingConsumer
+    } else if control.is_some_and(SessionControl::is_cancelled)
+        || matches!(cancellation.try_recv(), Err(TryRecvError::Disconnected))
+    {
+        // Ctrl+C закрывает сокеты до Drop reader-а: его локальный канал отмены
+        // ещё жив, пока storage заканчивает текущий sync или filesystem I/O.
+        PipelineState::Stopped
+    } else {
+        PipelineState::Failed
+    }
 }
 
 fn apply_orphan_data(
@@ -620,6 +820,10 @@ fn apply_data_chunk(
     if pending.data_finished {
         bail!("unexpected v4 bundle data after final chunk");
     }
+    let _writing = receiver
+        .progress
+        .as_ref()
+        .map(|progress| progress.stage(PipelineStage::Storage, PipelineState::Writing));
     let next_len = pending
         .bytes_received
         .checked_add(chunk.bytes.len() as u64)
@@ -630,6 +834,11 @@ fn apply_data_chunk(
         .archive_len_before_append
         .get_or_insert(receiver.current_archive_len());
     let periodic_sync_duration = receiver.append_bundle_chunk(&chunk.bytes)?;
+    if let Some(progress) = &receiver.progress {
+        progress
+            .transferred_bytes
+            .fetch_add(chunk.bytes.len() as u64, Ordering::Relaxed);
+    }
     pending.write_duration += write_started.elapsed();
     if let Some(duration) = periodic_sync_duration {
         pending.periodic_sync_duration += duration;
@@ -640,6 +849,11 @@ fn apply_data_chunk(
     if chunk.is_last {
         pending.data_finished = true;
         pending.archive_len_after_append = Some(receiver.current_archive_len());
+        if let Some(progress) = &receiver.progress {
+            progress
+                .sent_entries
+                .fetch_add(pending.descriptor.entries.len() as u64, Ordering::Relaxed);
+        }
     }
     Ok(())
 }
@@ -665,6 +879,15 @@ fn abort_bundle(
     if let Some(start) = pending.archive_len_before_append {
         receiver.rollback_staged_bundle(start)?;
     }
+    if pending.data_finished
+        && let Some(progress) = &receiver.progress
+    {
+        // Завершённый payload ещё не означает commit: abort снимает его записи,
+        // а объём записанных байтов остаётся монотонным при повторной попытке.
+        progress
+            .sent_entries
+            .fetch_sub(pending.descriptor.entries.len() as u64, Ordering::Relaxed);
+    }
     aborted_attempts.insert(key);
     orphan_data.remove(&key);
     Ok(())
@@ -679,6 +902,10 @@ fn wait_for_pending_bundle_data(
     aborted_attempts: &HashSet<AttemptKey>,
 ) -> Result<()> {
     while pending_bundles.iter().any(|pending| !pending.data_finished) {
+        let waiting = receiver
+            .progress
+            .as_ref()
+            .map(|progress| progress.stage(PipelineStage::Storage, PipelineState::WaitingData));
         let data = select! {
             recv(data_rx) -> data => data
                 .context("v4 data reader channel closed while waiting for pending bundle data")??,
@@ -690,6 +917,7 @@ fn wait_for_pending_bundle_data(
                 bail!("unexpected v4 control message after Finish: {:?}", message.kind());
             },
         };
+        drop(waiting);
         apply_data_chunk(
             receiver,
             pending_bundles,
@@ -787,6 +1015,21 @@ where
     for record in records {
         receiver.apply_commit_record(record);
     }
+    if let Some(progress) = &receiver.progress {
+        progress
+            .durable_bytes
+            .store(receiver.resume_state().archive_len, Ordering::Relaxed);
+        progress
+            .bundles
+            .fetch_add(ready.len() as u64, Ordering::Relaxed);
+        let entries = ready
+            .iter()
+            .map(|bundle| bundle.descriptor.entries.len() as u64)
+            .sum::<u64>();
+        progress
+            .committed_entries
+            .fetch_add(entries, Ordering::Relaxed);
+    }
 
     let commit_duration = ready
         .iter()
@@ -808,6 +1051,10 @@ where
     profile.record_bundle_commit_batch(group_bytes, commit_duration, ready.len() as u64);
 
     let ack_flush_started = Instant::now();
+    let _sending = receiver
+        .progress
+        .as_ref()
+        .map(|progress| progress.stage(PipelineStage::Storage, PipelineState::Sending));
     wire::write_message(
         control_stream,
         &Message::BundleAck(BundleAck {
@@ -818,6 +1065,7 @@ where
     )?;
     control_stream
         .flush()
+        .map_err(network_io)
         .context("failed to flush v4 bundle ack")?;
     profile.record_bundle_ack_flush(ack_flush_started.elapsed());
     Ok(())
@@ -841,7 +1089,7 @@ where
         protocol_error(
             control_stream,
             "v4 bundle commit number does not match active plan",
-        )?;
+        );
         bail!("v4 bundle commit number does not match active plan");
     }
     if pending.bytes_received != commit.compressed_payload_bytes {
@@ -853,7 +1101,7 @@ where
         protocol_error(
             control_stream,
             "v4 bundle payload length does not match descriptor",
-        )?;
+        );
         bail!("v4 bundle payload length does not match descriptor");
     }
     let checksum = pending.checksum.digest();
@@ -863,16 +1111,22 @@ where
                 .archive_len_before_append
                 .context("ready v4 bundle is missing its archive boundary")?,
         )?;
-        protocol_error(control_stream, "v4 bundle payload checksum mismatch")?;
+        protocol_error(control_stream, "v4 bundle payload checksum mismatch");
         bail!("v4 bundle payload checksum mismatch");
     }
     Ok(pending.descriptor.into_bundle_descriptor(commit))
 }
 
-fn respond_resume_query<T>(stream: &mut T, dump_id: &str, state: ResumeState) -> Result<()>
+fn respond_resume_query<T>(
+    stream: &mut T,
+    dump_id: &str,
+    state: ResumeState,
+    control: Option<&SessionControl>,
+) -> Result<()>
 where
     T: Read + Write,
 {
+    let _receiving = progress::stage(control, PipelineStage::Control, PipelineState::Receiving);
     match wire::read_message(stream)? {
         Message::ResumeQuery(ResumeQuery {
             dump_id: requested_dump_id,
@@ -884,7 +1138,7 @@ where
                         "v4 resume query dump id mismatch: expected {} got {}",
                         dump_id, requested_dump_id
                     ),
-                )?;
+                );
                 bail!(
                     "v4 resume query dump id mismatch: expected {} got {}",
                     dump_id,
@@ -892,8 +1146,12 @@ where
                 );
             }
 
+            let _sending = progress::stage(control, PipelineStage::Control, PipelineState::Sending);
             wire::write_message(stream, &Message::ResumeState(state))?;
-            stream.flush().context("failed to flush v4 resume state")?;
+            stream
+                .flush()
+                .map_err(network_io)
+                .context("failed to flush v4 resume state")?;
             Ok(())
         }
         Message::Error(error) => bail!(
@@ -901,7 +1159,7 @@ where
             error.message
         ),
         unexpected => {
-            protocol_error(stream, "expected v4 resume query before session flow")?;
+            protocol_error(stream, "expected v4 resume query before session flow");
             bail!(
                 "unexpected v4 message before resume query: {:?}",
                 unexpected.kind()
@@ -910,11 +1168,12 @@ where
     }
 }
 
-fn protocol_error<T>(stream: &mut T, message: &str) -> Result<()>
+fn protocol_error<T>(stream: &mut T, message: &str)
 where
     T: Write,
 {
-    wire::send_error(stream, message)
+    // Причина отказа уже известна; ошибка ответа не должна разрешать reconnect.
+    let _ = wire::send_error(stream, message);
 }
 
 #[cfg(test)]

@@ -5,6 +5,51 @@ use std::time::Duration;
 use crate::support::*;
 
 #[test]
+fn plain_cli_help_and_validation_never_start_the_dashboard() {
+    for args in [
+        vec!["--help"],
+        vec!["help", "sender"],
+        vec!["help", "receiver"],
+        vec!["--version"],
+    ] {
+        let output = Command::new(binary_path()).args(args).output().unwrap();
+        assert!(output.status.success());
+        assert!(!output.stdout.contains(&0x1b));
+        assert!(!output.stderr.contains(&0x1b));
+    }
+
+    for before in [true, false] {
+        let mut command = Command::new(binary_path());
+        if before {
+            command.arg("--no-gui");
+        }
+        command.args([
+            "receiver",
+            "--listen",
+            "127.0.0.1:0",
+            "--data-dir",
+            "unused",
+            "--max-sessions",
+            "0",
+        ]);
+        if !before {
+            command.arg("--no-gui");
+        }
+        let output = command.output().unwrap();
+        assert!(!output.status.success());
+        assert!(output.stdout.is_empty());
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("max_sessions must be at least 1")
+        );
+        assert!(!output.stderr.contains(&0x1b));
+    }
+    let output = Command::new(binary_path()).output().unwrap();
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    assert!(!output.stderr.contains(&0x1b));
+}
+
+#[test]
 fn debug_flag_toggles_sender_and_receiver_logs() {
     for (label, dump_id, debug) in [
         ("debug-enabled", "dump-debug-enabled", true),

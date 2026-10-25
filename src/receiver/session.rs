@@ -1,10 +1,14 @@
 use std::fs::{self, File};
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 
 use crate::network::protocol::{BundleDescriptor, ResumeState, SkippedEntry, validate_dump_id};
+use crate::progress::{self, PipelineStage, PipelineState, SessionProgress};
+use crate::runtime::SessionControl;
 
 #[cfg(test)]
 use crate::network::protocol::PreparedBundle;
@@ -47,13 +51,29 @@ pub(crate) struct ReceiverSession {
     wal: WalWriter,
     resume_state: ResumeState,
     compression_level: i32,
+    pub(super) progress: Option<Arc<SessionProgress>>,
     // Последнее поле закрывается после archive/WAL; lock-файл не удаляем,
     // иначе новый процесс может захватить другой inode под тем же именем.
     _dump_lock: FileLock,
 }
 
 impl ReceiverSession {
+    #[cfg(test)]
     pub(crate) fn open(data_dir: PathBuf, dump_id: &str, compression_level: i32) -> Result<Self> {
+        Self::open_controlled(data_dir, dump_id, compression_level, None)
+    }
+
+    pub(super) fn open_controlled(
+        data_dir: PathBuf,
+        dump_id: &str,
+        compression_level: i32,
+        control: Option<&SessionControl>,
+    ) -> Result<Self> {
+        let _recovering =
+            progress::stage(control, PipelineStage::Storage, PipelineState::Recovering);
+        if let Some(control) = control {
+            control.check()?;
+        }
         validate_dump_id(dump_id)?;
         let paths = ReceiverPaths::new(data_dir, dump_id);
         fs::create_dir_all(&paths.data_dir).with_context(|| {
@@ -78,12 +98,29 @@ impl ReceiverSession {
                     open_lock_path.display()
                 )
             })?;
-        open_lock.lock().with_context(|| {
-            format!(
-                "failed to lock v4 receiver initialization {}",
-                open_lock_path.display()
-            )
-        })?;
+        let waiting = progress::stage(control, PipelineStage::Storage, PipelineState::WaitingLock);
+        if let Some(control) = control {
+            loop {
+                control.check()?;
+                match open_lock.try_lock() {
+                    Ok(()) => break,
+                    Err(std::fs::TryLockError::WouldBlock) => {
+                        std::thread::sleep(Duration::from_millis(25));
+                    }
+                    Err(error) => {
+                        return Err(error).context("failed to lock v4 receiver initialization");
+                    }
+                }
+            }
+        } else {
+            open_lock.lock().with_context(|| {
+                format!(
+                    "failed to lock v4 receiver initialization {}",
+                    open_lock_path.display()
+                )
+            })?;
+        }
+        drop(waiting);
         let _open_lock = FileLock(open_lock);
         let lock_path = paths.data_dir.join(format!("{dump_id}.lock"));
         let dump_lock = File::options()
@@ -101,6 +138,9 @@ impl ReceiverSession {
             )
         })?;
         let dump_lock = FileLock(dump_lock);
+        if let Some(control) = control {
+            control.check()?;
+        }
         paths.migrate_legacy_state()?;
 
         if paths.final_archive_path.exists() {
@@ -112,10 +152,25 @@ impl ReceiverSession {
         }
 
         let resume_state = recovery::recover(&paths)?;
-        let archive = ArchiveAppender::open(&paths, resume_state.archive_len)?;
+        let mut archive = ArchiveAppender::open(&paths, resume_state.archive_len)?;
         let wal = WalWriter::open(&paths.wal_path)?;
         // Первый durable commit требует сохранённых имён обоих partial-файлов.
         catalog::sync_parent_directory(&paths.wal_path)?;
+
+        let progress = control.and_then(|control| control.progress().cloned());
+        archive.observe(progress.clone());
+        if let Some(progress) = &progress {
+            progress
+                .resumed_bytes
+                .store(resume_state.archive_len, Ordering::Relaxed);
+            progress
+                .durable_bytes
+                .store(resume_state.archive_len, Ordering::Relaxed);
+            progress
+                .skips
+                .store(resume_state.terminal_skips.len() as u64, Ordering::Relaxed);
+            progress.set_archive(paths.final_archive_path.clone());
+        }
 
         Ok(Self {
             paths,
@@ -123,6 +178,7 @@ impl ReceiverSession {
             wal,
             resume_state,
             compression_level,
+            progress,
             _dump_lock: dump_lock,
         })
     }
@@ -140,9 +196,23 @@ impl ReceiverSession {
         &mut self,
         skips: &[SkippedEntry],
     ) -> Result<Duration> {
+        let _syncing = self
+            .progress
+            .as_ref()
+            .map(|progress| progress.stage(PipelineStage::Storage, PipelineState::Syncing));
         let started = Instant::now();
         self.resume_state.terminal_skips =
-            catalog::merge_terminal_skips(&self.paths.catalog_path, skips)?;
+            catalog::merge_terminal_skips(&self.paths.catalog_path, skips).inspect_err(|_| {
+                if let Some(progress) = &self.progress {
+                    progress.set_stage(PipelineStage::Storage, PipelineState::Failed);
+                }
+            })?;
+        if let Some(progress) = &self.progress {
+            progress.skips.store(
+                self.resume_state.terminal_skips.len() as u64,
+                Ordering::Relaxed,
+            );
+        }
         Ok(started.elapsed())
     }
 
@@ -166,11 +236,25 @@ impl ReceiverSession {
     }
 
     pub(crate) fn sync_wal(&mut self) -> Result<()> {
-        self.wal.sync()
+        let _syncing = self
+            .progress
+            .as_ref()
+            .map(|progress| progress.stage(PipelineStage::Storage, PipelineState::Syncing));
+        self.wal.sync().inspect_err(|_| {
+            if let Some(progress) = &self.progress {
+                progress.set_stage(PipelineStage::Storage, PipelineState::Failed);
+            }
+        })
     }
 
     pub(crate) fn rollback_staged_bundle(&mut self, archive_len_before_append: u64) -> Result<()> {
-        self.archive.truncate_to(archive_len_before_append)
+        self.archive
+            .truncate_to(archive_len_before_append)
+            .inspect_err(|_| {
+                if let Some(progress) = &self.progress {
+                    progress.set_stage(PipelineStage::Storage, PipelineState::Failed);
+                }
+            })
     }
 
     pub(crate) fn buffered_commit_record(
@@ -178,8 +262,16 @@ impl ReceiverSession {
         descriptor: &BundleDescriptor,
         archive_len: u64,
     ) -> Result<WalRecord> {
+        let _writing = self
+            .progress
+            .as_ref()
+            .map(|progress| progress.stage(PipelineStage::Storage, PipelineState::Writing));
         let record = wal_record_from_descriptor(descriptor, archive_len);
-        self.wal.append_commit_record(&record)?;
+        self.wal.append_commit_record(&record).inspect_err(|_| {
+            if let Some(progress) = &self.progress {
+                progress.set_stage(PipelineStage::Storage, PipelineState::Failed);
+            }
+        })?;
         Ok(record)
     }
 
@@ -206,6 +298,10 @@ impl ReceiverSession {
     }
 
     pub(crate) fn finalize_profiled(mut self) -> Result<(OfflineReceiveReport, FinalizeProfile)> {
+        let _finalizing = self
+            .progress
+            .as_ref()
+            .map(|progress| progress.stage(PipelineStage::Storage, PipelineState::Finalizing));
         let total_started = Instant::now();
         self.archive
             .append_termination_frame(self.compression_level)?;
@@ -260,6 +356,60 @@ impl ReceiverSession {
 mod tests {
     use super::*;
     use crate::tests::TestDir;
+
+    #[test]
+    fn cancellation_releases_initialization_wait_without_creating_dump_state() {
+        use crate::role::Role;
+        use crate::runtime::{Cancelled, RunControl};
+        let directory = TestDir::new();
+        let path = directory.path().join(".fast-dump-open-lock");
+        let lock = File::create(path).unwrap();
+        lock.lock().unwrap();
+        let lock = FileLock(lock);
+        let run = RunControl::new(Some(Arc::new(crate::progress::ProgressHub::new())));
+        let control = run.session(Role::Receiver, "cancelled", "peer");
+        let progress = control.progress().unwrap().clone();
+        let data_dir = directory.path().to_owned();
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            let result = ReceiverSession::open_controlled(data_dir, "cancelled", 1, Some(&control))
+                .map(|_| ());
+            done_tx.send(result).unwrap();
+        });
+        started_rx.recv().unwrap();
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let snapshot = progress.snapshot();
+            if snapshot.pipelines.iter().any(|pipeline| {
+                pipeline.stage == PipelineStage::Storage
+                    && pipeline.state == PipelineState::WaitingLock
+            }) {
+                break;
+            }
+            assert!(
+                Instant::now() < deadline,
+                "initialization did not report lock wait"
+            );
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert!(matches!(
+            done_rx.recv_timeout(Duration::from_millis(50)),
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+        ));
+        run.cancel();
+        let result = done_rx.recv_timeout(Duration::from_secs(2));
+        drop(lock);
+        worker.join().unwrap();
+        assert!(
+            result
+                .expect("initialization ignored cancellation")
+                .unwrap_err()
+                .is::<Cancelled>()
+        );
+        assert!(!directory.path().join("cancelled.lock").exists());
+    }
 
     #[test]
     fn session_drop_unlocks_even_while_inherited_descriptor_remains_open() {

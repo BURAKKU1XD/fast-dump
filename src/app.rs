@@ -7,6 +7,7 @@ use crate::cli::{Cli, Command, ReceiverArgs, SenderArgs, SenderRuntimeOptions};
 use crate::network::transport::{BoundListener, TransportMode};
 use crate::receiver;
 use crate::role::Role;
+use crate::runtime::RunControl;
 use crate::sender;
 use crate::telemetry;
 
@@ -14,7 +15,45 @@ use crate::telemetry;
 // тестов напрямую без отдельного бинарника.
 pub fn run(cli: Cli) -> Result<()> {
     telemetry::init_logging(cli.debug);
-    run_with(&RealRuntime, cli)
+    run_controlled(cli, &RunControl::new(None))
+}
+
+pub fn main_entry() -> std::process::ExitCode {
+    crate::launch::entry()
+}
+
+pub(crate) fn run_controlled(cli: Cli, control: &RunControl) -> Result<()> {
+    validate(&cli)?;
+    let runtime = RealRuntime {
+        control: Some(control.clone()),
+    };
+    let policy = crate::retry::RetryPolicy::from_cli(&cli, false);
+    // Listener уже изолирует ошибки сессий; его перезапуск оборвал бы соседние dump.
+    if policy.retries == 0
+        || matches!(&cli.command, Command::Receiver(args) if args.transport.listen.is_some())
+    {
+        return run_with(&runtime, cli);
+    }
+    crate::retry::run(policy, control, || run_with(&runtime, cli.clone()))
+}
+
+pub(crate) fn validate(cli: &Cli) -> Result<()> {
+    anyhow::ensure!(
+        cli.retry_delay_secs > 0,
+        "retry_delay_secs must be at least 1"
+    );
+    match &cli.command {
+        Command::Sender(args) => {
+            args.resolve_dump_id()?;
+            args.runtime_options()?;
+            args.transport.mode()?;
+        }
+        Command::Receiver(args) => {
+            args.validated_max_sessions()?;
+            args.transport.mode()?;
+        }
+    }
+    Ok(())
 }
 
 trait Runtime {
@@ -68,7 +107,9 @@ where
     }
 }
 
-struct RealRuntime;
+struct RealRuntime {
+    control: Option<RunControl>,
+}
 
 impl Runtime for RealRuntime {
     fn run_sender(
@@ -90,18 +131,40 @@ impl Runtime for RealRuntime {
             runtime.read_buffer_bytes
         );
 
-        let mut session = crate::network::transport::establish_session(
-            Role::Sender,
-            transport_mode,
-            Some(&dump_id),
-            args.token.as_deref(),
-        )?;
-        let (report, profile) = sender::send_dump_profile(
-            &mut session.control_stream,
-            &mut session.data_stream,
-            args.source,
-            &dump_id,
-            sender::BundlePlanOptions {
+        let control = self
+            .control
+            .as_ref()
+            .map(|run| run.session(Role::Sender, &dump_id, &format!("{transport_mode:?}")));
+        let result = (|| {
+            let (mut session, _registrations) = if let Some(control) = &control {
+                crate::network::transport::establish_session_controlled(
+                    Role::Sender,
+                    transport_mode,
+                    Some(&dump_id),
+                    args.token.as_deref(),
+                    control,
+                )?
+            } else {
+                (
+                    crate::network::transport::establish_session(
+                        Role::Sender,
+                        transport_mode,
+                        Some(&dump_id),
+                        args.token.as_deref(),
+                    )?,
+                    Vec::new(),
+                )
+            };
+            if let Some(control) = &control {
+                control.set_identity(&dump_id, &session.peer_addr.to_string());
+                if control.progress().is_some() {
+                    control.log(
+                        log::Level::Info,
+                        &format!("Connected to receiver at {}", session.peer_addr),
+                    );
+                }
+            }
+            let options = sender::BundlePlanOptions {
                 bundle_target_bytes: runtime.bundle_target_bytes,
                 compression_level: runtime.level,
                 compression_threads: runtime.threads,
@@ -110,16 +173,33 @@ impl Runtime for RealRuntime {
                 readers: sender::BundlePlanOptions::default()
                     .readers
                     .clamp(runtime.min_readers, runtime.max_readers),
-            },
-        )?;
+            };
+            let (report, profile) = if let Some(control) = &control {
+                sender::send_dump_controlled(
+                    &mut session.control_stream,
+                    &mut session.data_stream,
+                    args.source,
+                    &dump_id,
+                    options,
+                    control,
+                )?
+            } else {
+                sender::send_dump_profile(
+                    &mut session.control_stream,
+                    &mut session.data_stream,
+                    args.source,
+                    &dump_id,
+                    options,
+                )?
+            };
 
-        let status = if report.terminal_skip_count == 0 {
-            "clean"
-        } else {
-            "completed_with_warnings"
-        };
+            let status = if report.terminal_skip_count == 0 {
+                "clean"
+            } else {
+                "completed_with_warnings"
+            };
 
-        println!(
+            self.summary(format!(
             "{} connected to {} at {}; dump_id={}; status={}; files_total_discovered={}; files_sent={}; files_skipped={}; bundles_sent={}; final_bundle={}; final_work_ordinal={}",
             session.local_role,
             session.peer_role,
@@ -132,9 +212,14 @@ impl Runtime for RealRuntime {
             report.bundles_sent,
             report.final_bundle_no,
             report.final_work_ordinal
-        );
+        ));
 
-        Ok(())
+            Ok(())
+        })();
+        if let Some(control) = &control {
+            control.finish(&result);
+        }
+        result
     }
 
     fn run_receiver_connect(
@@ -148,24 +233,61 @@ impl Runtime for RealRuntime {
             args.data_dir.display()
         );
 
-        let session = crate::network::transport::establish_session(
-            Role::Receiver,
-            transport_mode,
-            None,
-            args.token.as_deref(),
-        )?;
-        let local_role = session.local_role;
-        let peer_role = session.peer_role;
-        let peer_addr = session.peer_addr;
-        let peer_dump_id = session.peer_dump_id.clone();
-        let (report, _) = receiver::receive_dump_profile(
-            session.control_stream,
-            session.data_stream,
-            args.data_dir,
-            peer_dump_id.as_deref().unwrap(),
-        )?;
+        let control = self
+            .control
+            .as_ref()
+            .map(|run| run.session(Role::Receiver, "", &format!("{transport_mode:?}")));
+        let result = (|| {
+            let (session, _registrations) = if let Some(control) = &control {
+                crate::network::transport::establish_session_controlled(
+                    Role::Receiver,
+                    transport_mode,
+                    None,
+                    args.token.as_deref(),
+                    control,
+                )?
+            } else {
+                (
+                    crate::network::transport::establish_session(
+                        Role::Receiver,
+                        transport_mode,
+                        None,
+                        args.token.as_deref(),
+                    )?,
+                    Vec::new(),
+                )
+            };
+            let local_role = session.local_role;
+            let peer_role = session.peer_role;
+            let peer_addr = session.peer_addr;
+            let peer_dump_id = session.peer_dump_id.clone();
+            if let Some(control) = &control {
+                control.set_identity(peer_dump_id.as_deref().unwrap(), &peer_addr.to_string());
+                if control.progress().is_some() {
+                    control.log(
+                        log::Level::Info,
+                        &format!("Connected to sender at {peer_addr}"),
+                    );
+                }
+            }
+            let (report, _) = if let Some(control) = &control {
+                receiver::receive_dump_profile_controlled(
+                    session.control_stream,
+                    session.data_stream,
+                    args.data_dir,
+                    peer_dump_id.as_deref().unwrap(),
+                    control,
+                )?
+            } else {
+                receiver::receive_dump_profile(
+                    session.control_stream,
+                    session.data_stream,
+                    args.data_dir,
+                    peer_dump_id.as_deref().unwrap(),
+                )?
+            };
 
-        println!(
+            self.summary(format!(
             "{} connected to {} at {}; dump_id={}; final_bundle={}; final_work_ordinal={}; terminal_skips={}; archive={}",
             local_role,
             peer_role,
@@ -175,9 +297,14 @@ impl Runtime for RealRuntime {
             report.resume_state.last_committed_work_ordinal,
             report.resume_state.terminal_skips.len(),
             report.final_archive_path.display()
-        );
+        ));
 
-        Ok(())
+            Ok(())
+        })();
+        if let Some(control) = &control {
+            control.finish(&result);
+        }
+        result
     }
 
     fn run_receiver_listen(
@@ -194,7 +321,33 @@ impl Runtime for RealRuntime {
         );
 
         let listener = BoundListener::bind(addr)?;
-        receiver::serve_listener(listener, args.data_dir, max_sessions, args.token)
+        if let Some(control) = &self.control {
+            if control.progress().is_some() {
+                control.log(
+                    log::Level::Info,
+                    &format!("Listening on {}", listener.local_addr()),
+                );
+            }
+            receiver::serve_listener_controlled(
+                listener,
+                args.data_dir,
+                max_sessions,
+                args.token,
+                control,
+            )
+        } else {
+            receiver::serve_listener(listener, args.data_dir, max_sessions, args.token)
+        }
+    }
+}
+
+impl RealRuntime {
+    fn summary(&self, summary: String) {
+        if let Some(control) = &self.control {
+            control.summary(summary);
+        } else {
+            println!("{summary}");
+        }
     }
 }
 

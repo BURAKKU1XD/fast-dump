@@ -8,8 +8,11 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
 
+use crate::network::network_io;
 use crate::network::protocol::wire::{self, ChannelKind};
+use crate::progress::{self, Phase, PipelineStage, PipelineState};
 use crate::role::Role;
+use crate::runtime::{SessionControl, SocketRegistration};
 
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 const PENDING_CHANNEL_TIMEOUT: Duration = Duration::from_secs(5);
@@ -102,6 +105,238 @@ pub fn establish_session(
     }
 }
 
+/// Регистрации живут вместе с сессией и прерывают также частичный handshake.
+pub(crate) fn establish_session_controlled(
+    role: Role,
+    mode: TransportMode,
+    dump_id: Option<&str>,
+    token: Option<&str>,
+    control: &SessionControl,
+) -> Result<(Session, Vec<SocketRegistration>)> {
+    control.check()?;
+    let _transport = progress::stage(
+        Some(control),
+        PipelineStage::Control,
+        match mode {
+            TransportMode::Connect(_) => PipelineState::Connecting,
+            TransportMode::Listen(_) => PipelineState::WaitingConnection,
+        },
+    );
+    let mut registrations = Vec::with_capacity(2);
+    let result = (|| {
+        let session_nonce = next_session_nonce();
+        match mode {
+            TransportMode::Connect(addr) => {
+                if let Some(progress) = control.progress() {
+                    progress.set_phase(Phase::Connecting);
+                }
+                let mut channels = Vec::with_capacity(2);
+                for kind in [ChannelKind::Control, ChannelKind::Data] {
+                    let (stream, registration) = connect_stream_controlled(addr, control)?;
+                    registrations.push(registration);
+                    let _handshake = progress::stage(
+                        Some(control),
+                        PipelineStage::Control,
+                        PipelineState::Handshake,
+                    );
+                    channels.push(establish_stream_session(
+                        stream,
+                        role,
+                        dump_id,
+                        token,
+                        None,
+                        (role == Role::Sender).then_some((kind, session_nonce)),
+                    )?);
+                }
+                let second = channels.pop().unwrap();
+                let first = channels.pop().unwrap();
+                match (first.channel_kind, second.channel_kind) {
+                    (ChannelKind::Control, ChannelKind::Data) => assemble_session(first, second),
+                    (ChannelKind::Data, ChannelKind::Control) => assemble_session(second, first),
+                    _ => bail!("v4 peer opened duplicate channel kinds while establishing session"),
+                }
+            }
+            TransportMode::Listen(addr) => {
+                let listener = BoundListener::bind(addr)?;
+                listener.set_nonblocking(true)?;
+                if let Some(progress) = control.progress() {
+                    progress.set_phase(Phase::Listening);
+                }
+                let mut pending = HashMap::new();
+                let mut sender_control = None;
+                let mut pending_guards =
+                    HashMap::<PendingSessionKey, Vec<SocketRegistration>>::new();
+                loop {
+                    control.check()?;
+                    drop_expired_pending_channels(&mut pending);
+                    pending_guards.retain(|key, _| pending.contains_key(key));
+                    let (stream, peer_addr) = match listener.try_accept_stream() {
+                        Ok(connection) => connection,
+                        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                            std::thread::sleep(Duration::from_millis(10));
+                            continue;
+                        }
+                        Err(error) => {
+                            return Err(network_io(error))
+                                .context("failed to accept v4 connection");
+                        }
+                    };
+                    let registration = control.register(&stream)?;
+                    let kind = if registrations.is_empty() {
+                        ChannelKind::Control
+                    } else {
+                        ChannelKind::Data
+                    };
+                    let handshake = progress::stage(
+                        Some(control),
+                        PipelineStage::Control,
+                        PipelineState::Handshake,
+                    );
+                    let channel = establish_stream_session(
+                        stream,
+                        role,
+                        dump_id,
+                        token,
+                        Some(peer_addr),
+                        (role == Role::Sender).then_some((kind, session_nonce)),
+                    )?;
+                    drop(handshake);
+                    let key = pending_session_key(&channel);
+                    if role == Role::Sender {
+                        registrations.push(registration);
+                        if let Some(first) = sender_control.take() {
+                            return assemble_session(first, channel);
+                        }
+                        sender_control = Some(channel);
+                        continue;
+                    } else {
+                        pending_guards
+                            .entry(key.clone())
+                            .or_default()
+                            .push(registration);
+                    }
+                    if let Some(session) = insert_pending_channel(&mut pending, channel)? {
+                        if let Some(guards) = pending_guards.remove(&key) {
+                            registrations.extend(guards);
+                        }
+                        return Ok(session);
+                    }
+                }
+            }
+        }
+    })();
+    if result.is_err() {
+        progress::set_stage(
+            Some(control),
+            PipelineStage::Control,
+            if control.is_cancelled() {
+                PipelineState::Stopped
+            } else {
+                PipelineState::Failed
+            },
+        );
+        control.check()?;
+    }
+    result.map(|session| (session, registrations))
+}
+
+fn connect_stream_controlled(
+    addr: SocketAddr,
+    control: &SessionControl,
+) -> Result<(TcpStream, SocketRegistration)> {
+    use socket2::{Domain, Protocol, Socket, Type};
+
+    control.check()?;
+    let socket = Socket::new(Domain::for_address(addr), Type::STREAM, Some(Protocol::TCP))?;
+    socket.set_nonblocking(true)?;
+    let connected = match socket.connect(&addr.into()) {
+        Ok(()) => true,
+        Err(error) if connect_is_pending(&error) => false,
+        Err(error) => {
+            return Err(network_io(error)).with_context(|| format!("failed to connect to {addr}"));
+        }
+    };
+    let stream: TcpStream = socket.into();
+    let registration = control.register(&stream)?;
+    if !connected {
+        loop {
+            control.check()?;
+            if !wait_connect_ready(&stream).map_err(network_io)? {
+                continue;
+            }
+            control.check()?;
+            if let Some(error) = stream.take_error().map_err(network_io)? {
+                return Err(network_io(error))
+                    .with_context(|| format!("failed to connect to {addr}"));
+            }
+            stream
+                .peer_addr()
+                .map_err(network_io)
+                .with_context(|| format!("failed to connect to {addr}"))?;
+            break;
+        }
+    }
+    control.check()?;
+    stream.set_nonblocking(false)?;
+    Ok((stream, registration))
+}
+
+fn connect_is_pending(error: &std::io::Error) -> bool {
+    if error.kind() == std::io::ErrorKind::WouldBlock {
+        return true;
+    }
+    #[cfg(unix)]
+    {
+        error.raw_os_error() == Some(libc::EINPROGRESS)
+    }
+    #[cfg(windows)]
+    {
+        error.raw_os_error() == Some(windows_sys::Win32::Networking::WinSock::WSAEINPROGRESS)
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        false
+    }
+}
+
+#[cfg(unix)]
+fn wait_connect_ready(stream: &TcpStream) -> std::io::Result<bool> {
+    use std::os::fd::AsRawFd;
+    let mut descriptor = libc::pollfd {
+        fd: stream.as_raw_fd(),
+        events: libc::POLLOUT,
+        revents: 0,
+    };
+    // poll только наблюдает сокет; единственная попытка connect остаётся активной.
+    let result = unsafe { libc::poll(&mut descriptor, 1, 50) };
+    if result < 0 {
+        let error = std::io::Error::last_os_error();
+        if error.kind() == std::io::ErrorKind::Interrupted {
+            return Ok(false);
+        }
+        return Err(error);
+    }
+    Ok(result > 0)
+}
+
+#[cfg(windows)]
+fn wait_connect_ready(stream: &TcpStream) -> std::io::Result<bool> {
+    use std::os::windows::io::AsRawSocket;
+    use windows_sys::Win32::Networking::WinSock::{POLLOUT, WSAGetLastError, WSAPOLLFD, WSAPoll};
+    let mut descriptor = WSAPOLLFD {
+        fd: stream.as_raw_socket() as _,
+        events: POLLOUT,
+        revents: 0,
+    };
+    let result = unsafe { WSAPoll(&mut descriptor, 1, 50) };
+    if result < 0 {
+        return Err(std::io::Error::from_raw_os_error(unsafe {
+            WSAGetLastError()
+        }));
+    }
+    Ok(result > 0)
+}
+
 pub fn listen_once(
     role: Role,
     addr: SocketAddr,
@@ -155,8 +390,9 @@ fn connect_channel(
     token: Option<&str>,
     local_channel: Option<(ChannelKind, u64)>,
 ) -> Result<ChannelSession> {
-    let stream =
-        TcpStream::connect(addr).with_context(|| format!("failed to connect to {addr}"))?;
+    let stream = TcpStream::connect(addr)
+        .map_err(network_io)
+        .with_context(|| format!("failed to connect to {addr}"))?;
     establish_stream_session(stream, role, dump_id, token, None, local_channel)
 }
 
@@ -221,6 +457,7 @@ impl BoundListener {
     pub(crate) fn accept_stream(&self) -> Result<(TcpStream, SocketAddr)> {
         self.listener
             .accept()
+            .map_err(network_io)
             .context("failed to accept incoming v4 connection")
     }
 
@@ -472,6 +709,115 @@ struct HandshakeResult {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::runtime::{Cancelled, RunControl};
+
+    #[test]
+    fn controlled_connect_preserves_both_channel_handshakes() {
+        let listener = BoundListener::bind("127.0.0.1:0".parse().unwrap()).unwrap();
+        let addr = listener.local_addr();
+        let server =
+            std::thread::spawn(move || listener.accept(Role::Receiver, None, None).unwrap());
+        let run = RunControl::new(None);
+        let control = run.session(Role::Sender, "controlled", &addr.to_string());
+        let (session, guards) = establish_session_controlled(
+            Role::Sender,
+            TransportMode::Connect(addr),
+            Some("controlled"),
+            None,
+            &control,
+        )
+        .unwrap();
+        let peer = server.join().unwrap();
+        assert_eq!(peer.peer_dump_id.as_deref(), Some("controlled"));
+        assert_eq!(session.peer_role, Role::Receiver);
+        assert_eq!(guards.len(), 2);
+    }
+
+    #[test]
+    fn controlled_connect_cancels_silent_handshake_without_peer_close() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let run = RunControl::new(Some(std::sync::Arc::new(
+            crate::progress::ProgressHub::new(),
+        )));
+        let control = run.session(Role::Sender, "controlled", &addr.to_string());
+        let progress = control.progress().unwrap().clone();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let result = establish_session_controlled(
+                Role::Sender,
+                TransportMode::Connect(addr),
+                Some("controlled"),
+                None,
+                &control,
+            )
+            .map(|_| ());
+            done_tx.send(result).unwrap();
+        });
+        let (mut peer, _) = listener.accept().unwrap();
+        peer.set_read_timeout(Some(Duration::from_secs(2))).unwrap();
+        wire::read_message(&mut peer).unwrap();
+        assert_eq!(
+            progress
+                .snapshot()
+                .pipelines
+                .iter()
+                .find(|p| p.stage == PipelineStage::Control)
+                .unwrap()
+                .state,
+            PipelineState::Handshake,
+        );
+        run.cancel();
+        let completed = done_rx.recv_timeout(Duration::from_secs(2));
+        let _ = peer.shutdown_stream();
+        worker.join().unwrap();
+        assert_eq!(
+            progress
+                .snapshot()
+                .pipelines
+                .iter()
+                .find(|p| p.stage == PipelineStage::Control)
+                .unwrap()
+                .state,
+            PipelineState::Stopped,
+        );
+        assert!(
+            completed
+                .expect("handshake did not observe cancellation")
+                .unwrap_err()
+                .is::<Cancelled>()
+        );
+    }
+
+    #[test]
+    fn controlled_listener_cancels_while_waiting_for_a_peer() {
+        let run = RunControl::new(None);
+        let control = run.session(Role::Sender, "controlled", "127.0.0.1:0");
+        let (started_tx, started_rx) = std::sync::mpsc::channel();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            started_tx.send(()).unwrap();
+            let result = establish_session_controlled(
+                Role::Sender,
+                TransportMode::Listen("127.0.0.1:0".parse().unwrap()),
+                Some("controlled"),
+                None,
+                &control,
+            )
+            .map(|_| ());
+            done_tx.send(result).unwrap();
+        });
+        started_rx.recv().unwrap();
+        run.cancel();
+        assert!(
+            done_rx
+                .recv_timeout(Duration::from_secs(2))
+                .unwrap()
+                .unwrap_err()
+                .is::<Cancelled>()
+        );
+        worker.join().unwrap();
+    }
 
     fn channel(kind: ChannelKind, peer_addr: SocketAddr) -> ChannelSession {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();

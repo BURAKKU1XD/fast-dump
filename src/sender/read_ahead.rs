@@ -5,10 +5,12 @@ use anyhow::{Context, Result};
 use crossbeam_channel::{Receiver, Sender, bounded};
 
 use super::read::{
-    PrefetchBudget, READ_BATCH_ENTRIES, ReadBatch, ReadDecision, finish_materializing,
-    materialize_budgeted_batch, materialize_owned_entry,
+    PrefetchBudget, READ_BATCH_ENTRIES, ReadBatch, ReadDecision, finish_materializing_controlled,
+    materialize_budgeted_batch_controlled, materialize_owned_entry_controlled,
 };
 use crate::network::protocol::SkippedEntry;
+use crate::progress::{self, PipelineStage, PipelineState};
+use crate::runtime::SessionControl;
 
 use super::scan::{ScanProgress, ScannedEntry, StreamingScan};
 
@@ -24,6 +26,7 @@ pub(crate) struct OrderedReader {
     lookahead: VecDeque<ScannedEntry>,
     stream_threshold: u64,
     parallel: Option<ParallelReader>,
+    control: Option<SessionControl>,
 }
 
 enum EntrySource {
@@ -90,6 +93,12 @@ impl OrderedReader {
     ) -> Result<Self> {
         anyhow::ensure!(readers > 0, "reader count must be greater than zero");
         let limit = readers.saturating_mul(32);
+        let control = scan.control();
+        let _waiting = progress::stage(
+            control.as_ref(),
+            PipelineStage::Read,
+            PipelineState::WaitingScan,
+        );
         let mut entries = EntrySource::Streaming {
             scan,
             terminal_paths,
@@ -104,6 +113,7 @@ impl OrderedReader {
             lookahead.push_back(entry);
         }
         let count = lookahead.len();
+        drop(_waiting);
         Self::start(entries, lookahead, count, readers, stream_threshold)
     }
 
@@ -114,6 +124,11 @@ impl OrderedReader {
         readers: usize,
         stream_threshold: u64,
     ) -> Result<Self> {
+        let control = match &entries {
+            EntrySource::Streaming { scan, .. } => scan.control(),
+            #[cfg(any(test, feature = "bench-internals"))]
+            EntrySource::Buffered(_) => None,
+        };
         // Поток должен обработать достаточно файлов, чтобы окупить свой запуск.
         // Лимит окна остаётся отдельным: только четыре результата на worker.
         let readers = readers.min(count.div_ceil(32)).max(1);
@@ -122,7 +137,13 @@ impl OrderedReader {
             lookahead,
             stream_threshold,
             parallel: None,
+            control,
         };
+        progress::set_stage(
+            reader.control.as_ref(),
+            PipelineStage::Read,
+            PipelineState::WaitingConsumer,
+        );
         // Для нескольких больших файлов запуск пула дороже полезной работы.
         if readers == 1 {
             return Ok(reader);
@@ -143,13 +164,22 @@ impl OrderedReader {
             let jobs = job_rx.clone();
             let results = result_tx.clone();
             let budget = budget.clone();
+            let control = reader.control.clone();
             parallel.workers.push(
                 thread::Builder::new()
                     .name("dump-reader".into())
                     .spawn(move || {
                         while let Ok((index, entries)) = jobs.recv() {
+                            if super::check_control(control.as_ref()).is_err() {
+                                break;
+                            }
                             let result = std::panic::catch_unwind(|| {
-                                materialize_budgeted_batch(entries, stream_threshold, &budget)
+                                materialize_budgeted_batch_controlled(
+                                    entries,
+                                    stream_threshold,
+                                    &budget,
+                                    control.as_ref(),
+                                )
                             })
                             .map_err(|_| anyhow::anyhow!("file reader panicked"));
                             if results.send((index, result)).is_err() {
@@ -191,6 +221,11 @@ impl OrderedReader {
                 break;
             }
             let parallel = self.parallel.as_mut().unwrap();
+            let _waiting = progress::stage(
+                self.control.as_ref(),
+                PipelineStage::Read,
+                PipelineState::WaitingRead,
+            );
             parallel
                 .jobs
                 .as_ref()
@@ -203,9 +238,17 @@ impl OrderedReader {
     }
 
     fn next_entry(&mut self) -> Result<Option<ScannedEntry>> {
+        super::check_control(self.control.as_ref())?;
         match self.lookahead.pop_front() {
             Some(entry) => Ok(Some(entry)),
-            None => self.entries.next(),
+            None => {
+                let _waiting = progress::stage(
+                    self.control.as_ref(),
+                    PipelineStage::Read,
+                    PipelineState::WaitingScan,
+                );
+                self.entries.next()
+            }
         }
     }
 
@@ -226,26 +269,61 @@ impl OrderedReader {
     }
 
     pub(crate) fn next(&mut self) -> Result<Option<ReadDecision>> {
+        super::check_control(self.control.as_ref())?;
         let Some(parallel) = &mut self.parallel else {
-            return self
-                .next_entry()?
-                .map(|entry| materialize_owned_entry(entry, self.stream_threshold))
-                .transpose();
+            let Some(entry) = self.next_entry()? else {
+                progress::set_stage(
+                    self.control.as_ref(),
+                    PipelineStage::Read,
+                    PipelineState::Done,
+                );
+                return Ok(None);
+            };
+            let _reading = progress::stage(
+                self.control.as_ref(),
+                PipelineStage::Read,
+                PipelineState::Reading,
+            );
+            return materialize_owned_entry_controlled(
+                entry,
+                self.stream_threshold,
+                self.control.as_ref(),
+            )
+            .map(Some);
         };
         if parallel.consumed == parallel.submitted {
+            progress::set_stage(
+                self.control.as_ref(),
+                PipelineStage::Read,
+                PipelineState::Done,
+            );
             return Ok(None);
         }
         let slot = parallel.consumed % parallel.ready.len();
+        let waiting = progress::stage(
+            self.control.as_ref(),
+            PipelineStage::Read,
+            PipelineState::WaitingRead,
+        );
         let decision = loop {
+            super::check_control(self.control.as_ref())?;
             if let Some(result) = parallel.ready[slot].take() {
                 break result?;
             }
-            let (index, result) = parallel
-                .results
-                .as_ref()
-                .unwrap()
-                .recv()
-                .context("file readers stopped before completing work")?;
+            let results = parallel.results.as_ref().unwrap();
+            let (index, result) = if self.control.is_some() {
+                match results.recv_timeout(std::time::Duration::from_millis(50)) {
+                    Ok(result) => result,
+                    Err(crossbeam_channel::RecvTimeoutError::Timeout) => continue,
+                    Err(error) => {
+                        return Err(error).context("file readers stopped before completing work");
+                    }
+                }
+            } else {
+                results
+                    .recv()
+                    .context("file readers stopped before completing work")?
+            };
             for (offset, result) in result?.into_iter().enumerate() {
                 if let Some(result) = result {
                     let result_slot = (index + offset) % parallel.ready.len();
@@ -253,6 +331,7 @@ impl OrderedReader {
                 }
             }
         };
+        drop(waiting);
         if let ReadDecision::Accepted(entry) = &decision {
             entry.contents.delivered_from_prefetch();
         }
@@ -262,7 +341,13 @@ impl OrderedReader {
             ReadDecision::Streamed(file)
                 if file.descriptor.size_at_open <= self.stream_threshold =>
             {
-                finish_materializing(file, self.stream_threshold).map(Some)
+                let _reading = progress::stage(
+                    self.control.as_ref(),
+                    PipelineStage::Read,
+                    PipelineState::Reading,
+                );
+                finish_materializing_controlled(file, self.stream_threshold, self.control.as_ref())
+                    .map(Some)
             }
             decision => Ok(Some(decision)),
         }

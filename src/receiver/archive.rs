@@ -1,10 +1,12 @@
 use std::fs::{self, File, OpenOptions};
 use std::io::{Seek, SeekFrom, Write};
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, ensure};
 
+use crate::progress::{PipelineStage, PipelineState, SessionProgress};
 use crate::sender::compress_tar_termination_frame;
 
 use super::ReceiverPaths;
@@ -16,6 +18,7 @@ pub(crate) struct ArchiveAppender {
     current_len: u64,
     unsynced_bytes: u64,
     dirty: bool,
+    progress: Option<Arc<SessionProgress>>,
 }
 
 impl ArchiveAppender {
@@ -57,7 +60,12 @@ impl ArchiveAppender {
             // Нулевая граница допускает только что созданный файл; усечение
             // меняет metadata даже при отсутствии новых payload-байт.
             dirty: committed_len == 0 || archive_len != committed_len,
+            progress: None,
         })
+    }
+
+    pub(super) fn observe(&mut self, progress: Option<Arc<SessionProgress>>) {
+        self.progress = progress;
     }
 
     pub(crate) const fn current_len(&self) -> u64 {
@@ -65,6 +73,10 @@ impl ArchiveAppender {
     }
 
     pub(crate) fn append_chunk(&mut self, bytes: &[u8]) -> Result<Option<Duration>> {
+        let _writing = self
+            .progress
+            .as_ref()
+            .map(|progress| progress.stage(PipelineStage::Storage, PipelineState::Writing));
         // write_all может записать часть данных до ошибки: dirty ставим заранее.
         self.dirty |= !bytes.is_empty();
         #[cfg(test)]
@@ -72,8 +84,17 @@ impl ArchiveAppender {
             super::storage_faults::Point::ArchiveWrite,
             &mut self.file,
             bytes,
-        )?;
-        self.file.write_all(bytes)?;
+        )
+        .inspect_err(|_| {
+            if let Some(progress) = &self.progress {
+                progress.set_stage(PipelineStage::Storage, PipelineState::Failed);
+            }
+        })?;
+        self.file.write_all(bytes).inspect_err(|_| {
+            if let Some(progress) = &self.progress {
+                progress.set_stage(PipelineStage::Storage, PipelineState::Failed);
+            }
+        })?;
         self.current_len = self.current_len.saturating_add(bytes.len() as u64);
         self.unsynced_bytes = self.unsynced_bytes.saturating_add(bytes.len() as u64);
         // Равномерно выталкиваем большой поток, пока sender ещё сжимает данные.
@@ -90,20 +111,41 @@ impl ArchiveAppender {
         if !self.dirty {
             return Ok(false);
         }
+        let _syncing = self
+            .progress
+            .as_ref()
+            .map(|progress| progress.stage(PipelineStage::Storage, PipelineState::Syncing));
         #[cfg(test)]
-        super::storage_faults::check(super::storage_faults::Point::ArchiveSync)?;
-        self.file.sync_all().with_context(|| {
-            format!(
-                "failed to sync v4 archive part {}",
-                self.part_path.display()
-            )
-        })?;
+        super::storage_faults::check(super::storage_faults::Point::ArchiveSync).inspect_err(
+            |_| {
+                if let Some(progress) = &self.progress {
+                    progress.set_stage(PipelineStage::Storage, PipelineState::Failed);
+                }
+            },
+        )?;
+        self.file
+            .sync_all()
+            .inspect_err(|_| {
+                if let Some(progress) = &self.progress {
+                    progress.set_stage(PipelineStage::Storage, PipelineState::Failed);
+                }
+            })
+            .with_context(|| {
+                format!(
+                    "failed to sync v4 archive part {}",
+                    self.part_path.display()
+                )
+            })?;
         self.unsynced_bytes = 0;
         self.dirty = false;
         Ok(true)
     }
 
     pub(crate) fn truncate_to(&mut self, len: u64) -> Result<()> {
+        let _writing = self
+            .progress
+            .as_ref()
+            .map(|progress| progress.stage(PipelineStage::Storage, PipelineState::Writing));
         self.dirty = true;
         self.file.set_len(len).with_context(|| {
             format!(
@@ -151,7 +193,36 @@ impl ArchiveAppender {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::progress::ProgressHub;
     use crate::tests::TestDir;
+
+    #[test]
+    fn storage_fault_remains_failed_after_stage_guard_unwinds() {
+        use super::super::storage_faults::{Point, arm};
+
+        for point in [Point::ArchiveWrite, Point::ArchiveSync] {
+            let directory = TestDir::new();
+            let paths = ReceiverPaths::new(directory.path().to_owned(), "failed");
+            let progress = ProgressHub::new().session("receiver".into(), "failed", "peer");
+            let mut archive = ArchiveAppender::open(&paths, 0).unwrap();
+            archive.observe(Some(progress.clone()));
+            let fault = arm(point, 0, 0);
+            let failed = match point {
+                Point::ArchiveWrite => archive.append_chunk(b"payload").is_err(),
+                Point::ArchiveSync => archive.sync().is_err(),
+                _ => unreachable!(),
+            };
+            assert!(failed);
+            fault.assert_consumed();
+            let snapshot = progress.snapshot();
+            let storage = snapshot
+                .pipelines
+                .iter()
+                .find(|pipeline| pipeline.stage == PipelineStage::Storage)
+                .unwrap();
+            assert_eq!(storage.state, PipelineState::Failed);
+        }
+    }
 
     #[test]
     fn sync_skips_only_clean_archive_and_preserves_truncation_durability() {
