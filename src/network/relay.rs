@@ -40,12 +40,12 @@ pub(crate) struct RelayStatus {
 }
 
 impl RelayStatus {
-    pub(crate) fn print(self) {
+    pub(crate) fn print(&self) {
         eprintln!("Relay listening on {}", self.listen);
-        if let Some(token) = self.token {
+        if let Some(token) = &self.token {
             eprintln!("Access token: {token}");
         }
-        if let Some(clients) = self.clients {
+        if let Some(clients) = &self.clients {
             eprintln!("Client address: {}", clients.endpoint);
             if clients.needs_address {
                 eprintln!("{MANUAL_ADDRESS}");

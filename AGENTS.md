@@ -53,9 +53,9 @@ These documents are part of the contributor contract. Preserve their requirement
   before starting v4. The access relay is trusted to supply the correct key.
   In this mode, bind to `0.0.0.0` to discover the public IPv4 address for the
   client commands. Show the address, access token and client commands in the
-  relay terminal UI. Let `P` switch to plain terminal output with one complete
-  command per line while the relay runs. Keep the lookup bounded with a manual
-  address fallback.
+  relay terminal UI. Let `P` toggle between the relay screen and plain terminal
+  output with one complete command per line while the relay runs. Keep the
+  lookup bounded with a manual address fallback.
 - Interactive direct connections exchange hostnames and transfer offers on a
   persistent control connection. After acceptance, use the same listening
   address and port for fresh v4 transfer channels.

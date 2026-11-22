@@ -70,10 +70,10 @@ Roles describe data flow. Sender and receiver select exactly one transport with
 Use a reachable relay when both peers can make outbound connections but have no
 reachable listener. Start Relay in the wizard and share a client command
 from the relay screen. Press `P` to switch to plain text and copy a complete
-command while the relay is running. The relay generates its TLS key pair in
-memory and a random 12-character access token. Clients learn the key on the
-first TLS connection and send the token after the handshake. Up to 15 clients
-can join the lobby.
+command. Press `P` again to return to the relay screen without restarting it.
+The relay generates its TLS key pair in memory and a random 12-character access
+token. Clients learn the key on the first TLS connection and send the token
+after the handshake. Up to 15 clients can join the lobby.
 Connected clients choose a recipient for each transfer. The sender verifies the
 receiver's key supplied by the relay and the peers use their own TLS connections
 through the relay. The relay forwards encrypted transfer bytes. When listening on

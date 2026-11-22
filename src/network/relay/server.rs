@@ -64,7 +64,7 @@ struct Join {
 }
 
 pub(crate) fn serve(args: RelayArgs, control: &RunControl) -> Result<()> {
-    serve_with_status(args, control, RelayStatus::print)
+    serve_with_status(args, control, |status| status.print())
 }
 
 pub(crate) fn serve_with_status(

@@ -7,9 +7,10 @@ Choose Relay, Listen, or Connect with the arrow keys and confirm with Enter.
 Other fields are dimmed until you confirm. Relay starts the server with
 separate listen address and port fields, prefilled with `0.0.0.0` and `9876`.
 It generates a TLS key pair and opens the relay screen with its status, address,
-token, and client commands. Press `P` to switch the running relay to plain text
-for copying. Esc or Ctrl+C stops the relay on its status screen. In plain text
-mode, use Ctrl+C. `--no-gui` and non-interactive sessions start in plain text.
+token, and client commands. Press `P` to switch to plain text for copying and
+press `P` again to return to the relay screen. Esc or Ctrl+C stops the relay on
+its status screen. In plain text mode, use Ctrl+C. `--no-gui` and non-interactive
+sessions run in plain text.
 Use Connect → Via relay when peers can reach the relay but cannot accept
 incoming connections from each other. Enter the relay host, port, and
 access token. Select Temporary relay to learn its TLS key on connection, or
@@ -268,6 +269,7 @@ save the latest GitHub release binary in the current directory and runs it with
 `--join-relay` and `--access-token`. The Linux command sets the executable bit.
 Press `P` on the relay screen to print each complete command on its own line
 in the regular terminal, where it can be copied even if it wraps on screen.
+Press `P` again to return. Both views use the same relay instance and token.
 These commands require a release that accepts receiver keys from the relay.
 Share the commands only with intended participants because they contain the token.
 

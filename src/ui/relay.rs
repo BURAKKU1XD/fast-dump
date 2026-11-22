@@ -2,7 +2,9 @@ use std::sync::mpsc;
 use std::thread;
 
 use anyhow::{Context, Result};
-use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+#[cfg(not(windows))]
+use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Layout};
 use ratatui::text::{Line, Span};
@@ -16,7 +18,7 @@ use super::widgets::panel;
 use super::{DRAW_INTERVAL, RuntimeWorker, TerminalGuard, Theme};
 
 pub(super) fn run(args: RelayArgs, control: RunControl) -> Result<()> {
-    let mut terminal = match TerminalGuard::enter() {
+    let initial_terminal = match TerminalGuard::enter() {
         Ok(terminal) => terminal,
         Err(error) => {
             control.disable_ui();
@@ -39,53 +41,129 @@ pub(super) fn run(args: RelayArgs, control: RunControl) -> Result<()> {
         control: control.clone(),
         panicked: false,
     };
+    let mut terminal = initial_terminal;
     let theme = Theme::detect();
     let mut status = None;
     let mut redraw = true;
-    let screen = (|| -> Result<Option<RelayStatus>> {
-        while !worker.finished() && !control.is_cancelled() {
-            if let Ok(ready) = ready_rx.try_recv() {
-                status = Some(ready);
-                redraw = true;
-            }
-            if redraw {
-                terminal
-                    .terminal
-                    .draw(|frame| render(frame, theme, status.as_ref()))
-                    .context("could not draw relay screen")?;
-                redraw = false;
-            }
-            if event::poll(DRAW_INTERVAL).context("relay terminal input failed")? {
-                match event::read().context("could not read relay terminal input")? {
-                    Event::Resize(_, _) => redraw = true,
-                    Event::Key(key) if key.kind != KeyEventKind::Release => {
-                        let interrupt = key.code == KeyCode::Char('c')
-                            && key.modifiers.contains(KeyModifiers::CONTROL);
-                        if interrupt || key.code == KeyCode::Esc {
-                            control.cancel();
-                        } else if matches!(key.code, KeyCode::Char('p' | 'P'))
-                            && !key
-                                .modifiers
-                                .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT)
-                            && status.as_ref().is_some_and(|ready| ready.clients.is_some())
-                        {
-                            return Ok(status.take());
+    while !worker.finished() && !control.is_cancelled() {
+        if terminal.was_restored_after_panic() {
+            drop(terminal);
+            control.disable_ui();
+            return worker.join();
+        }
+        if let Ok(ready) = ready_rx.try_recv() {
+            status = Some(ready);
+            redraw = true;
+        }
+        if redraw {
+            terminal
+                .terminal
+                .draw(|frame| render(frame, theme, status.as_ref()))
+                .context("could not draw relay screen")?;
+            redraw = false;
+        }
+        match next_event()? {
+            Some(Event::Resize(_, _)) => redraw = true,
+            Some(Event::Key(key)) => match relay_key(key, true) {
+                Some(RelayKey::Stop) => control.cancel(),
+                Some(RelayKey::Toggle) => {
+                    let Some(ready) = status.as_ref().filter(|ready| ready.clients.is_some())
+                    else {
+                        continue;
+                    };
+                    drop(terminal);
+                    control.disable_ui();
+                    // Печатаем в основном экране до включения raw mode, чтобы терминал
+                    // сам переносил длинные команды и обрабатывал переводы строк.
+                    ready.print();
+                    eprintln!("\nP returns to the relay screen. Ctrl+C stops the relay.");
+                    let restored = wait_for_screen(&worker, &control).and_then(|reopen| {
+                        if !reopen || worker.finished() || control.is_cancelled() {
+                            return Ok(None);
                         }
-                    }
-                    _ => {}
+                        control.enable_ui();
+                        TerminalGuard::enter().map(Some)
+                    });
+                    terminal = match restored {
+                        Ok(Some(terminal)) => terminal,
+                        Ok(None) => return worker.join(),
+                        Err(error) => {
+                            control.disable_ui();
+                            eprintln!(
+                                "Relay screen unavailable: {error:#}\nCtrl+C stops the relay."
+                            );
+                            return worker.join();
+                        }
+                    };
+                    redraw = true;
                 }
+                None => {}
+            },
+            _ => {}
+        }
+    }
+    drop(terminal);
+    worker.join()
+}
+
+enum RelayKey {
+    Stop,
+    Toggle,
+}
+
+fn relay_key(key: KeyEvent, screen: bool) -> Option<RelayKey> {
+    if key.kind == KeyEventKind::Release {
+        return None;
+    }
+    match key.code {
+        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => Some(RelayKey::Stop),
+        KeyCode::Esc if screen => Some(RelayKey::Stop),
+        KeyCode::Char('p' | 'P')
+            if key.kind == KeyEventKind::Press
+                && !key
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+        {
+            Some(RelayKey::Toggle)
+        }
+        _ => None,
+    }
+}
+
+fn next_event() -> Result<Option<Event>> {
+    if event::poll(DRAW_INTERVAL).context("relay terminal input failed")? {
+        return event::read()
+            .map(Some)
+            .context("could not read relay terminal input");
+    }
+    Ok(None)
+}
+
+fn wait_for_screen(worker: &RuntimeWorker, control: &RunControl) -> Result<bool> {
+    // Windows читает события напрямую из очереди консоли. Оставляем Ctrl+C
+    // системному обработчику, а на Unix отключаем построчный ввод для клавиши P.
+    #[cfg(not(windows))]
+    let _raw_input = {
+        struct RawInputGuard;
+        impl Drop for RawInputGuard {
+            fn drop(&mut self) {
+                let _ = disable_raw_mode();
             }
         }
-        Ok(None)
-    })();
-    drop(terminal);
-    if let Some(status) = screen? {
-        // Обычный терминал сам переносит длинные строки, сохраняя команду для копирования.
-        control.disable_ui();
-        status.print();
-        eprintln!("\nCtrl+C stops the relay.");
+        enable_raw_mode().context("could not enable relay terminal input")?;
+        RawInputGuard
+    };
+
+    while !worker.finished() && !control.is_cancelled() {
+        if let Some(Event::Key(key)) = next_event()? {
+            match relay_key(key, false) {
+                Some(RelayKey::Stop) => control.cancel(),
+                Some(RelayKey::Toggle) => return Ok(true),
+                None => {}
+            }
+        }
     }
-    worker.join()
+    Ok(false)
 }
 
 fn render(frame: &mut Frame<'_>, theme: Theme, status: Option<&RelayStatus>) {
@@ -162,6 +240,34 @@ mod tests {
     use super::*;
     use crate::network::relay::ClientCommands;
     use crate::ui::theme::ColorMode;
+
+    #[test]
+    fn relay_shortcuts_work_in_both_views() {
+        for screen in [true, false] {
+            for (code, modifiers) in [
+                (KeyCode::Char('p'), KeyModifiers::NONE),
+                (KeyCode::Char('P'), KeyModifiers::SHIFT),
+            ] {
+                assert!(matches!(
+                    relay_key(KeyEvent::new(code, modifiers), screen),
+                    Some(RelayKey::Toggle)
+                ));
+            }
+            for kind in [KeyEventKind::Repeat, KeyEventKind::Release] {
+                let key = KeyEvent::new_with_kind(KeyCode::Char('p'), KeyModifiers::NONE, kind);
+                assert!(relay_key(key, screen).is_none());
+            }
+            for modifiers in [KeyModifiers::CONTROL, KeyModifiers::ALT] {
+                assert!(relay_key(KeyEvent::new(KeyCode::Char('p'), modifiers), screen).is_none());
+            }
+            let interrupt = KeyEvent::new(KeyCode::Char('c'), KeyModifiers::CONTROL);
+            assert!(matches!(relay_key(interrupt, screen), Some(RelayKey::Stop)));
+        }
+
+        let escape = KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE);
+        assert!(matches!(relay_key(escape, true), Some(RelayKey::Stop)));
+        assert!(relay_key(escape, false).is_none());
+    }
 
     #[test]
     fn relay_screen_shows_the_connection_and_both_commands() {

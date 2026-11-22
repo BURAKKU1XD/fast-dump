@@ -116,6 +116,12 @@ impl RunControl {
         self.check()
     }
 
+    pub(crate) fn enable_ui(&self) {
+        if let Some(hub) = &self.0.progress {
+            hub.ui_enabled.store(true, Ordering::Release);
+        }
+    }
+
     pub(crate) fn disable_ui(&self) {
         if let Some(hub) = &self.0.progress {
             hub.ui_enabled.store(false, Ordering::Release);
