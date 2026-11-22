@@ -20,7 +20,7 @@ pub(crate) use support::{ArchiveEntrySummary, TestDir, read_archive_entries, sen
 use support::{
     maybe_create_symlink, rename_canonical_receiver_state_to_legacy,
     send_bundles_then_disconnect_without_reading_acks, send_first_bundle_then_disconnect,
-    spawn_v4_receiver_once, symlink_supported,
+    spawn_v4_receiver_once,
 };
 
 #[test]
@@ -31,7 +31,7 @@ fn offline_roundtrip_builds_valid_tar_zst_in_deterministic_order() {
     fs::write(source_dir.path().join("alpha.txt"), b"alpha").unwrap();
     fs::write(source_dir.path().join("nested").join("beta.txt"), b"beta").unwrap();
     fs::write(source_dir.path().join("nested").join("gamma.txt"), b"gamma").unwrap();
-    maybe_create_symlink(
+    let has_symlink = maybe_create_symlink(
         Path::new("..").join("alpha.txt"),
         &source_dir.path().join("nested").join("link-to-alpha.txt"),
     );
@@ -57,7 +57,7 @@ fn offline_roundtrip_builds_valid_tar_zst_in_deterministic_order() {
         "nested/beta.txt".to_owned(),
         "nested/gamma.txt".to_owned(),
     ];
-    if symlink_supported() {
+    if has_symlink {
         expected_paths.push("nested/link-to-alpha.txt".to_owned());
     }
     assert_eq!(paths, expected_paths);
@@ -76,7 +76,7 @@ fn offline_roundtrip_builds_valid_tar_zst_in_deterministic_order() {
         ]
     );
 
-    if symlink_supported() {
+    if has_symlink {
         let symlink = entries
             .iter()
             .find(|entry| entry.path == "nested/link-to-alpha.txt")

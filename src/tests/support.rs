@@ -264,23 +264,14 @@ pub(super) fn send_bundles_then_disconnect_without_reading_acks(
 }
 
 #[cfg(unix)]
-pub(super) fn maybe_create_symlink(target: impl AsRef<Path>, link: &Path) {
+pub(super) fn maybe_create_symlink(target: impl AsRef<Path>, link: &Path) -> bool {
     std::os::unix::fs::symlink(target.as_ref(), link).unwrap();
-}
-
-#[cfg(windows)]
-pub(super) fn maybe_create_symlink(target: impl AsRef<Path>, link: &Path) {
-    let _ = std::os::windows::fs::symlink_file(target.as_ref(), link);
-}
-
-#[cfg(unix)]
-pub(super) fn symlink_supported() -> bool {
     true
 }
 
 #[cfg(windows)]
-pub(super) fn symlink_supported() -> bool {
-    false
+pub(super) fn maybe_create_symlink(target: impl AsRef<Path>, link: &Path) -> bool {
+    std::os::windows::fs::symlink_file(target.as_ref(), link).is_ok()
 }
 
 pub(super) fn rename_canonical_receiver_state_to_legacy(data_dir: &Path, dump_id: &str) {

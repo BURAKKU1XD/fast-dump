@@ -493,7 +493,7 @@ unsafe fn header_checksum_avx2(bytes: &[u8; 512]) -> u64 {
 
     let zero = _mm256_setzero_si256();
     let mut sums = zero;
-    for chunk in bytes.chunks_exact(32) {
+    for chunk in bytes.as_chunks::<32>().0 {
         // loadu допускает любое выравнивание; каждый chunk содержит ровно 32 байта.
         let block = unsafe { _mm256_loadu_si256(chunk.as_ptr().cast()) };
         sums = _mm256_add_epi64(sums, _mm256_sad_epu8(block, zero));
@@ -511,7 +511,7 @@ unsafe fn header_checksum_sse2(bytes: &[u8; 512]) -> u64 {
 
     let zero = _mm_setzero_si128();
     let mut sums = zero;
-    for chunk in bytes.chunks_exact(16) {
+    for chunk in bytes.as_chunks::<16>().0 {
         // loadu читает только текущие 16 байт и не требует выравнивания Header.
         let block = unsafe { _mm_loadu_si128(chunk.as_ptr().cast()) };
         sums = _mm_add_epi64(sums, _mm_sad_epu8(block, zero));

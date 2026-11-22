@@ -94,7 +94,7 @@ fn read_key(path: &Path) -> Result<Key> {
     };
     ensure!(hex.len() == KEY_LEN * 2, error());
     let mut result = [0; KEY_LEN];
-    for (dst, pair) in result.iter_mut().zip(hex.chunks_exact(2)) {
+    for (dst, pair) in result.iter_mut().zip(hex.as_chunks::<2>().0) {
         let high = (pair[0] as char).to_digit(16).ok_or_else(error)?;
         let low = (pair[1] as char).to_digit(16).ok_or_else(error)?;
         *dst = ((high << 4) | low) as u8;

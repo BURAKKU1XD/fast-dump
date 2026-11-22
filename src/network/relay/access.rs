@@ -78,7 +78,10 @@ pub(crate) fn credentials(text: &str) -> Result<Credentials<'_>> {
             "Invalid relay invitation fingerprint"
         );
         let mut fingerprint = [0; 32];
-        for (byte, pair) in fingerprint.iter_mut().zip(pin.as_bytes().chunks_exact(2)) {
+        for (byte, pair) in fingerprint
+            .iter_mut()
+            .zip(pin.as_bytes().as_chunks::<2>().0)
+        {
             *byte = u8::from_str_radix(std::str::from_utf8(pair)?, 16)?;
         }
         (Some(fingerprint), token)
@@ -360,8 +363,9 @@ impl LobbyState {
 
     fn broadcast(&self) {
         let mut frame = Frame::new(PEERS, self.members.len() as PeerId);
-        for (slot, id) in frame.body.chunks_exact_mut(4).zip(self.members.keys()) {
-            slot.copy_from_slice(&id.to_be_bytes());
+        let slots = frame.body.as_chunks_mut::<4>().0;
+        for (slot, id) in slots.iter_mut().zip(self.members.keys()) {
+            *slot = id.to_be_bytes();
         }
         for member in self.members.values() {
             let _ = member.send(frame);

@@ -211,10 +211,12 @@ async fn run_link(
                 peers.send_modify(|list| {
                     *list = frame
                         .body
-                        .chunks_exact(4)
+                        .as_chunks::<4>()
+                        .0
+                        .iter()
                         .take(count)
                         .map(|bytes| {
-                            let id = u32::from_be_bytes(bytes.try_into().unwrap());
+                            let id = u32::from_be_bytes(*bytes);
                             list.iter()
                                 .find(|peer| peer.id == id)
                                 .cloned()
