@@ -229,7 +229,7 @@ class ReleasePrivacyTests(unittest.TestCase):
     def test_relative_cargo_home_uses_powershell_working_directory(self):
         with tempfile.TemporaryDirectory(prefix="release working directory ") as directory:
             result = self.run_ps(
-                f"$fixture = {ps_string(directory)}\n"
+                f"$fixture = {ps_string(Path(directory).resolve())}\n"
                 f"$repository = {ps_string(ROOT)}\n"
                 r"""
                 function cargo {

@@ -134,7 +134,7 @@ class ResultAdaptersTests(unittest.TestCase):
 class ResultImportTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
-        self.root = Path(self.temporary.name)
+        self.root = Path(self.temporary.name).resolve()
         self.source = self.root / 'old'
         self.output = self.root / 'results'
         self.source.mkdir()

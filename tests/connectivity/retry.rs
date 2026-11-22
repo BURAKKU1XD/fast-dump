@@ -44,7 +44,11 @@ impl Process {
 
     fn wait_for_stderr(&mut self, fragment: &str) {
         let deadline = Instant::now() + Duration::from_secs(15);
-        while !self.stderr().contains(fragment) {
+        while !self
+            .stderr()
+            .rsplit_once('\n')
+            .is_some_and(|(complete_lines, _)| complete_lines.contains(fragment))
+        {
             assert!(
                 self.child.try_wait().unwrap().is_none() && Instant::now() < deadline,
                 "process did not emit {fragment:?}: {}",

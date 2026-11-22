@@ -145,7 +145,7 @@ class FileComparisonTests(unittest.TestCase):
             self.parse(measurement(stage='noop', elapsed_ns=-1, work_ns=-1, drop_ns=0))
 
     def run_driver(self, directory, mismatch=False, stage='read', identical=False):
-        directory = Path(directory)
+        directory = Path(directory).resolve()
         before, after = directory / 'before', directory / 'after'
         before.write_bytes(b'saved baseline')
         after.write_bytes(b'saved baseline' if identical else b'saved candidate')
@@ -247,7 +247,7 @@ class FileComparisonTests(unittest.TestCase):
 
     def test_explicit_pipeline_calibration_preserves_source_and_reader_overrides(self):
         with tempfile.TemporaryDirectory() as directory:
-            directory = Path(directory)
+            directory = Path(directory).resolve()
             binary = directory / 'binary'
             binary.write_bytes(b'saved binary')
             source = directory / 'source'
