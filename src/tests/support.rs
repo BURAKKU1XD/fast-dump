@@ -1,5 +1,5 @@
 use crate::network::protocol::wire::{
-    self, BundleCommit, BundlePlan, Message, SkipAck, SkipEntries,
+    self, BundleAck, BundleCommit, BundlePlan, Message, SkipAck, SkipEntries,
 };
 use crate::network::protocol::{BundleCommitDescriptor, BundlePlanDescriptor};
 use crate::network::transport::{BoundListener, connect_once};
@@ -11,7 +11,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tar::EntryType;
 
 static TEST_DIR_COUNTER: AtomicU64 = AtomicU64::new(1);
@@ -224,7 +224,8 @@ pub(super) fn send_bundles_then_disconnect_without_reading_acks(
     let prepared = sender::prepare_dump(source_dir, &resume_state, options).unwrap();
     assert!(prepared.bundles.len() > bundles_to_send);
 
-    for bundle in prepared.bundles.iter().take(bundles_to_send) {
+    let sent_bundles = &prepared.bundles[..bundles_to_send];
+    for bundle in sent_bundles {
         wire::write_message(
             &mut sender_session.control_stream,
             &Message::BundlePlan(BundlePlan {
@@ -259,8 +260,48 @@ pub(super) fn send_bundles_then_disconnect_without_reading_acks(
         .unwrap();
     }
     sender_session.control_stream.flush().unwrap();
-    thread::sleep(Duration::from_millis(75));
-    drop(sender_session);
+
+    // Проверяем подтверждения через MSG_PEEK, чтобы они остались непрочитанными при разрыве.
+    let mut ack_frame = Vec::new();
+    wire::write_message(
+        &mut ack_frame,
+        &Message::BundleAck(BundleAck {
+            bundle_no: 0,
+            last_work_ordinal: 0,
+            archive_len: 0,
+        }),
+    )
+    .unwrap();
+    let ack_frame_len = ack_frame.len();
+    let mut ack_bytes = vec![0; ack_frame_len * sent_bundles.len()];
+    let final_bundle_no = sent_bundles.last().unwrap().descriptor.bundle_no;
+    let timeout = Duration::from_secs(15);
+    let deadline = Instant::now() + timeout;
+    let control = &sender_session.control_stream;
+    control.set_read_timeout(Some(timeout)).unwrap();
+    loop {
+        let available = control.peek(&mut ack_bytes).expect("peek at bundle ACKs");
+        // Подтверждение commit-группы покрывает сразу несколько пакетов.
+        let mut complete_frames = &ack_bytes[..available / ack_frame_len * ack_frame_len];
+        while !complete_frames.is_empty() {
+            let reply = wire::read_message(&mut complete_frames).unwrap();
+            let Message::BundleAck(ack) = reply else {
+                panic!("expected bundle ACK, got {reply:?}");
+            };
+            if ack.bundle_no == final_bundle_no {
+                return;
+            }
+        }
+        assert!(
+            available > 0,
+            "control channel closed before the final bundle ACK"
+        );
+        assert!(
+            Instant::now() < deadline,
+            "timed out waiting for the final bundle ACK"
+        );
+        thread::sleep(Duration::from_millis(10));
+    }
 }
 
 #[cfg(unix)]
