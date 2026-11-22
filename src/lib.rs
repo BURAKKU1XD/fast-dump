@@ -1,4 +1,5 @@
 pub mod app;
+mod checksum;
 pub mod cli;
 mod cpu;
 mod launch;

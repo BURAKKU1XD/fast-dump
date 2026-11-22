@@ -66,6 +66,20 @@ Detailed counter meanings and paired-run methodology follow below.
 
 ## Harnesses and measurement method
 
+For local checksum-only diagnostics, run the ignored release-mode comparisons:
+
+```text
+cargo test --locked --release --lib checksum_throughput_comparison -- --ignored --nocapture --test-threads=1
+```
+
+These compare the previous `xxhash-rust` streaming checksum against runtime
+dispatch over `4 MiB` chunks, and the previous tar-header sum against the
+runtime-selected SIMD sum. Eight alternating AB/BA rounds retain all timings;
+each round hashes `1 GiB` per XXH3 implementation or sums one million headers
+per tar implementation. Inputs are cache-warm after the first round. Use a
+baseline CPU target without global AVX2 flags to compare against SSE2 on x86-64.
+These diagnostics measure only checksum cost, not end-to-end dump speed.
+
 Run benches:
 
 ```powershell

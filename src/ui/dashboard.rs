@@ -36,6 +36,7 @@ pub(super) struct Dashboard {
     rate: f64,
     source_rate: f64,
     cancelled: bool,
+    receiver_listening: bool,
     finished: bool,
     error: Option<String>,
     retry: Option<RetrySnapshot>,
@@ -64,6 +65,7 @@ impl Dashboard {
             rate: 0.0,
             source_rate: 0.0,
             cancelled: false,
+            receiver_listening: false,
             finished: false,
             error: None,
             retry: None,
@@ -118,6 +120,7 @@ impl Dashboard {
             self.details_offset = 0;
         }
         self.retry = hub.retry();
+        self.receiver_listening = hub.receiver_listening();
         self.logs = hub.logs();
         if self.logs.len() > LOG_LINES {
             self.logs.drain(..self.logs.len() - LOG_LINES);
@@ -670,5 +673,36 @@ mod tests {
         state.sessions[0].phase = Phase::Completed;
         terminal.draw(|frame| state.render(frame)).unwrap();
         assert!(!screen(&terminal).contains("Issues:"));
+    }
+
+    #[test]
+    fn main_screen_shows_archive_and_listener_waiting_at_minimum_size() {
+        let hub = ProgressHub::new();
+        let mut state = Dashboard::new(Theme::new(ColorMode::Monochrome));
+        let receiver = hub.session("receiver".into(), "dump", "peer");
+        receiver.set_archive("out/dump.tar.zst".into());
+        receiver
+            .skips
+            .store(2, std::sync::atomic::Ordering::Relaxed);
+        receiver.set_phase(Phase::Receiving);
+        hub.mark_receiver_listening();
+
+        let mut terminal = Terminal::new(TestBackend::new(60, 20)).unwrap();
+        state.refresh(&hub, false);
+        terminal.draw(|frame| state.render(frame)).unwrap();
+        assert!(!screen(&terminal).contains("Archive ready"));
+        assert!(!screen(&terminal).contains("Waiting for the next transfer"));
+
+        receiver.set_phase(Phase::Warnings);
+        state.refresh(&hub, false);
+        terminal.draw(|frame| state.render(frame)).unwrap();
+        let result = screen(&terminal);
+        assert!(result.contains("Archive ready · Skipped: 2"));
+        assert!(result.contains("out/dump.tar.zst"));
+        assert!(result.contains("Waiting for the next transfer"));
+
+        state.refresh(&hub, true);
+        terminal.draw(|frame| state.render(frame)).unwrap();
+        assert!(!screen(&terminal).contains("Waiting for the next transfer"));
     }
 }

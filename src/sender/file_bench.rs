@@ -6,7 +6,8 @@ use std::path::Path;
 use std::time::Instant;
 
 use anyhow::{Context, Result, bail, ensure};
-use xxhash_rust::xxh3::Xxh3Default;
+
+use crate::checksum::Xxh3;
 
 use super::read::{MaterializedEntry, ReadDecision};
 use super::read_ahead::OrderedReader;
@@ -253,7 +254,7 @@ fn finish_measurement(mut measurement: Measurement, work: Interval, drop: Interv
     measurement
 }
 
-fn hash_entry(hash: &mut Xxh3Default, entry: &ScannedEntry, size: u64) {
+fn hash_entry(hash: &mut Xxh3, entry: &ScannedEntry, size: u64) {
     hash.update(&entry.work_ordinal.to_le_bytes());
     hash.update(&(entry.relative_path.len() as u64).to_le_bytes());
     hash.update(entry.relative_path.as_bytes());
@@ -310,7 +311,7 @@ pub fn measure(
                 "static fixture contains skipped entries"
             );
             let (files, bytes) = fixture_counts(&report.entries, false)?;
-            let mut hash = Xxh3Default::new();
+            let mut hash = Xxh3::new();
             for entry in &report.entries {
                 // Для scanner fingerprint проверяем только результат обхода, без content I/O.
                 hash_entry(&mut hash, entry, 0);
@@ -398,7 +399,7 @@ fn verify_reads(expected: &[ScannedEntry], actual: &[MaterializedEntry]) -> Resu
         expected.len() == actual.len(),
         "reader omitted fixture entries"
     );
-    let mut hash = Xxh3Default::new();
+    let mut hash = Xxh3::new();
     let mut buffer = vec![0_u8; 256 * 1024];
     for (expected, actual) in expected.iter().zip(actual) {
         let descriptor = &actual.descriptor;

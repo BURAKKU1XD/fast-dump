@@ -9,9 +9,9 @@ use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
-use xxhash_rust::xxh3::Xxh3Default;
 
 use super::session::ReceiverSession;
+use crate::checksum::Xxh3;
 use crate::network::network_io;
 use crate::network::protocol::ResumeState;
 use crate::network::protocol::wire::{
@@ -242,7 +242,7 @@ where
                         bytes_received: 0,
                         archive_len_before_append: None,
                         archive_len_after_append: None,
-                        checksum: Xxh3Default::new(),
+                        checksum: Xxh3::new(),
                         write_duration: Duration::ZERO,
                         periodic_sync_duration: Duration::ZERO,
                         periodic_sync_count: 0,

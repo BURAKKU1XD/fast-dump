@@ -133,6 +133,22 @@ pub(super) fn send_first_bundle_then_disconnect(
     send_terminal_skips: bool,
 ) {
     let mut sender_session = connect_once(Role::Sender, addr, Some(dump_id), None).unwrap();
+    send_first_bundle(
+        &mut sender_session,
+        source_dir,
+        dump_id,
+        options,
+        send_terminal_skips,
+    );
+}
+
+pub(crate) fn send_first_bundle<T: std::io::Read + Write>(
+    sender_session: &mut crate::network::transport::Session<T>,
+    source_dir: &Path,
+    dump_id: &str,
+    options: sender::BundlePlanOptions,
+    send_terminal_skips: bool,
+) {
     let resume_state =
         wire::request_resume_state(&mut sender_session.control_stream, dump_id).unwrap();
     let prepared = sender::prepare_dump(source_dir, &resume_state, options).unwrap();
@@ -193,7 +209,6 @@ pub(super) fn send_first_bundle_then_disconnect(
         matches!(reply, Message::BundleAck(_)),
         "expected bundle ack, got {reply:?}"
     );
-    drop(sender_session);
 }
 
 pub(super) fn send_bundles_then_disconnect_without_reading_acks(

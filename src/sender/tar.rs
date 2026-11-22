@@ -463,8 +463,63 @@ fn write_octal(field: &mut [u8], mut value: u64) {
 fn set_entry_checksum(header: &mut Header) {
     // При подсчёте checksum её собственное поле считается восемью пробелами.
     header.as_old_mut().cksum.fill(b' ');
-    let checksum = header.as_bytes().iter().map(|&byte| u64::from(byte)).sum();
+    let checksum = header_checksum(header.as_bytes());
     write_octal(&mut header.as_old_mut().cksum, checksum);
+}
+
+fn header_checksum(bytes: &[u8; 512]) -> u64 {
+    #[cfg(target_arch = "x86_64")]
+    {
+        if std::arch::is_x86_feature_detected!("avx2") {
+            // Проверка учитывает поддержку AVX2 процессором и ОС.
+            return unsafe { header_checksum_avx2(bytes) };
+        }
+        // SSE2 входит в базовый набор инструкций x86-64.
+        unsafe { header_checksum_sse2(bytes) }
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    header_checksum_scalar(bytes)
+}
+
+#[cfg(any(test, not(target_arch = "x86_64")))]
+fn header_checksum_scalar(bytes: &[u8; 512]) -> u64 {
+    bytes.iter().map(|&byte| u64::from(byte)).sum()
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx2")]
+unsafe fn header_checksum_avx2(bytes: &[u8; 512]) -> u64 {
+    use std::arch::x86_64::*;
+
+    let zero = _mm256_setzero_si256();
+    let mut sums = zero;
+    for chunk in bytes.chunks_exact(32) {
+        // loadu допускает любое выравнивание; каждый chunk содержит ровно 32 байта.
+        let block = unsafe { _mm256_loadu_si256(chunk.as_ptr().cast()) };
+        sums = _mm256_add_epi64(sums, _mm256_sad_epu8(block, zero));
+    }
+    let mut lanes = [0_u64; 4];
+    // В массиве достаточно места для всех четырёх 64-битных сумм.
+    unsafe { _mm256_storeu_si256(lanes.as_mut_ptr().cast(), sums) };
+    lanes.into_iter().sum()
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "sse2")]
+unsafe fn header_checksum_sse2(bytes: &[u8; 512]) -> u64 {
+    use std::arch::x86_64::*;
+
+    let zero = _mm_setzero_si128();
+    let mut sums = zero;
+    for chunk in bytes.chunks_exact(16) {
+        // loadu читает только текущие 16 байт и не требует выравнивания Header.
+        let block = unsafe { _mm_loadu_si128(chunk.as_ptr().cast()) };
+        sums = _mm_add_epi64(sums, _mm_sad_epu8(block, zero));
+    }
+    let mut lanes = [0_u64; 2];
+    // В массиве достаточно места для обеих 64-битных сумм.
+    unsafe { _mm_storeu_si128(lanes.as_mut_ptr().cast(), sums) };
+    lanes.into_iter().sum()
 }
 
 fn append_entry_header<W: Write>(
@@ -990,6 +1045,66 @@ mod tests {
             &crate::sender::compress::compress_tar_termination_frame(3).unwrap(),
         );
         assert_archive_entries(&threaded, &entries);
+    }
+
+    #[test]
+    fn header_checksum_backends_match_for_all_byte_values_and_alignments() {
+        let mut storage = [0_u8; 512 + 31];
+        for value in 0..=255 {
+            storage.fill(value);
+            for offset in 0..32 {
+                let bytes = storage[offset..offset + 512].try_into().unwrap();
+                assert_header_checksum_backends(bytes, 512 * u64::from(value));
+            }
+        }
+        for (index, byte) in storage.iter_mut().enumerate() {
+            *byte = ((index * 131 + index / 7) % 256) as u8;
+        }
+        for offset in 0..32 {
+            let bytes = storage[offset..offset + 512].try_into().unwrap();
+            assert_header_checksum_backends(bytes, header_checksum_scalar(bytes));
+        }
+    }
+
+    fn assert_header_checksum_backends(bytes: &[u8; 512], expected: u64) {
+        assert_eq!(header_checksum_scalar(bytes), expected);
+        assert_eq!(header_checksum(bytes), expected);
+        #[cfg(target_arch = "x86_64")]
+        {
+            // SSE2 гарантирован на x86-64; AVX2 вызываем только после проверки CPU/ОС.
+            assert_eq!(unsafe { header_checksum_sse2(bytes) }, expected);
+            if std::arch::is_x86_feature_detected!("avx2") {
+                assert_eq!(unsafe { header_checksum_avx2(bytes) }, expected);
+            }
+        }
+    }
+
+    #[test]
+    #[ignore = "manual release-mode tar checksum throughput diagnostic"]
+    fn header_checksum_throughput_comparison() {
+        use std::hint::black_box;
+
+        let bytes = std::array::from_fn(|index| (index % 251) as u8);
+        let measure = |checksum: fn(&[u8; 512]) -> u64| {
+            let started = Instant::now();
+            for _ in 0..1_000_000 {
+                black_box(checksum(black_box(&bytes)));
+            }
+            started.elapsed()
+        };
+        for round in 0..8 {
+            let (before, after) = if round % 2 == 0 {
+                (measure(header_checksum_scalar), measure(header_checksum))
+            } else {
+                let after = measure(header_checksum);
+                (measure(header_checksum_scalar), after)
+            };
+            eprintln!(
+                "tar_checksum round={round} legacy_ns={} dispatched_ns={}",
+                before.as_nanos(),
+                after.as_nanos()
+            );
+        }
     }
 
     #[test]

@@ -24,12 +24,22 @@ barriers and recovery; these are not hardware power-loss simulations.
 
 The manual **Release artifacts** workflow builds the selected branch/tag only
 after CI and release stress checks pass. It produces Windows MSVC and Linux GNU
-archives with a build manifest and SHA-256 checksums; it does not publish a release.
+archives with a build manifest and SHA-256 checksums. It uploads them as
+workflow artifacts, along with standalone binaries and their `.sha256`
+files. Attach `fast-dump-x86_64-pc-windows-msvc.exe`,
+`fast-dump-x86_64-unknown-linux-gnu` and their matching `.sha256` files to
+the public release marked Latest to enable the relay's download commands.
+It builds through `scripts/build-release.ps1`, checks the resulting binary for
+local build paths, and runs its `--version` and `--help` commands. Before packaging,
+it also checks the staged binary, manifest, and lockfile for path leaks.
 The manifest records the clean source commit/tree, compiler, target, lockfile,
 and binary hash. Packages use
 `releases/<version>-<short-commit>/<Rust target triple>/` for the binary,
 `manifest.json`, and `Cargo.lock`; `.tar.gz` archives and their `.sha256` files
-sit in the version directory. Release packages are disposable build output; keep
+sit in the version directory. Package tar headers use `ustar`, UID/GID `0`, and
+neutral owner/group names (`root` on Windows, omitted on Linux). No PAX metadata
+is included, so headers do not expose the builder's account or local paths.
+Release packages are disposable build output; keep
 verification manifests and test results in the results archive when removing them.
 
 `releases/` is ignored by Git and survives `cargo clean`. The local
@@ -38,12 +48,54 @@ verification manifests and test results in the results archive when removing the
 Cargo compilation output remains under `target/release/` (or the target-specific
 `target/<Rust target triple>/release/`).
 
-For a local default-feature build, build from a clean commit and record it:
+On Windows, build both Windows MSVC and Linux musl x86-64 artifacts with:
 
 ```powershell
-cargo build --locked --release --bin fast-dump
-./scripts/write-release-manifest.ps1 -Binary target/release/fast-dump.exe -Target x86_64-pc-windows-msvc -OutputPath releases/local/windows-manifest.json
+pwsh -NoProfile -File ./scripts/build-artifacts.ps1 -RequireAll
 ```
+
+The helper uses `cargo` and `rustc` from the environment. It detects installed
+targets by checking for standard libraries in the active compiler's sysroot;
+the `rustup` command is not required. Linux also requires a musl C toolchain or
+Zig with `cargo-zigbuild`. `-RequireAll` fails if either target is unavailable.
+The shared RustRover configuration `Build Windows + Linux` runs this command.
+
+For a checked default-feature build of one target, build from a clean commit
+and record it:
+
+```powershell
+$binary = & ./scripts/build-release.ps1 -Target x86_64-pc-windows-msvc
+./scripts/write-release-manifest.ps1 -Binary $binary -Target x86_64-pc-windows-msvc -OutputPath releases/local/windows-manifest.json
+```
+
+Use `x86_64-unknown-linux-gnu` for native Linux builds, or
+`-Target x86_64-unknown-linux-musl -BuildTool zigbuild` with Zig and
+`cargo-zigbuild` available on `PATH`. The helper returns the validated absolute
+binary path on stdout and respects Cargo's configured target directory. Both
+the local dual-platform helper and release CI use it; IDE builds inherit the
+same behavior through `scripts/build-artifacts.ps1`.
+
+The shared release helpers support Rust `1.89` or newer. They remap discovered
+repository, Cargo, toolchain, user-profile, temporary, and build-directory
+prefixes to neutral paths, set release debug information to `0`, and strip
+debug information. Windows PDB references use a filename without a local path.
+The final file check rejects remaining local build paths before copying or
+packaging. The manifest writer checks its input binary before hashing and its
+JSON before writing. These settings affect build metadata; runtime behavior,
+wire protocol, and optimization settings stay the same.
+
+When both are set, explicit `CARGO_ENCODED_RUSTFLAGS` takes precedence over
+`RUSTFLAGS`. The helper preserves the selected explicit flags and appends its
+required release settings and path mappings. Its encoded flags supersede
+`build.rustflags` and target `rustflags` from Cargo configuration; pass needed
+custom flags explicitly through the environment for these builds. Environment
+changes made by the helper are restored even when a build or validation fails.
+
+Ordinary `cargo build --release` remains available for development and does not
+provide this path-removal guarantee. Only validated output from the release
+helpers should be distributed. The check covers builder paths in the supplied
+files; it is not a scanner for arbitrary secrets embedded by source code or
+external dependencies. Debug symbols, build caches, and local logs remain local.
 
 The Windows/Linux scheduled stress workflow runs three explicit ignored tests:
 the binary roundtrip with `10,116` files and per-file hashes; process-kill and

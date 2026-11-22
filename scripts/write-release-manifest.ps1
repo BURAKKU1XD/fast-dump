@@ -8,6 +8,7 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot 'release-common.ps1')
 
 function Invoke-Checked {
     param([string]$Program, [string[]]$Arguments)
@@ -28,6 +29,8 @@ try {
     if ($status) {
         throw 'Release manifest requires a clean working tree.'
     }
+    $buildContext = Get-ReleaseBuildContext -RepositoryRoot $repoRoot
+    Assert-ReleaseFilePrivacy -Path @($binaryPath, (Join-Path $repoRoot 'Cargo.lock')) -PathMap $buildContext.PathMap
     $commit = Invoke-Checked 'git' @('rev-parse', 'HEAD')
     $tree = Invoke-Checked 'git' @('rev-parse', 'HEAD^{tree}')
     $metadataJson = Invoke-Checked 'cargo' @('metadata', '--locked', '--offline', '--no-deps', '--format-version', '1')
@@ -54,9 +57,12 @@ try {
         binary_sha256 = (Get-FileHash -LiteralPath $binaryPath -Algorithm SHA256).Hash.ToLowerInvariant()
         created_utc = [DateTime]::UtcNow.ToString('o')
     }
+    $manifestJson = $manifest | ConvertTo-Json -Depth 4
+    Assert-ReleaseBytesPrivacy -Bytes ([System.Text.Encoding]::UTF8.GetBytes($manifestJson)) `
+        -Description 'release manifest' -PathMap $buildContext.PathMap
     $manifestDir = Split-Path -Parent $manifestPath
     New-Item -ItemType Directory -Force -Path $manifestDir | Out-Null
-    $manifest | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath $manifestPath -Encoding utf8
+    $manifestJson | Set-Content -LiteralPath $manifestPath -Encoding utf8
 }
 finally {
     Pop-Location

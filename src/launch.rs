@@ -2,32 +2,95 @@ use std::io::{self, IsTerminal};
 use std::process::ExitCode;
 use std::sync::Arc;
 
-use clap::{CommandFactory, FromArgMatches};
+use anyhow::{Context, Result, ensure};
+use clap::{Arg, ArgMatches, CommandFactory, FromArgMatches};
 
-use crate::cli::Cli;
+use crate::cli::{Cli, Command};
+use crate::network::relay::{
+    access::{INVITATION_ARG, JOIN_RELAY_ARG, LobbySettings, credentials},
+    validate_endpoint,
+};
 use crate::progress::ProgressHub;
 use crate::retry::RetryPolicy;
 use crate::runtime::RunControl;
+use crate::ui::ConnectionSettings;
 
 fn command() -> clap::Command {
     Cli::command()
         .subcommand_required(false)
         .arg_required_else_help(false)
+        .arg(
+            Arg::new(JOIN_RELAY_ARG)
+                .long(JOIN_RELAY_ARG)
+                .value_name("HOST:PORT")
+                .requires(INVITATION_ARG)
+                .conflicts_with("no_gui")
+                .help("Connect directly to a relay lobby in the terminal"),
+        )
+        .arg(
+            Arg::new(INVITATION_ARG)
+                .long(INVITATION_ARG)
+                .value_name("STRING")
+                .requires(JOIN_RELAY_ARG)
+                .help("Invitation from the relay operator"),
+        )
 }
 
 fn use_dashboard(no_gui: bool, stdin: bool, stdout: bool, stderr: bool, dumb: bool) -> bool {
     !no_gui && stdin && stdout && stderr && !dumb
 }
 
+fn relay_join_settings(matches: &ArgMatches) -> Result<Option<ConnectionSettings>> {
+    let Some(endpoint) = matches.get_one::<String>(JOIN_RELAY_ARG) else {
+        return Ok(None);
+    };
+    ensure!(
+        matches.subcommand_name().is_none(),
+        "--join-relay opens the lobby and cannot be combined with a subcommand"
+    );
+    validate_endpoint(endpoint)?;
+    let invitation = matches
+        .get_one::<String>(INVITATION_ARG)
+        .context("missing relay invitation")?;
+    credentials(invitation)?;
+    Ok(Some(ConnectionSettings::Relay(LobbySettings {
+        endpoint: endpoint.clone(),
+        token: invitation.clone(),
+        ca_file: None,
+    })))
+}
+
+fn run_lobby(
+    settings: ConnectionSettings,
+    debug: bool,
+    policy: RetryPolicy,
+    control: &RunControl,
+    hub: Arc<ProgressHub>,
+) -> ExitCode {
+    crate::telemetry::init_logging_with_progress(debug, Some(hub.clone()));
+    let result = crate::ui::run_lobby(settings, policy, control, hub);
+    if control.is_cancelled() {
+        return ExitCode::from(130);
+    }
+    match result {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("Connection: {error:#}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
 pub(crate) fn entry() -> ExitCode {
     let matches = command().get_matches();
-    let interactive = use_dashboard(
-        matches.get_flag("no_gui"),
-        io::stdin().is_terminal(),
-        io::stdout().is_terminal(),
-        io::stderr().is_terminal(),
-        std::env::var_os("TERM").is_some_and(|term| term == "dumb"),
-    );
+    let interactive = matches.subcommand_name() != Some("relay")
+        && use_dashboard(
+            matches.get_flag("no_gui"),
+            io::stdin().is_terminal(),
+            io::stdout().is_terminal(),
+            io::stderr().is_terminal(),
+            std::env::var_os("TERM").is_some_and(|term| term == "dumb"),
+        );
     let retain_result = matches.subcommand().is_none();
     let policy = RetryPolicy::from_options(
         matches.get_one::<u32>("retries").copied(),
@@ -43,17 +106,35 @@ pub(crate) fn entry() -> ExitCode {
         eprintln!("Error installing the interrupt handler: {error}");
         return ExitCode::FAILURE;
     }
+    match relay_join_settings(&matches) {
+        Ok(Some(settings)) => {
+            let Some(hub) = hub else {
+                eprintln!("Joining a relay lobby requires an interactive terminal.");
+                return ExitCode::from(2);
+            };
+            return run_lobby(settings, matches.get_flag("debug"), policy, &control, hub);
+        }
+        Ok(None) => {}
+        Err(error) => {
+            eprintln!("Relay: {error:#}");
+            return ExitCode::from(2);
+        }
+    }
     let mut cli = if retain_result {
         if !interactive {
             command()
                 .error(
                     clap::error::ErrorKind::MissingSubcommand,
-                    "a sender or receiver command is required outside the interactive wizard",
+                    "a sender, receiver, or relay command is required outside the interactive wizard",
                 )
                 .exit();
         }
         match crate::ui::wizard(matches.get_flag("debug"), policy, &control) {
-            Ok(Some(cli)) => cli,
+            Ok(Some(crate::ui::Launch::Cli(cli))) => *cli,
+            Ok(Some(crate::ui::Launch::Lobby(settings))) => {
+                let hub = hub.expect("wizard relay lobby needs UI progress");
+                return run_lobby(settings, matches.get_flag("debug"), policy, &control, hub);
+            }
             Ok(None) => {
                 return if control.is_cancelled() {
                     ExitCode::from(130)
@@ -80,6 +161,13 @@ pub(crate) fn entry() -> ExitCode {
         eprintln!("Error: {error:#}");
         return ExitCode::FAILURE;
     }
+    let relay = matches!(&cli.command, Command::Relay(_));
+    let hub = if relay {
+        control.disable_ui();
+        None
+    } else {
+        hub
+    };
     crate::telemetry::init_logging_with_progress(cli.debug, hub.clone());
     let result = match hub {
         Some(hub) => crate::ui::run(cli, control.clone(), hub, retain_result),
@@ -89,9 +177,13 @@ pub(crate) fn entry() -> ExitCode {
     match result {
         Ok(()) => ExitCode::SUCCESS,
         Err(_) if control.is_cancelled() => {
-            eprintln!(
-                "Stopped. Durable progress is preserved; repeat the same command to resume an unfinished dump."
-            );
+            if relay {
+                eprintln!("Relay stopped.");
+            } else {
+                eprintln!(
+                    "Stopped. Durable progress is preserved; repeat the same command to resume an unfinished dump."
+                );
+            }
             ExitCode::from(130)
         }
         Err(error) => {
@@ -161,6 +253,64 @@ mod tests {
             ])
             .unwrap();
         assert!(Cli::from_arg_matches(&matches).unwrap().no_gui);
+    }
+
+    #[test]
+    fn join_arguments_open_relay_lobby_without_a_transfer_role() {
+        let invitation = format!("FD1:{}:23456789ABCD", "a1".repeat(32));
+        let matches = command()
+            .try_get_matches_from([
+                "fast-dump",
+                "--join-relay",
+                "relay.example:9876",
+                "--invitation",
+                &invitation,
+            ])
+            .unwrap();
+        let Some(ConnectionSettings::Relay(settings)) = relay_join_settings(&matches).unwrap()
+        else {
+            panic!("expected settings for a relay lobby");
+        };
+        assert_eq!(settings.endpoint, "relay.example:9876");
+        assert!(settings.token == invitation);
+        assert!(settings.ca_file.is_none());
+    }
+
+    #[test]
+    fn join_arguments_require_both_values_and_an_interactive_lobby() {
+        let invitation = "23456789ABCD";
+        assert!(
+            command()
+                .try_get_matches_from(["fast-dump", "--join-relay", "relay.example:9876"])
+                .is_err()
+        );
+        assert!(
+            command()
+                .try_get_matches_from(["fast-dump", "--invitation", invitation])
+                .is_err()
+        );
+        let join = [
+            "fast-dump",
+            "--join-relay",
+            "relay.example:9876",
+            "--invitation",
+            invitation,
+        ];
+        assert!(
+            command()
+                .try_get_matches_from(join.into_iter().chain(["--no-gui"]))
+                .is_err()
+        );
+        let with_command = command().try_get_matches_from(join.into_iter().chain([
+            "sender",
+            "--source",
+            ".",
+            "--listen",
+            "127.0.0.1:7000",
+        ]));
+        if let Ok(matches) = with_command {
+            assert!(relay_join_settings(&matches).is_err());
+        }
     }
 
     #[test]

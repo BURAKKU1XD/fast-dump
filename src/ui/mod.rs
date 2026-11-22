@@ -20,7 +20,7 @@ use dashboard::Dashboard;
 use terminal::TerminalGuard;
 use theme::Theme;
 
-pub(crate) use wizard::wizard;
+pub(crate) use wizard::{ConnectionSettings, Launch, run_lobby, wizard};
 
 const DRAW_INTERVAL: Duration = Duration::from_millis(200);
 
@@ -68,28 +68,54 @@ pub(crate) fn run(
     hub: Arc<ProgressHub>,
     retain_result: bool,
 ) -> Result<()> {
+    run_with(cli, control, hub, retain_result, crate::app::run_controlled)
+}
+
+fn run_with(
+    cli: Cli,
+    control: RunControl,
+    hub: Arc<ProgressHub>,
+    retain_result: bool,
+    run: impl FnOnce(Cli, &RunControl) -> Result<()> + Send + 'static,
+) -> Result<()> {
     let mut terminal = match TerminalGuard::enter() {
         Ok(terminal) => terminal,
         Err(error) => {
             control.disable_ui();
             eprintln!("Terminal UI unavailable; continuing in text mode: {error:#}");
-            return crate::app::run_controlled(cli, &control);
+            return run(cli, &control);
         }
     };
-    let transport = match cli.command.transport_mode()? {
-        crate::network::transport::TransportMode::Connect(address) => {
-            format!("connect to {address}")
+    let args = match &cli.command {
+        Command::Sender(args) => &args.transport,
+        Command::Receiver(args) => &args.transport,
+        Command::Relay(_) => return run(cli, &control),
+    };
+    let transport = if let Some(relay) = &args.relay {
+        if let Some(room) = &args.room {
+            format!("relay {relay} · room {room}")
+        } else {
+            format!("relay {relay}")
         }
-        crate::network::transport::TransportMode::Listen(address) => {
-            format!("listen on {address}")
+    } else {
+        match args.mode()? {
+            crate::network::transport::TransportMode::Connect(address) => {
+                format!("connect to {address}")
+            }
+            crate::network::transport::TransportMode::Listen(address) => {
+                format!("listen on {address}")
+            }
         }
     };
-    let context = format!("{} · {transport}", cli.command.role());
+    let context = format!(
+        "{} · {transport}",
+        cli.command.role().context("missing transfer role")?
+    );
     let configuration = configuration(&cli)?;
     let worker_control = control.clone();
     let handle = thread::Builder::new()
         .name("dump-runtime".into())
-        .spawn(move || crate::app::run_controlled(cli, &worker_control))
+        .spawn(move || run(cli, &worker_control))
         .context("could not start transfer worker")?;
     let mut worker = TransferWorker {
         handle: Some(handle),
@@ -224,6 +250,7 @@ fn configuration(cli: &Cli) -> Result<Vec<(String, String)>> {
                 args.validated_max_sessions()?.to_string(),
             ),
         ],
+        Command::Relay(_) => Vec::new(),
     };
     let persistent =
         matches!(&cli.command, Command::Receiver(args) if args.transport.listen.is_some());

@@ -45,7 +45,17 @@ impl Dashboard {
         if sessions_height > 0 {
             self.render_sessions(frame, rows[1]);
         }
-        self.render_cards(frame, rows[2], compact);
+        if let Some(lines) = self.completion_lines() {
+            frame.render_widget(
+                Paragraph::new(lines)
+                    .block(panel(" Result ", self.theme, false))
+                    .style(self.theme.panel())
+                    .wrap(Wrap { trim: false }),
+                rows[2],
+            );
+        } else {
+            self.render_cards(frame, rows[2], compact);
+        }
         if wide {
             let middle =
                 Layout::horizontal([Constraint::Percentage(55), Constraint::Percentage(45)])
@@ -112,6 +122,10 @@ impl Dashboard {
             Line::from("Resize terminal to at least 60 × 20."),
             Line::from(if self.cancelled {
                 "Cancelling safely…"
+            } else if self.waiting_for_transfer() {
+                "Waiting for a transfer"
+            } else if self.finished {
+                "Transfer ended."
             } else {
                 "Transfer continues."
             }),
@@ -119,7 +133,9 @@ impl Dashboard {
         if let Some(retry) = &self.retry {
             lines.push(Line::from(retry_status(retry, Instant::now())));
         }
-        if let Some(session) = self.sessions.get(self.selected) {
+        if let Some(result) = self.completion_lines() {
+            lines.extend(result);
+        } else if let Some(session) = self.sessions.get(self.selected) {
             lines.push(Line::from(format!(
                 "{} · {}",
                 safe_text(&session.dump_id),
@@ -188,17 +204,28 @@ impl Dashboard {
                 }),
             ),
         ]);
-        let subtitle = self.sessions.get(self.selected).map_or_else(
-            || format!(" {}", safe_text(&self.context)),
-            |session| {
+        let subtitle = if self.waiting_for_transfer() {
+            if self.sessions.is_empty() {
+                format!(" Waiting for a transfer · {}", safe_text(&self.context))
+            } else {
                 format!(
-                    " {} · {} · {}",
-                    safe_text(&session.role),
-                    safe_text(&session.dump_id),
-                    safe_text(&session.peer)
+                    " Waiting for the next transfer · {}",
+                    safe_text(&self.context)
                 )
-            },
-        );
+            }
+        } else {
+            self.sessions.get(self.selected).map_or_else(
+                || format!(" {}", safe_text(&self.context)),
+                |session| {
+                    format!(
+                        " {} · {} · {}",
+                        safe_text(&session.role),
+                        safe_text(&session.dump_id),
+                        safe_text(&session.peer)
+                    )
+                },
+            )
+        };
         let mut lines = vec![title];
         if self.retry.is_none() || area.height >= 3 {
             lines.push(Line::from(subtitle));
@@ -214,6 +241,38 @@ impl Dashboard {
             ));
         }
         frame.render_widget(Paragraph::new(lines).style(self.theme.base()), area);
+    }
+
+    fn waiting_for_transfer(&self) -> bool {
+        self.receiver_listening
+            && !self.finished
+            && !self.cancelled
+            && self
+                .sessions
+                .iter()
+                .all(|session| session.phase.is_finished())
+    }
+
+    fn completion_lines(&self) -> Option<Vec<Line<'static>>> {
+        let session = self.sessions.get(self.selected)?;
+        if !matches!(session.phase, Phase::Completed | Phase::Warnings) {
+            return None;
+        }
+        let status = if session.archive.is_some() {
+            "Archive ready"
+        } else {
+            "Transfer complete"
+        };
+        let mut lines = vec![Line::styled(
+            format!("{status} · Skipped: {}", session.skips),
+            self.theme
+                .panel()
+                .fg(phase_color(&session.phase, self.theme)),
+        )];
+        if let Some(archive) = &session.archive {
+            lines.push(Line::from(safe_text(&archive.to_string_lossy())));
+        }
+        Some(lines)
     }
 
     fn render_sessions(&self, frame: &mut Frame<'_>, area: Rect) {

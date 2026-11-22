@@ -16,7 +16,7 @@ mod parallel;
 mod streamed_abort;
 mod support;
 
-pub(crate) use support::{ArchiveEntrySummary, TestDir, read_archive_entries};
+pub(crate) use support::{ArchiveEntrySummary, TestDir, read_archive_entries, send_first_bundle};
 use support::{
     maybe_create_symlink, rename_canonical_receiver_state_to_legacy,
     send_bundles_then_disconnect_without_reading_acks, send_first_bundle_then_disconnect,

@@ -583,6 +583,7 @@ pub(crate) struct ProgressHub {
     log_rx: Receiver<LogEntry>,
     history: Mutex<VecDeque<LogEntry>>,
     retry: Mutex<Option<RetrySnapshot>>,
+    receiver_listening: AtomicBool,
     pub(crate) ui_enabled: AtomicBool,
 }
 
@@ -596,6 +597,7 @@ impl ProgressHub {
             log_rx,
             history: Mutex::new(VecDeque::new()),
             retry: Mutex::new(None),
+            receiver_listening: AtomicBool::new(false),
             ui_enabled: AtomicBool::new(true),
         }
     }
@@ -645,6 +647,14 @@ impl ProgressHub {
 
     pub(crate) fn retry(&self) -> Option<RetrySnapshot> {
         self.retry.lock().unwrap_or_else(|e| e.into_inner()).clone()
+    }
+
+    pub(crate) fn mark_receiver_listening(&self) {
+        self.receiver_listening.store(true, Ordering::Relaxed);
+    }
+
+    pub(crate) fn receiver_listening(&self) -> bool {
+        self.receiver_listening.load(Ordering::Relaxed)
     }
 
     pub(crate) fn log(&self, level: Level, message: &str) {

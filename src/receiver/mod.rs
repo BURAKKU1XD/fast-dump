@@ -11,7 +11,6 @@ mod wal;
 mod storage_faults;
 
 pub use crate::profile::ReceiverProfile;
-pub(crate) use listener::serve_listener;
 pub(crate) use listener::serve_listener_controlled;
 pub(crate) use network::receive_dump_profile_controlled;
 pub use network::{ReceiveReport, receive_dump, receive_dump_profile};

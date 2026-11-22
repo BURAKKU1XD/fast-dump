@@ -58,18 +58,8 @@ impl Drop for SessionSlotGuard {
     }
 }
 
-pub(crate) fn serve_listener(
-    listener: BoundListener,
-    data_dir: impl Into<PathBuf>,
-    max_sessions: usize,
-    token: Option<String>,
-) -> Result<()> {
-    let data_dir = data_dir.into();
-    let _ = serve_listener_until(listener, data_dir, max_sessions, token, None)?;
-    Ok(())
-}
-
-pub(crate) fn serve_listener_until(
+#[cfg(test)]
+fn serve_listener_until(
     listener: BoundListener,
     data_dir: PathBuf,
     max_sessions: usize,
@@ -147,6 +137,9 @@ fn serve_listener_inner(
     }
 
     listener.set_nonblocking(true)?;
+    if let Some(progress) = run.progress() {
+        progress.mark_receiver_listening();
+    }
     let active_sessions = Arc::new(AtomicUsize::new(0));
     let (terminated_tx, terminated_rx) = unbounded::<()>();
     let mut terminated_sessions = 0_usize;

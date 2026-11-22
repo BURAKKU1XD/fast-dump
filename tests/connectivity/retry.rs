@@ -293,3 +293,80 @@ fn explicit_auth_rejection_does_not_retry_and_listener_accepts_the_next_sender()
     assert_archive_hashes(&output.path().join(format!("{dump_id}.tar.zst")), &expected);
     assert!(receiver.child.try_wait().unwrap().is_none());
 }
+
+#[test]
+fn relay_command_pairs_two_outbound_clients_and_writes_valid_archive() {
+    let source = TestDir::new();
+    let output = TestDir::new();
+    let logs = TestDir::new();
+    let fixture = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/relay");
+    for name in ["ca.pem", "server.pem", "server-key.pem"] {
+        fs::copy(fixture.join(name), logs.path().join(name)).unwrap();
+    }
+    fs::write(logs.path().join("sender.key"), "11".repeat(32)).unwrap();
+    fs::write(logs.path().join("receiver.key"), "22".repeat(32)).unwrap();
+    fs::write(
+        logs.path().join("relay.toml"),
+        r#"certificate = "server.pem"
+private_key = "server-key.pem"
+
+[rooms.backup]
+sender_key_file = "sender.key"
+receiver_key_file = "receiver.key"
+"#,
+    )
+    .unwrap();
+    let mut expected = BTreeMap::new();
+    insert_expected_random_file(
+        &mut expected,
+        source.path(),
+        "payload.bin",
+        2 * 1024 * 1024,
+        71,
+    );
+
+    let mut command = Command::new(binary_path());
+    command
+        .args(["relay", "--listen", "127.0.0.1:0", "--config"])
+        .arg(logs.path().join("relay.toml"));
+    let mut relay = Process::spawn(command, logs.path(), "relay");
+    let prefix = "Relay listening on ";
+    relay.wait_for_stderr(prefix);
+    let listening = relay.stderr();
+    let address = listening
+        .lines()
+        .find_map(|line| line.strip_prefix(prefix))
+        .unwrap();
+    let client = |role: &str| {
+        let mut cli = Command::new(binary_path());
+        cli.args([
+            "--no-gui",
+            role,
+            "--relay",
+            address,
+            "--room",
+            "backup",
+            "--relay-token-file",
+        ])
+        .arg(logs.path().join(format!("{role}.key")))
+        .arg("--relay-ca-file")
+        .arg(logs.path().join("ca.pem"));
+        cli
+    };
+
+    let mut send = client("sender");
+    send.args(["--dump-id", "relay-cli", "--threads", "1", "--source"])
+        .arg(source.path());
+    let mut sender = Process::spawn(send, logs.path(), "sender");
+    sender.wait_for_stderr("Waiting for the other peer through the relay");
+    let mut receive = client("receiver");
+    receive.arg("--data-dir").arg(output.path());
+    let mut receiver = Process::spawn(receive, logs.path(), "receiver");
+
+    assert!(sender.wait().success(), "{}", sender.stderr());
+    assert!(receiver.wait().success(), "{}", receiver.stderr());
+    assert!(sender.stdout().contains("status=clean;"));
+    assert!(receiver.stdout().contains("terminal_skips=0;"));
+    assert_archive_hashes(&output.path().join("relay-cli.tar.zst"), &expected);
+    assert!(relay.child.try_wait().unwrap().is_none());
+}

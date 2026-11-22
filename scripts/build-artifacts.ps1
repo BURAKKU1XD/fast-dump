@@ -10,18 +10,41 @@ $artifactDir = Join-Path $repoRoot 'releases/local'
 New-Item -ItemType Directory -Force -Path $artifactDir | Out-Null
 
 function Get-InstalledTargets {
+    $sysroot = & rustc --print sysroot
+    if ($LASTEXITCODE -ne 0) { throw 'rustc --print sysroot failed' }
+    if ([string]::IsNullOrWhiteSpace($sysroot)) {
+        throw 'rustc returned an empty sysroot'
+    }
+    $sysroot = $sysroot.Trim()
+    if (-not (Test-Path -LiteralPath $sysroot -PathType Container)) {
+        throw "Rust sysroot directory does not exist: $sysroot"
+    }
+
     $targets = @{}
-    foreach ($target in (& rustup target list --installed)) {
-        $trimmed = $target.Trim()
-        if ($trimmed) {
-            $targets[$trimmed] = $true
+    $rustlibDir = Join-Path $sysroot 'lib/rustlib'
+    if (-not (Test-Path -LiteralPath $rustlibDir -PathType Container)) {
+        return $targets
+    }
+
+    # Проверяем библиотеки активного компилятора: пустой каталог ещё не означает установленный target.
+    foreach ($target in (Get-ChildItem -LiteralPath $rustlibDir -Directory)) {
+        $libDir = Join-Path $target.FullName 'lib'
+        if (-not (Test-Path -LiteralPath $libDir -PathType Container)) {
+            continue
+        }
+        $standardLibrary = Get-ChildItem -LiteralPath $libDir -Filter 'libstd-*.rlib' -File |
+            Select-Object -First 1
+        if ($null -ne $standardLibrary) {
+            $targets[$target.Name] = $true
         }
     }
     return $targets
 }
 
 function Get-HostTriple {
-    $hostLine = & rustc -vV | Select-String '^host:\s+'
+    $version = & rustc -vV
+    if ($LASTEXITCODE -ne 0) { throw 'rustc -vV failed' }
+    $hostLine = $version | Select-String '^host:\s+'
     if (-not $hostLine) {
         throw 'failed to determine rust host triple'
     }
@@ -86,7 +109,7 @@ function Get-TargetAvailability {
             if (-not $InstalledTargets.ContainsKey($Triple)) {
                 return @{
                     available = $false
-                    reason = "rustup target $Triple is not installed"
+                    reason = "standard library for $Triple is not installed in the active Rust toolchain"
                     method = ''
                 }
             }
@@ -118,7 +141,7 @@ function Get-TargetAvailability {
     if (-not $InstalledTargets.ContainsKey($Triple)) {
         return @{
             available = $false
-            reason = "rustup target $Triple is not installed"
+            reason = "standard library for $Triple is not installed in the active Rust toolchain"
             method = ''
         }
     }
@@ -134,9 +157,6 @@ $originalPath = $env:Path
 Push-Location $repoRoot
 
 try {
-    $metadata = & cargo metadata --locked --offline --no-deps --format-version 1
-    if ($LASTEXITCODE -ne 0) { throw "cargo metadata failed" }
-    $cargoTargetDir = ($metadata | ConvertFrom-Json).target_directory
     $installedTargets = Get-InstalledTargets
     $hostTriple = Get-HostTriple
     $hasMuslToolchain = Test-MuslToolchainAvailable
@@ -147,13 +167,11 @@ try {
             platform = 'windows-x86_64'
             triple = 'x86_64-pc-windows-msvc'
             artifact = 'fast-dump-windows-x86_64.exe'
-            builtFile = 'fast-dump.exe'
         },
         @{
             platform = 'linux-x86_64-musl'
             triple = 'x86_64-unknown-linux-musl'
             artifact = 'fast-dump-linux-x86_64-musl'
-            builtFile = 'fast-dump'
         }
     )
 
@@ -180,22 +198,14 @@ try {
         if ($availability.method -eq 'zigbuild') {
             $zigDir = Split-Path -Parent $zigExe
             $env:Path = $zigDir + [IO.Path]::PathSeparator + $originalPath
-            & cargo zigbuild --locked --release --target $spec.triple --bin fast-dump
         }
         else {
-            & cargo build --locked --release --target $spec.triple --bin fast-dump
+            $env:Path = $originalPath
         }
-        if ($LASTEXITCODE -ne 0) {
-            throw "build failed for $($spec.triple)"
-        }
-
-        $builtPath = Join-Path $cargoTargetDir "$($spec.triple)/release/$($spec.builtFile)"
-        if (-not (Test-Path $builtPath)) {
-            throw "expected build artifact is missing: $builtPath"
-        }
-
+        $builtPath = & (Join-Path $PSScriptRoot 'build-release.ps1') `
+            -Target $spec.triple -BuildTool $availability.method
         $artifactPath = Join-Path $artifactDir $spec.artifact
-        Copy-Item $builtPath $artifactPath -Force
+        Copy-Item -LiteralPath $builtPath -Destination $artifactPath -Force
 
         [pscustomobject]@{
             platform = $spec.platform

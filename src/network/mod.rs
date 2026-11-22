@@ -1,4 +1,7 @@
+pub(crate) mod direct;
+pub(crate) mod lobby;
 pub mod protocol;
+pub(crate) mod relay;
 pub mod transport;
 
 use std::fmt;

@@ -47,6 +47,42 @@ interpreted as an empty skip list.
 The detailed wire reference for the active runtime lives in
 [`src/network/protocol.md`](../src/network/protocol.md).
 
+## Relay transport
+
+Both peers connect outbound using TLS 1.3. The relay pairs their control channels
+by configured room and opposite authenticated roles, then accepts their data
+channels for the same random attempt ID. Only after all four sockets are ready
+do the peers start the v4 handshake. The relay forwards opaque bytes in both
+directions and keeps no archive or durable transfer state.
+
+There are at most 64 configured rooms, one active attempt per room, four queued
+registrations per room, and 64 concurrent registration tasks. Forwarding uses
+bounded buffers and applies socket backpressure. Transport errors end the whole
+attempt. After a clean EOF, the relay gives the remaining directions up to two
+seconds to drain so data-channel closure can race with the final control ACK.
+Retried clients establish a new attempt and ask the receiver for the durable v4
+boundary. The same receiver storage and ACK ordering apply to all transports.
+
+The access-token relay adds a persistent lobby over TLS with at most 15
+members. Its peers join before picking a transfer role. An accepted offer
+reserves one transfer per peer and creates separate random attachment
+credentials for their two v4 channels. Unattached channel reservations expire;
+finished transfers release both peers for further offers. Each persistent
+connection uses bounded frame queues, and a client that stops reading and
+fills its queue is disconnected. The relay still forwards v4 bytes unchanged.
+
+By default the access-token relay generates an in-memory Ed25519 TLS identity.
+Clients use the invitation to pin its public key before sending the access
+token. Configured certificate chains remain available for CLI deployments.
+
+In the interactive P2P flow, peers keep a separate control connection while
+idle and between transfers. The listener and connecting peer can each send an
+offer. When the recipient accepts, the two v4 channels use the original P2P
+listener address and a fresh transfer credential. The archive data travels
+directly on those sockets.
+
+### Resume state size
+
 Protocol `v4` sends the terminal-skip catalog inside one `ResumeState` packet.
 If that encoded state exceeds `4 MiB`, resume fails while preserving local
 state. Large skip catalogs currently require a future protocol extension for
@@ -113,6 +149,8 @@ paging; the successful-file count does not impose this particular limit.
   freed after its last slice is released, which may be in the next bundle.
   Numeric tar header fields use allocation-free encoding equivalent
   to the tar library, with its GNU extended-size fallback.
+  Header byte sums use runtime-selected AVX2 or SSE2 on x86-64 and a portable
+  scalar expression elsewhere, preserving the tar library's exact checksum.
   Bundle frames contain no tar end markers; the receiver appends those only once
   after the final durable commit.
 - Materialized bundles and streamed files share one sender compression context
@@ -145,6 +183,11 @@ paging; the successful-file count does not impose this particular limit.
   storage), allocated and grown only as needed. Only the current packet's payload
   is written and hashed; retained buffer tails are never part of the archive.
   Buffers also return to the pool when late or orphaned data is discarded.
+- Sender and receiver hash compressed payload with standard unseeded XXH3-64.
+  The allocation-free streaming state uses `twox-hash` with a shared static
+  default secret. CPU/OS detection selects AVX2, SSE2, NEON, or scalar code at
+  runtime; global AVX2 compiler flags are not required. Checksum values, chunk
+  boundaries, v4 interoperability, and resume semantics are unchanged.
 - Archive writes are periodically synced after `64 MiB`. A commit still makes
   archive data durable before syncing its WAL records and acknowledging progress.
   If a successful sync already covered every write and no truncation followed,

@@ -7,9 +7,10 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 use crossbeam_channel::{Receiver, Sender, bounded};
-use xxhash_rust::xxh3::Xxh3Default;
 use zstd::zstd_safe::zstd_sys::ZSTD_EndDirective;
 use zstd::zstd_safe::{CCtx, InBuffer};
+
+use crate::checksum::Xxh3;
 
 use crate::network::protocol::{BundleEntryDescriptor, BundlePlanDescriptor, wire};
 use crate::progress::{self, PipelineStage, PipelineState};
@@ -330,7 +331,7 @@ fn produce_attempt(
         buffers,
         pending,
         compressed_bytes: 0,
-        checksum: Xxh3Default::new(),
+        checksum: Xxh3::new(),
         queue_wait: Duration::ZERO,
         cancelled,
     };
@@ -438,7 +439,7 @@ struct ChunkProducer<'a> {
     buffers: Receiver<RecycledBuffer>,
     pending: RecycledBuffer,
     compressed_bytes: u64,
-    checksum: Xxh3Default,
+    checksum: Xxh3,
     queue_wait: Duration,
     cancelled: AttemptCancellation<'a>,
 }
@@ -809,7 +810,7 @@ mod tests {
             buffers,
             pending,
             compressed_bytes: 0,
-            checksum: Xxh3Default::new(),
+            checksum: Xxh3::new(),
             queue_wait: Duration::ZERO,
             cancelled: AttemptCancellation {
                 local: &NEVER_CANCELLED,

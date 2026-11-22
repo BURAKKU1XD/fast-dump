@@ -39,12 +39,24 @@ jobs:
       - name: Test release profile
         run: cargo test --locked --release --all-features --quiet
       - name: Build release binary
-        run: cargo build --locked --release --target ${{ matrix.target }} --bin fast-dump
+        id: build
+        env:
+          RELEASE_TARGET: ${{ matrix.target }}
+        run: |
+          $binaryPath = & ./scripts/build-release.ps1 -Target $env:RELEASE_TARGET
+          & $binaryPath --version
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $binaryPath --help
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          "binary_path=$binaryPath" | Out-File -FilePath $env:GITHUB_OUTPUT -Encoding utf8 -Append
       - name: Package binary and build manifest
         env:
           RELEASE_TARGET: ${{ matrix.target }}
           RELEASE_BINARY: ${{ matrix.binary }}
+          RELEASE_BINARY_PATH: ${{ steps.build.outputs.binary_path }}
         run: |
+          . ./scripts/release-common.ps1
+          $buildContext = Get-ReleaseBuildContext -RepositoryRoot $PWD.Path
           $metadataJson = cargo metadata --locked --offline --no-deps --format-version 1
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $package = ($metadataJson | ConvertFrom-Json).packages | Where-Object name -eq 'fast-dump'
@@ -53,12 +65,28 @@ jobs:
           $releaseDir = "releases/$($package.version)-$revision"
           $packageDir = "$releaseDir/$env:RELEASE_TARGET"
           New-Item -ItemType Directory -Force -Path $packageDir | Out-Null
-          $binaryPath = "target/$env:RELEASE_TARGET/release/$env:RELEASE_BINARY"
+          $binaryPath = $env:RELEASE_BINARY_PATH
           ./scripts/write-release-manifest.ps1 -Binary $binaryPath -Target $env:RELEASE_TARGET -OutputPath "$packageDir/manifest.json"
           Copy-Item -LiteralPath $binaryPath -Destination $packageDir
           Copy-Item -LiteralPath Cargo.lock -Destination $packageDir
+          Assert-ReleaseFilePrivacy -Path @(
+            "$packageDir/$env:RELEASE_BINARY",
+            "$packageDir/manifest.json",
+            "$packageDir/Cargo.lock"
+          ) -PathMap $buildContext.PathMap
+          $assetName = "fast-dump-$env:RELEASE_TARGET" + [IO.Path]::GetExtension($env:RELEASE_BINARY)
+          $assetPath = Join-Path $releaseDir $assetName
+          Copy-Item -LiteralPath "$packageDir/$env:RELEASE_BINARY" -Destination $assetPath
+          $assetHash = (Get-FileHash -LiteralPath $assetPath -Algorithm SHA256).Hash.ToLowerInvariant()
+          "$assetHash  $assetName" | Set-Content -LiteralPath "$assetPath.sha256" -Encoding ascii
           $archivePath = "$releaseDir/fast-dump-$revision-$env:RELEASE_TARGET.tar.gz"
-          tar -czf $archivePath -C $packageDir $env:RELEASE_BINARY manifest.json Cargo.lock
+          # ustar исключает PAX-метаданные, а владелец не зависит от учётной записи сборщика.
+          $ownerOptions = if ($IsWindows) {
+            @('--uid', '0', '--gid', '0', '--uname', 'root', '--gname', 'root')
+          } else {
+            @('--owner=0', '--group=0', '--numeric-owner')
+          }
+          tar --format=ustar @ownerOptions -czf $archivePath -C $packageDir $env:RELEASE_BINARY manifest.json Cargo.lock
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $archiveHash = (Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash.ToLowerInvariant()
           "$archiveHash  $([System.IO.Path]::GetFileName($archivePath))" | Set-Content -LiteralPath "$archivePath.sha256" -Encoding ascii
@@ -67,5 +95,6 @@ jobs:
           name: fast-dump-${{ matrix.target }}-${{ github.sha }}
           path: |
             releases/*/*.tar.gz
-            releases/*/*.sha256
+            releases/*/*.tar.gz.sha256
+            releases/*/fast-dump-${{ matrix.target }}*
           if-no-files-found: error

@@ -80,7 +80,7 @@ impl PendingState {
             bytes_received: 0,
             archive_len_before_append: None,
             archive_len_after_append: None,
-            checksum: Xxh3Default::new(),
+            checksum: Xxh3::new(),
             write_duration: Duration::ZERO,
             periodic_sync_duration: Duration::ZERO,
             periodic_sync_count: 0,

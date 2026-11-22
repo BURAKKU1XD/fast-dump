@@ -4,7 +4,8 @@ use std::sync::atomic::Ordering;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result, bail};
-use xxhash_rust::xxh3::Xxh3Default;
+
+use crate::checksum::Xxh3;
 
 use super::readers::PendingDataChunk;
 use super::{AttemptKey, protocol_error};
@@ -24,7 +25,7 @@ pub(super) struct PendingBundle {
     pub(super) bytes_received: u64,
     pub(super) archive_len_before_append: Option<u64>,
     pub(super) archive_len_after_append: Option<u64>,
-    pub(super) checksum: Xxh3Default,
+    pub(super) checksum: Xxh3,
     pub(super) write_duration: Duration,
     pub(super) periodic_sync_duration: Duration,
     pub(super) periodic_sync_count: u64,

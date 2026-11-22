@@ -1,9 +1,10 @@
 mod input;
+mod lobby;
 mod render;
 
 use input::Input;
 
-use std::net::SocketAddr;
+use std::net::{Ipv6Addr, SocketAddr};
 use std::path::Path;
 use std::time::Duration;
 
@@ -11,36 +12,69 @@ use anyhow::{Context, Result, bail};
 use clap::Parser;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
-use crate::cli::{Cli, Command};
+use crate::cli::Cli;
+use crate::network::direct;
+use crate::network::relay::access::{LobbySettings, credentials};
+use crate::network::transport::TransportMode;
 use crate::retry::RetryPolicy;
 use crate::runtime::RunControl;
 
 use super::terminal::TerminalGuard;
 use super::theme::Theme;
 
+pub(crate) use lobby::{Settings as ConnectionSettings, run as run_lobby};
+
+pub(crate) enum Launch {
+    Cli(Box<Cli>),
+    Lobby(lobby::Settings),
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Step {
-    Role,
     Transport,
+    Connection,
     Address,
-    Path,
-    DumpId,
-    Compression,
+    RelayPort,
+    AccessToken,
     Token,
+    RelayCa,
     Review,
+}
+
+const DEFAULT_RELAY_PORT: &str = "9876";
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Transport {
+    Relay,
+    Listen,
+    Connect,
+    ViaRelay,
+}
+
+impl Transport {
+    const ALL: [Self; 3] = [Self::Relay, Self::Listen, Self::Connect];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Relay => "Relay",
+            Self::Listen => "Listen",
+            Self::Connect => "Connect",
+            Self::ViaRelay => "Via relay",
+        }
+    }
 }
 
 struct Wizard {
     debug: bool,
     retry_policy: RetryPolicy,
-    sender: bool,
-    connect: bool,
+    transport_choice: Transport,
+    transport: Option<Transport>,
     step: Step,
-    address: Input,
-    inactive_address: Input,
-    path: Input,
-    dump_id: Input,
-    level: Input,
+    addresses: [Input; 4],
+    relay_port: Input,
+    relay_client_port: Input,
+    access_token: Input,
+    relay_ca: Input,
     token: Input,
     error: Option<String>,
     help: bool,
@@ -52,14 +86,19 @@ impl Wizard {
         Self {
             debug,
             retry_policy,
-            sender: true,
-            connect: true,
-            step: Step::Role,
-            address: Input::new("127.0.0.1:7000"),
-            inactive_address: Input::new("0.0.0.0:7000"),
-            path: Input::default(),
-            dump_id: Input::default(),
-            level: Input::new(&crate::cli::DEFAULT_LEVEL.to_string()),
+            transport_choice: Transport::Connect,
+            transport: None,
+            step: Step::Transport,
+            addresses: [
+                Input::new("0.0.0.0"),
+                Input::new("0.0.0.0:7000"),
+                Input::new("127.0.0.1:7000"),
+                Input::default(),
+            ],
+            relay_port: Input::new(DEFAULT_RELAY_PORT),
+            relay_client_port: Input::new(DEFAULT_RELAY_PORT),
+            access_token: Input::default(),
+            relay_ca: Input::default(),
             token: Input::default(),
             error: None,
             help: false,
@@ -67,19 +106,26 @@ impl Wizard {
         }
     }
 
-    fn set_connect(&mut self, connect: bool) {
-        if self.connect != connect {
-            // Адрес назначения и адрес привязки хранятся отдельно, чтобы смена
-            // режима не переносила wildcard в Connect и не теряла введённый IP.
-            std::mem::swap(&mut self.address, &mut self.inactive_address);
-            self.connect = connect;
-        }
-    }
-
     fn steps(&self) -> Vec<Step> {
-        let mut steps = vec![Step::Role, Step::Transport, Step::Address, Step::Path];
-        if self.sender {
-            steps.extend([Step::Compression, Step::DumpId]);
+        let mut steps = vec![Step::Transport];
+        let Some(transport) = self.transport else {
+            return steps;
+        };
+        if transport == Transport::Relay {
+            steps.extend([Step::Address, Step::RelayPort, Step::Review]);
+            return steps;
+        }
+        if matches!(transport, Transport::Connect | Transport::ViaRelay) {
+            steps.push(Step::Connection);
+        }
+        steps.push(Step::Address);
+        if transport == Transport::ViaRelay {
+            steps.extend([Step::RelayPort, Step::AccessToken]);
+            if credentials(&self.access_token.value).is_ok_and(|value| !value.has_fingerprint()) {
+                steps.push(Step::RelayCa);
+            }
+            steps.push(Step::Review);
+            return steps;
         }
         steps.extend([Step::Token, Step::Review]);
         steps
@@ -88,6 +134,9 @@ impl Wizard {
     fn next(&mut self) {
         match self.validate_step() {
             Ok(()) => {
+                if self.step == Step::Transport {
+                    self.transport = Some(self.transport_choice);
+                }
                 let steps = self.steps();
                 let index = steps
                     .iter()
@@ -112,10 +161,13 @@ impl Wizard {
 
     fn current_input(&mut self) -> Option<&mut Input> {
         match self.step {
-            Step::Address => Some(&mut self.address),
-            Step::Path => Some(&mut self.path),
-            Step::DumpId => Some(&mut self.dump_id),
-            Step::Compression => Some(&mut self.level),
+            Step::Address => Some(&mut self.addresses[self.transport? as usize]),
+            Step::RelayPort if self.transport == Some(Transport::Relay) => {
+                Some(&mut self.relay_port)
+            }
+            Step::RelayPort => Some(&mut self.relay_client_port),
+            Step::AccessToken => Some(&mut self.access_token),
+            Step::RelayCa => Some(&mut self.relay_ca),
             Step::Token => Some(&mut self.token),
             _ => None,
         }
@@ -124,38 +176,98 @@ impl Wizard {
     fn validate_step(&self) -> Result<()> {
         match self.step {
             Step::Address => {
-                self.address.value.parse::<SocketAddr>().context(
-                    "Enter an IP address and port, for example 127.0.0.1:7000 or [::1]:7000",
-                )?;
+                self.validate_address(self.transport.context("Choose a transport")?)?
             }
-            Step::Path => self.validate_path()?,
-            Step::DumpId => {
-                let cli = self.build_cli()?;
-                if let Command::Sender(args) = cli.command {
-                    args.resolve_dump_id()?;
-                }
+            Step::RelayPort => {
+                anyhow::ensure!(
+                    self.relay_port_input(self.transport.context("Choose a transport")?)
+                        .value
+                        .trim()
+                        .parse::<u16>()
+                        .is_ok_and(|port| port != 0),
+                    "Enter a relay port between 1 and 65535"
+                );
             }
-            Step::Compression => {
-                self.validated_level()?;
+            Step::AccessToken => {
+                credentials(&self.access_token.value)?;
+            }
+            Step::RelayCa if !self.relay_ca.value.is_empty() => {
+                Self::validate_file(&self.relay_ca, "Relay CA file")?;
             }
             Step::Review => {
-                self.validated_cli()?;
+                self.launch()?;
             }
             _ => {}
         }
         Ok(())
     }
 
-    fn validate_path(&self) -> Result<()> {
-        if self.path.value.trim().is_empty() {
-            bail!(if self.sender {
+    fn validate_address(&self, transport: Transport) -> Result<()> {
+        let value = &self.addresses[transport as usize].value;
+        match transport {
+            Transport::Relay => {
+                self.relay_endpoint(transport, DEFAULT_RELAY_PORT)
+                    .parse::<SocketAddr>()
+                    .context("Enter a local IP without a port, such as 0.0.0.0 or ::")?;
+            }
+            Transport::ViaRelay => {
+                crate::network::relay::validate_endpoint(
+                    &self.relay_endpoint(transport, DEFAULT_RELAY_PORT),
+                )
+                .context("Enter the relay hostname or IP without a port")?;
+            }
+            _ => {
+                value.parse::<SocketAddr>().context(
+                    "Enter an IP address and port, for example 127.0.0.1:7000 or [::1]:7000",
+                )?;
+            }
+        }
+        Ok(())
+    }
+
+    fn relay_port_input(&self, transport: Transport) -> &Input {
+        if transport == Transport::Relay {
+            &self.relay_port
+        } else {
+            &self.relay_client_port
+        }
+    }
+
+    fn relay_endpoint(&self, transport: Transport, port: &str) -> String {
+        let host = self.addresses[transport as usize].value.trim();
+        if host.parse::<Ipv6Addr>().is_ok() {
+            format!("[{host}]:{port}")
+        } else {
+            format!("{host}:{port}")
+        }
+    }
+
+    fn endpoint(&self, transport: Transport) -> String {
+        if matches!(transport, Transport::Relay | Transport::ViaRelay) {
+            self.relay_endpoint(transport, self.relay_port_input(transport).value.trim())
+        } else {
+            self.addresses[transport as usize].value.clone()
+        }
+    }
+
+    fn validate_file(input: &Input, label: &str) -> Result<()> {
+        anyhow::ensure!(
+            Path::new(&input.value).is_file(),
+            "{label} must be an existing file"
+        );
+        Ok(())
+    }
+
+    fn validate_directory(value: &str, sender: bool) -> Result<()> {
+        if value.trim().is_empty() {
+            bail!(if sender {
                 "Choose a source directory"
             } else {
                 "Choose a destination directory"
             });
         }
-        let path = Path::new(&self.path.value);
-        if self.sender {
+        let path = Path::new(value);
+        if sender {
             if !path.is_dir() {
                 bail!("Source must be an existing directory");
             }
@@ -169,82 +281,57 @@ impl Wizard {
         Ok(())
     }
 
-    fn validated_level(&self) -> Result<i32> {
-        let level = self
-            .level
-            .value
-            .parse::<i32>()
-            .context("Enter a whole number for the zstd level")?;
-        let range = zstd::compression_level_range();
-        if !range.contains(&level) {
-            bail!(
-                "Zstd level must be between {} and {} (default {})",
-                range.start(),
-                range.end(),
-                crate::cli::DEFAULT_LEVEL
-            );
-        }
-        Ok(level)
-    }
-
-    fn build_cli(&self) -> Result<Cli> {
+    fn relay_command(&self) -> Result<Cli> {
         let mut args = vec!["fast-dump".to_owned()];
         if self.debug {
             args.push("--debug".into());
         }
-        args.push(if self.sender { "sender" } else { "receiver" }.into());
-        args.push(format!(
-            "{}={}",
-            if self.connect {
-                "--connect"
-            } else {
-                "--listen"
-            },
-            self.address.value,
-        ));
-        args.push(format!(
-            "{}={}",
-            if self.sender {
-                "--source"
-            } else {
-                "--data-dir"
-            },
-            self.path.value,
-        ));
-        if self.sender && !self.dump_id.value.is_empty() {
-            args.push(format!("--dump-id={}", self.dump_id.value));
-        }
-        if self.sender {
-            args.push(format!("--level={}", self.validated_level()?));
-        }
-        if !self.token.value.is_empty() {
-            // Значение с ведущим '-' остаётся value, а не неизвестным флагом,
-            // который clap мог бы повторить в диагностике вместе с секретом.
-            args.push(format!("--token={}", self.token.value));
-        }
-        let mut cli = Cli::try_parse_from(args)?;
-        cli.retries = Some(self.retry_policy.retries);
-        cli.retry_delay_secs = u32::try_from(self.retry_policy.delay.as_secs())
-            .context("retry delay exceeds the supported range")?;
-        Ok(cli)
+        args.extend([
+            "relay".into(),
+            "--access".into(),
+            format!("--listen={}", self.endpoint(Transport::Relay)),
+        ]);
+        Cli::try_parse_from(args).map_err(Into::into)
     }
 
-    fn validated_cli(&self) -> Result<Cli> {
-        self.validate_path()?;
-        let cli = self.build_cli()?;
-        match &cli.command {
-            Command::Sender(args) => {
-                args.resolve_dump_id()?;
-                args.runtime_options()?;
+    fn launch(&self) -> Result<Launch> {
+        let transport = self.transport.context("Choose a transport")?;
+        match transport {
+            Transport::Relay => {
+                return self.relay_command().map(|cli| Launch::Cli(Box::new(cli)));
             }
-            Command::Receiver(args) => {
-                args.validated_max_sessions()?;
+            Transport::Listen | Transport::Connect => {
+                self.validate_address(transport)?;
+                let addr = self.addresses[transport as usize].value.parse()?;
+                let mode = if transport == Transport::Listen {
+                    TransportMode::Listen(addr)
+                } else {
+                    TransportMode::Connect(addr)
+                };
+                return Ok(Launch::Lobby(lobby::Settings::Direct(direct::Settings {
+                    mode,
+                    token: self.token.value.clone(),
+                })));
             }
+            Transport::ViaRelay => {}
         }
-        Ok(cli)
+        let endpoint = self.endpoint(Transport::ViaRelay);
+        crate::network::relay::validate_endpoint(&endpoint)?;
+        let credentials = credentials(&self.access_token.value)?;
+        let ca_file = if credentials.has_fingerprint() || self.relay_ca.value.is_empty() {
+            None
+        } else {
+            Self::validate_file(&self.relay_ca, "Relay CA file")?;
+            Some(self.relay_ca.value.clone().into())
+        };
+        Ok(Launch::Lobby(lobby::Settings::Relay(LobbySettings {
+            endpoint,
+            token: self.access_token.value.clone(),
+            ca_file,
+        })))
     }
 
-    fn key(&mut self, key: KeyEvent) -> Result<Option<Cli>> {
+    fn key(&mut self, key: KeyEvent) -> Result<Option<Launch>> {
         if self.help {
             if matches!(key.code, KeyCode::F(1) | KeyCode::Esc | KeyCode::Enter) {
                 self.help = false;
@@ -254,20 +341,31 @@ impl Wizard {
         match key.code {
             KeyCode::F(1) => self.help = true,
             KeyCode::BackTab => self.back(),
-            KeyCode::Tab => self.next(),
-            KeyCode::Enter if self.step == Step::Review => return self.validated_cli().map(Some),
+            KeyCode::Tab if self.step != Step::Transport => self.next(),
+            KeyCode::Enter if self.step == Step::Review => return self.launch().map(Some),
             KeyCode::Enter => self.next(),
             KeyCode::Left | KeyCode::Right | KeyCode::Up | KeyCode::Down
-                if self.step == Step::Role =>
+                if self.step == Step::Connection =>
             {
-                self.sender = !self.sender;
-                self.set_connect(self.sender);
+                self.transport = Some(if self.transport == Some(Transport::ViaRelay) {
+                    Transport::Connect
+                } else {
+                    Transport::ViaRelay
+                });
                 self.error = None;
             }
             KeyCode::Left | KeyCode::Right | KeyCode::Up | KeyCode::Down
                 if self.step == Step::Transport =>
             {
-                self.set_connect(!self.connect);
+                let count = Transport::ALL.len();
+                let offset = if matches!(key.code, KeyCode::Left | KeyCode::Up) {
+                    count - 1
+                } else {
+                    1
+                };
+                self.transport_choice =
+                    Transport::ALL[(self.transport_choice as usize + offset) % count];
+                self.transport = None;
                 self.error = None;
             }
             _ => {
@@ -285,7 +383,7 @@ pub(crate) fn wizard(
     debug: bool,
     retry_policy: RetryPolicy,
     control: &RunControl,
-) -> Result<Option<Cli>> {
+) -> Result<Option<Launch>> {
     let mut terminal = TerminalGuard::enter()?;
     let mut wizard = Wizard::new(debug, retry_policy, Theme::detect());
     loop {
@@ -334,6 +432,7 @@ mod tests {
     use super::super::theme::ColorMode;
     use super::input::field_window;
     use super::*;
+    use crate::cli::Command;
     use ratatui::text::Span;
     use ratatui::{Terminal, backend::TestBackend};
 
@@ -342,11 +441,177 @@ mod tests {
     }
 
     fn new_wizard(debug: bool, mode: ColorMode) -> Wizard {
-        Wizard::new(
+        let mut wizard = Wizard::new(
             debug,
             RetryPolicy::from_options(None, 10, true),
             Theme::new(mode),
-        )
+        );
+        wizard.key(key(KeyCode::Enter)).unwrap();
+        wizard
+    }
+
+    fn start(wizard: &mut Wizard) -> Cli {
+        let Launch::Cli(cli) = wizard.key(key(KeyCode::Enter)).unwrap().unwrap() else {
+            panic!("expected transfer or relay command");
+        };
+        *cli
+    }
+
+    #[test]
+    fn transport_is_confirmed_before_other_fields_enable() {
+        let mut wizard = Wizard::new(
+            false,
+            RetryPolicy::from_options(None, 10, true),
+            Theme::new(ColorMode::TrueColor),
+        );
+        let mut terminal = Terminal::new(TestBackend::new(60, 20)).unwrap();
+        terminal.draw(|frame| wizard.render(frame)).unwrap();
+        let buffer = terminal.backend().buffer();
+        let disabled = buffer
+            .content
+            .iter()
+            .find(|cell| cell.symbol() == "—")
+            .unwrap();
+        assert_eq!(disabled.fg, wizard.theme.muted);
+        assert!(disabled.modifier.contains(ratatui::style::Modifier::DIM));
+        assert_eq!(wizard.step, Step::Transport);
+        assert_eq!(wizard.steps(), [Step::Transport]);
+
+        wizard.key(key(KeyCode::Right)).unwrap();
+        wizard.key(key(KeyCode::Tab)).unwrap();
+        assert_eq!(wizard.transport, None);
+        assert!(wizard.current_input().is_none());
+        wizard.key(key(KeyCode::Enter)).unwrap();
+        assert_eq!(wizard.transport, Some(Transport::Relay));
+        assert_eq!(wizard.step, Step::Address);
+        assert!(wizard.steps().contains(&Step::RelayPort));
+        assert_eq!(wizard.relay_port.value, "9876");
+        assert!(!wizard.steps().contains(&Step::AccessToken));
+        assert!(!wizard.steps().contains(&Step::Token));
+
+        wizard.key(key(KeyCode::BackTab)).unwrap();
+        wizard.key(key(KeyCode::Right)).unwrap();
+        wizard.key(key(KeyCode::Enter)).unwrap();
+        assert_eq!(wizard.transport, Some(Transport::Listen));
+        assert_eq!(wizard.current_input().unwrap().value, "0.0.0.0:7000");
+        assert!(!wizard.steps().contains(&Step::RelayPort));
+        assert!(!wizard.steps().contains(&Step::AccessToken));
+    }
+
+    #[test]
+    fn relay_server_prefills_bind_address_and_has_no_role() {
+        let mut wizard = new_wizard(false, ColorMode::Monochrome);
+        wizard.step = Step::Transport;
+        wizard.key(key(KeyCode::Right)).unwrap();
+        wizard.key(key(KeyCode::Enter)).unwrap();
+        assert_eq!(
+            wizard.steps(),
+            [
+                Step::Transport,
+                Step::Address,
+                Step::RelayPort,
+                Step::Review
+            ]
+        );
+        let mut terminal = Terminal::new(TestBackend::new(60, 20)).unwrap();
+        terminal.draw(|frame| wizard.render(frame)).unwrap();
+        let screen = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect::<String>();
+        assert!(screen.contains("Listen address"));
+        assert!(screen.contains("0.0.0.0"));
+        assert!(screen.contains("9876"));
+        assert!(!screen.contains("TLS certificate"));
+        assert!(!screen.contains("TLS private key"));
+        assert!(!screen.contains("‹ Send ›"));
+
+        wizard.key(key(KeyCode::Enter)).unwrap();
+        wizard.key(key(KeyCode::Enter)).unwrap();
+        assert_eq!(wizard.step, Step::Review);
+        let Command::Relay(args) = start(&mut wizard).command else {
+            panic!("expected relay service");
+        };
+        assert_eq!(args.listen, "0.0.0.0:9876".parse().unwrap());
+        assert!(args.config.is_none());
+        assert!(args.certificate.is_none() && args.private_key.is_none());
+        assert!(args.access);
+    }
+
+    #[test]
+    fn relay_client_joins_by_token_before_choosing_a_role() {
+        let mut wizard = new_wizard(false, ColorMode::Monochrome);
+        assert_eq!(wizard.step, Step::Connection);
+        wizard.key(key(KeyCode::Right)).unwrap();
+        wizard.key(key(KeyCode::Enter)).unwrap();
+        assert_eq!(wizard.step, Step::Address);
+        assert_eq!(wizard.transport, Some(Transport::ViaRelay));
+        assert!(wizard.current_input().unwrap().value.is_empty());
+        wizard.addresses[Transport::ViaRelay as usize] = Input::new("relay.example");
+        wizard.access_token = Input::new("23456789ABCD");
+        wizard.relay_ca = Input::new("Cargo.toml");
+        assert!(!wizard.steps().contains(&Step::Token));
+        let mut terminal = Terminal::new(TestBackend::new(60, 20)).unwrap();
+        for step in [Step::AccessToken, Step::Review] {
+            wizard.step = step;
+            terminal.draw(|frame| wizard.render(frame)).unwrap();
+            let screen = terminal
+                .backend()
+                .buffer()
+                .content
+                .iter()
+                .map(|cell| cell.symbol())
+                .collect::<String>();
+            assert!(!screen.contains("23456789ABCD"));
+        }
+        let Launch::Lobby(lobby::Settings::Relay(settings)) =
+            wizard.key(key(KeyCode::Enter)).unwrap().unwrap()
+        else {
+            panic!("expected role-independent relay connection");
+        };
+        assert_eq!(settings.endpoint, "relay.example:9876");
+        assert_eq!(settings.token, "23456789ABCD");
+        assert_eq!(settings.ca_file.as_deref(), Some(Path::new("Cargo.toml")));
+
+        let invitation = format!("FD1:{}:23456789ABCD", "a1".repeat(32));
+        wizard.access_token = Input::new(&invitation);
+        wizard.step = Step::AccessToken;
+        wizard.key(key(KeyCode::Enter)).unwrap();
+        assert_eq!(wizard.step, Step::Review);
+        let Launch::Lobby(lobby::Settings::Relay(settings)) =
+            wizard.key(key(KeyCode::Enter)).unwrap().unwrap()
+        else {
+            panic!("expected relay invitation");
+        };
+        assert_eq!(settings.token, invitation);
+        assert!(settings.ca_file.is_none());
+    }
+
+    #[test]
+    fn relay_address_and_port_validate_separately() {
+        let mut wizard = new_wizard(false, ColorMode::Monochrome);
+        wizard.transport = Some(Transport::ViaRelay);
+        wizard.step = Step::Address;
+        wizard.addresses[Transport::ViaRelay as usize] = Input::new("relay.example:9876");
+        wizard.next();
+        assert_eq!(wizard.step, Step::Address);
+        assert!(wizard.error.is_some());
+
+        wizard.addresses[Transport::ViaRelay as usize] = Input::new("2001:db8::1");
+        wizard.next();
+        assert_eq!(wizard.step, Step::RelayPort);
+        wizard.relay_client_port = Input::new("0");
+        wizard.next();
+        assert_eq!(wizard.step, Step::RelayPort);
+        assert!(wizard.error.is_some());
+
+        wizard.relay_client_port = Input::new("7443");
+        wizard.next();
+        assert_eq!(wizard.step, Step::AccessToken);
+        assert_eq!(wizard.endpoint(Transport::ViaRelay), "[2001:db8::1]:7443");
     }
 
     #[test]
@@ -365,180 +630,43 @@ mod tests {
     }
 
     #[test]
-    fn wizard_uses_cli_defaults_and_validates_before_start() {
-        let mut wizard = new_wizard(true, ColorMode::Monochrome);
-        wizard.path = Input::new(".");
-        wizard.dump_id = Input::new("wizard-test");
-        wizard.token = Input::new("private-token");
-        let cli = wizard.validated_cli().unwrap();
-        assert!(cli.debug);
-        assert_eq!(
-            cli.retries,
-            Some(RetryPolicy::from_options(None, 10, true).retries)
+    fn changing_transport_keeps_each_address_and_direct_connect_has_no_role() {
+        let mut wizard = new_wizard(false, ColorMode::Monochrome);
+        wizard.step = Step::Transport;
+        wizard.key(key(KeyCode::Left)).unwrap();
+        wizard.key(key(KeyCode::Enter)).unwrap();
+        assert_eq!(wizard.transport, Some(Transport::Listen));
+        let Launch::Lobby(lobby::Settings::Direct(settings)) = wizard.launch().unwrap() else {
+            panic!("expected role-independent direct listener")
+        };
+        assert!(
+            matches!(settings.mode, TransportMode::Listen(addr) if addr == "0.0.0.0:7000".parse::<SocketAddr>().unwrap())
         );
-        assert_eq!(cli.retry_delay_secs, 10);
-        match cli.command {
-            Command::Sender(args) => {
-                assert_eq!(args.token.as_deref(), Some("private-token"));
-                assert_eq!(args.frame_target_mb, 64);
-                assert_eq!(args.level, 3);
-                assert_eq!(args.runtime_options().unwrap().level, 3);
-                assert!(args.transport.connect.is_some());
-            }
-            _ => panic!("expected sender"),
-        }
-        wizard.dump_id = Input::new("../bad");
-        assert!(wizard.validated_cli().is_err());
-        wizard.dump_id = Input::new("valid");
-        wizard.address = Input::new("missing-port");
-        assert!(wizard.validated_cli().is_err());
-    }
 
-    #[test]
-    fn chosen_compression_level_reaches_runtime_and_remains_visible() {
-        for level in [7, -1, 0] {
-            let mut wizard = new_wizard(false, ColorMode::Monochrome);
-            wizard.path = Input::new(".");
-            wizard.dump_id = Input::new("compression-level");
-            wizard.step = Step::Compression;
-            wizard.key(key(KeyCode::Backspace)).unwrap();
-            for character in level.to_string().chars() {
-                wizard.key(key(KeyCode::Char(character))).unwrap();
-            }
-            let mut terminal = Terminal::new(TestBackend::new(60, 20)).unwrap();
-            terminal.draw(|frame| wizard.render(frame)).unwrap();
-            let screen = terminal
-                .backend()
-                .buffer()
-                .content
-                .iter()
-                .map(|cell| cell.symbol())
-                .collect::<String>();
-            assert!(screen.contains("Zstd level"));
-            assert!(screen.contains(&format!("{level}▏")));
-
-            wizard.key(key(KeyCode::Enter)).unwrap();
-            assert_eq!(wizard.step, Step::DumpId);
-            wizard.key(key(KeyCode::BackTab)).unwrap();
-            assert_eq!(wizard.step, Step::Compression);
-            assert_eq!(wizard.level.value, level.to_string());
-            wizard.step = Step::Review;
-            terminal.draw(|frame| wizard.render(frame)).unwrap();
-            let screen = terminal
-                .backend()
-                .buffer()
-                .content
-                .iter()
-                .map(|cell| cell.symbol())
-                .collect::<String>();
-            assert!(screen.contains(&format!("Compression zstd level {level}")));
-            assert!(screen.contains("10 retries · 10 s delay"));
-            let Command::Sender(args) = wizard.key(key(KeyCode::Enter)).unwrap().unwrap().command
-            else {
-                panic!("expected sender");
-            };
-            assert_eq!(args.runtime_options().unwrap().level, level);
-        }
-    }
-
-    #[test]
-    fn invalid_compression_level_blocks_navigation_and_start() {
-        let range = zstd::compression_level_range();
-        for value in [
-            String::new(),
-            "fast".into(),
-            "1.5".into(),
-            "2147483648".into(),
-            (range.start() - 1).to_string(),
-            (range.end() + 1).to_string(),
-        ] {
-            let mut wizard = new_wizard(false, ColorMode::Monochrome);
-            wizard.path = Input::new(".");
-            wizard.dump_id = Input::new("compression-level");
-            wizard.level = Input::new(&value);
-            wizard.step = Step::Compression;
-            wizard.next();
-            assert_eq!(wizard.step, Step::Compression);
-            assert!(wizard.error.is_some(), "accepted {value:?}");
-            wizard.back();
-            assert_eq!(wizard.step, Step::Path);
-            wizard.next();
-            assert_eq!(wizard.step, Step::Compression);
-            wizard.level = Input::new("3");
-            wizard.next();
-            assert_eq!(wizard.step, Step::DumpId);
-            wizard.level = Input::new(&value);
-            wizard.step = Step::Review;
-            assert!(wizard.key(key(KeyCode::Enter)).is_err());
-        }
-    }
-
-    #[test]
-    fn sender_compression_setting_survives_role_and_transport_switches() {
-        let mut wizard = new_wizard(false, ColorMode::Monochrome);
-        wizard.path = Input::new(".");
-        wizard.dump_id = Input::new("compression-level");
-        wizard.level = Input::new("7");
+        wizard.addresses[Transport::Listen as usize] = Input::new("192.0.2.10:8123");
         wizard.step = Step::Transport;
         wizard.key(key(KeyCode::Right)).unwrap();
-        assert_eq!(wizard.level.value, "7");
-        wizard.step = Step::Role;
-        wizard.key(key(KeyCode::Right)).unwrap();
-        assert!(!wizard.sender);
-        assert!(!wizard.steps().contains(&Step::Compression));
-        assert_eq!(wizard.level.value, "7");
-        assert!(matches!(
-            wizard.validated_cli().unwrap().command,
-            Command::Receiver(_)
-        ));
+        wizard.key(key(KeyCode::Enter)).unwrap();
+        assert_eq!(wizard.transport, Some(Transport::Connect));
+        assert_eq!(wizard.step, Step::Connection);
+        wizard.key(key(KeyCode::Enter)).unwrap();
+        assert_eq!(wizard.current_input().unwrap().value, "127.0.0.1:7000");
+        wizard.addresses[Transport::Connect as usize] = Input::new("192.0.2.20:8123");
+        wizard.key(key(KeyCode::BackTab)).unwrap();
+        wizard.key(key(KeyCode::BackTab)).unwrap();
         wizard.key(key(KeyCode::Left)).unwrap();
-        assert!(wizard.sender);
-        let Command::Sender(args) = wizard.validated_cli().unwrap().command else {
-            panic!("expected sender");
-        };
-        assert_eq!(args.runtime_options().unwrap().level, 7);
-
-        wizard.level = Input::new("invalid");
+        wizard.key(key(KeyCode::Enter)).unwrap();
+        assert_eq!(wizard.current_input().unwrap().value, "192.0.2.10:8123");
+        wizard.key(key(KeyCode::BackTab)).unwrap();
         wizard.key(key(KeyCode::Right)).unwrap();
-        assert!(matches!(
-            wizard.validated_cli().unwrap().command,
-            Command::Receiver(_)
-        ));
-    }
-
-    #[test]
-    fn receiver_choice_defaults_to_listen_and_omits_sender_fields() {
-        let mut wizard = new_wizard(false, ColorMode::Monochrome);
-        wizard.key(key(KeyCode::Right)).unwrap();
-        wizard.path = Input::new(".");
-        assert!(!wizard.sender);
-        assert!(!wizard.connect);
-        assert!(!wizard.steps().contains(&Step::DumpId));
-        assert!(!wizard.steps().contains(&Step::Compression));
-        let Command::Receiver(args) = wizard.validated_cli().unwrap().command else {
-            panic!("expected receiver")
-        };
-        assert_eq!(args.transport.listen, Some("0.0.0.0:7000".parse().unwrap()));
-        assert_eq!(args.max_sessions, 1);
-
-        wizard.address = Input::new("192.0.2.10:8123");
-        wizard.step = Step::Transport;
-        wizard.key(key(KeyCode::Right)).unwrap();
-        assert!(wizard.connect);
-        assert_eq!(wizard.address.value, "127.0.0.1:7000");
-        wizard.address = Input::new("192.0.2.20:8123");
-        wizard.key(key(KeyCode::Left)).unwrap();
-        assert!(!wizard.connect);
-        assert_eq!(wizard.address.value, "192.0.2.10:8123");
-        wizard.key(key(KeyCode::Right)).unwrap();
-        assert_eq!(wizard.address.value, "192.0.2.20:8123");
+        wizard.key(key(KeyCode::Enter)).unwrap();
+        wizard.key(key(KeyCode::Enter)).unwrap();
+        assert_eq!(wizard.current_input().unwrap().value, "192.0.2.20:8123");
     }
 
     #[test]
     fn review_and_form_never_render_the_token() {
         let mut wizard = new_wizard(false, ColorMode::TrueColor);
-        wizard.path = Input::new(".");
-        wizard.dump_id = Input::new("測試-данные");
         wizard.token = Input::new("do-not-display-this-secret");
         for step in [Step::Token, Step::Review] {
             wizard.step = step;
@@ -562,7 +690,7 @@ mod tests {
     fn invalid_field_does_not_advance() {
         let mut wizard = new_wizard(false, ColorMode::Monochrome);
         wizard.step = Step::Address;
-        wizard.address = Input::new("bad-address");
+        wizard.addresses[Transport::Connect as usize] = Input::new("bad-address");
         wizard.next();
         assert_eq!(wizard.step, Step::Address);
         assert!(wizard.error.is_some());
@@ -571,13 +699,11 @@ mod tests {
     #[test]
     fn token_that_looks_like_an_option_is_kept_as_a_value() {
         let mut wizard = new_wizard(false, ColorMode::Monochrome);
-        wizard.path = Input::new(".");
-        wizard.dump_id = Input::new("wizard-test");
         wizard.token = Input::new("--secret-token");
-        let Command::Sender(args) = wizard.validated_cli().unwrap().command else {
-            panic!("expected sender");
+        let Launch::Lobby(lobby::Settings::Direct(settings)) = wizard.launch().unwrap() else {
+            panic!("expected P2P connection settings");
         };
-        assert_eq!(args.token.as_deref(), Some("--secret-token"));
+        assert_eq!(settings.token, "--secret-token");
     }
 
     #[test]
@@ -590,15 +716,14 @@ mod tests {
     }
 
     #[test]
-    fn review_and_started_command_preserve_explicit_retry_policy() {
+    fn review_shows_connection_retry_policy() {
         for retries in [0, 2] {
             let mut wizard = Wizard::new(
                 false,
                 RetryPolicy::from_options(Some(retries), 7, true),
                 Theme::new(ColorMode::Monochrome),
             );
-            wizard.path = Input::new(".");
-            wizard.dump_id = Input::new("retry-policy");
+            wizard.key(key(KeyCode::Enter)).unwrap();
             wizard.step = Step::Review;
             let expected = if retries == 0 {
                 "Disabled (0 retries)"
@@ -620,21 +745,6 @@ mod tests {
                     "missing retry policy at {width}x{height}"
                 );
             }
-            let cli = wizard.key(key(KeyCode::Enter)).unwrap().unwrap();
-            assert_eq!(cli.retries, Some(retries));
-            assert_eq!(cli.retry_delay_secs, 7);
-            wizard.sender = false;
-            wizard.set_connect(false);
-            let mut terminal = Terminal::new(TestBackend::new(120, 32)).unwrap();
-            terminal.draw(|frame| wizard.render(frame)).unwrap();
-            let screen = terminal
-                .backend()
-                .buffer()
-                .content
-                .iter()
-                .map(|cell| cell.symbol())
-                .collect::<String>();
-            assert!(screen.contains("Persistent listener; accepts reconnects"));
         }
     }
 }

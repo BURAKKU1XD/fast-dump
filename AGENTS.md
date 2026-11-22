@@ -20,7 +20,7 @@ behavior, hard constraints, and navigation.
 
 ## Current runtime
 
-The working sender/receiver pair uses protocol v4 and supports push and pull.
+The sender/receiver pair uses protocol v4 and supports direct push/pull and relay.
 Read [docs/runtime.md](docs/runtime.md) for all implementation invariants and
 [docs/cli.md](docs/cli.md) for CLI, wizard, dashboard and retry behavior.
 These documents are part of the contributor contract. Preserve their requirements.
@@ -31,9 +31,24 @@ These documents are part of the contributor contract. Preserve their requirement
   versioning.
 - Preserve Linux/Windows runtime compatibility unless the task is explicitly
   platform-scoped.
-- Ship one binary with two subcommands: `fast-dump sender`, `fast-dump receiver`.
-- Each subcommand accepts exactly one transport selector:
-  `--listen <ADDR>` or `--connect <ADDR>`.
+- Select checksum SIMD at runtime; never require AVX2 globally. Preserve exact
+  XXH3-64 wire values and tar-header sums across SIMD and fallback paths.
+- Ship one binary with `fast-dump sender`, `fast-dump receiver`, and `fast-dump relay`.
+- Top-level `--join-relay <HOST:PORT> --invitation <STRING>` opens the relay
+  lobby in an interactive terminal.
+- Sender and receiver accept exactly one transport selector:
+  `--listen <ADDR>`, `--connect <ADDR>`, or `--relay <HOST:PORT>`.
+- Relay accepts authenticated TLS connections from both peers and pairs by room,
+  role, channel kind, and attempt ID with bounded state and forwarding buffers.
+  Relay uses a separate registration header and forwards v4 bytes unchanged.
+- Access-token relay mode allows at most 15 lobby members per generated token.
+  Choose sender and receiver when an offer is accepted. Keep lobby connections
+  open between transfers and forward v4 bytes unchanged on separate channels.
+  Default access-token TLS keys are generated in memory. Clients verify the
+  invitation fingerprint and TLS signature before sending the access token.
+- Interactive direct connections exchange hostnames and transfer offers on a
+  persistent control connection. After acceptance, use the same listening
+  address and port for fresh v4 transfer channels.
 - Reject cross-process role/pairing mismatches during transport establishment
   and handshake, not only in local CLI parsing.
 - Required args: sender `--source <DIR>`, receiver `--data-dir <DIR>`.
@@ -150,6 +165,11 @@ disposable after their results have been collected and verified.
 - Push/PR CI covers Windows/Linux and Rust `1.89.0`/stable with locked
   dependencies. Manual release packaging additionally gates on release tests
   and correctness stress, then records source/compiler/binary hashes.
+- Distributable binaries must use `scripts/build-release.ps1` through the local
+  artifact helper, shared IDE build, or release CI. Preserve path remapping and
+  privacy checks before copying, hashing, or packaging release files. Direct
+  `cargo build --release` does not provide this guarantee; see
+  [release tooling](docs/development.md).
 - Keep storage fault hooks under `cfg(test)`; release I/O must not pay for
   injection checks. Lifecycle regressions must leave the other peer channel
   open until the receiver returns and verify that its reader handles are gone.

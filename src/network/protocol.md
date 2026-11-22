@@ -34,6 +34,16 @@ Current mainline transport preserves both pairings:
 - `push`: `sender --connect` to `receiver --listen`
 - `pull`: `sender --listen` with `receiver --connect`
 
+The interactive P2P connection starts with a separate `FDP1` handshake.
+The connecting peer sends the four-byte magic, its big-endian 16-bit
+optional token length (up to 4096), the token bytes, and a 60-byte UTF-8
+hostname padded with zeros. The listener checks the token and responds with
+the magic and its own hostname. The connection then exchanges fixed 65-byte
+offer, acceptance, and decline messages. An accepted offer carries a fresh
+16-byte credential, encoded as hex for the two v4 channel handshakes.
+Those channels use the listener's original address and port. The offer
+channel stays open while v4 transfers run independently of it.
+
 Each channel uses the same `Hello -> HelloAck` handshake. `Hello` carries:
 
 - `role`
@@ -53,6 +63,51 @@ single portable filename component, with no path separators, control characters,
 Windows filename metacharacters/device names, or trailing dot/space. Unicode and
 internal spaces are allowed. Receiver storage validates it again before creating
 state files.
+
+### Relay registration
+
+The access-token lobby has a separate `FDA1` registration. The header is
+the 4-byte magic, a one-byte selector (0 join, 1 control attachment, 2 data
+attachment), and 16 bytes of credentials. Join uses a 12-byte ASCII token
+followed by a feature byte and three reserved bytes. Bit 0 requests hostname
+metadata and is echoed in the first byte of the join reply payload. Each
+attachment uses the full 16-byte credential.
+The default access-token TLS setup uses a server raw public key (RFC 7250).
+The operator shares the invitation `FD1:<64 hex digits>:<access token>` out
+of band. The client checks the SHA-256 digest of the public key's DER
+SubjectPublicKeyInfo against the invitation and verifies the TLS handshake
+signature before sending the token. Configured X.509 access relays use the
+short token with the configured TLS trust model.
+Once registered, lobby control messages have a one-byte kind, a big-endian
+32-bit client ID or peer count, and 60 bytes of payload. A peer list uses
+one big-endian ID per entry. The token is generated from a 32-symbol alphabet.
+The server responds to a wrong token after a one-second delay and applies no
+such delay to valid tokens. At most 15 joined clients hold persistent lobby
+connections. Peer-name updates and transfer offers carry a zero-padded
+UTF-8 hostname or source short name, respectively. A transfer offer
+identifies its recipient. Acceptance assigns
+the sender and receiver individual attachment credentials over their lobby
+connections. Once all four transfer channels attach and receive readiness,
+they carry the existing v4 handshake and transfer. The lobby stays connected
+between transfers. Reply 23 releases a transfer after its channels were ready.
+The v4 exchange determines archive success. There is at most one outstanding
+offer or transfer per member.
+
+### Role-key relay registration
+
+Relay transport preserves both v4 channels. Before the v4 handshakes, each
+client opens a TLS 1.3 connection and sends a relay registration. Its fields, in
+order, are ASCII `FDR1`, role (`1` sender, `2` receiver), channel (`0` control,
+`1` data), one byte of room length, the 32-byte binary role key, a 16-byte attempt
+ID for data registrations, and the ASCII room name of length 1–64.
+
+Once both control registrations are accepted, the relay replies on both with
+`1` (`Matched`) followed by the same 16-byte attempt ID. Both clients then open
+their data connections and send that ID. Once all four sockets are paired, the
+relay sends `2` (`Ready`) on each, then forwards the bytes of each channel.
+`3` means room or key rejected, `4` means room busy, and `5` means the pairing
+expired or the data attempt ID is stale. The relay header and replies never enter
+the v4 stream. `Hello` and `HelloAck` still travel between sender and receiver.
 
 ## Versioning And Migration
 
@@ -177,6 +232,9 @@ interoperability requirements:
 - Each attempt starts an independent zstd frame. Send `BundlePlan` before
   compression; transmit completed chunks as compression proceeds.
   `BundleCommit` carries the final compressed length and hash.
+- The compressed hash remains standard XXH3-64 with the default seed and secret.
+  Local SIMD selection changes no checksum values or wire fields; peers do not
+  need matching CPU features or implementations.
 - Compression level and worker count are sender-local settings. They add no wire
   fields and require no matching receiver options.
 - Local pipeline timings and counters add no messages and do not represent

@@ -88,13 +88,16 @@ pub enum Command {
         after_help = "Push: receiver --listen <IP:PORT> --data-dir <DIR>\nPull: receiver --connect <IP:PORT> --data-dir <DIR>\nListen mode keeps accepting sessions until stopped.\nKeep partial archive, WAL, catalog, and lock files together to resume."
     )]
     Receiver(ReceiverArgs),
+    #[command(about = "Forward paired dump sessions over TLS")]
+    Relay(RelayArgs),
 }
 
 impl Command {
-    pub const fn role(&self) -> Role {
+    pub const fn role(&self) -> Option<Role> {
         match self {
-            Self::Sender(_) => Role::Sender,
-            Self::Receiver(_) => Role::Receiver,
+            Self::Sender(_) => Some(Role::Sender),
+            Self::Receiver(_) => Some(Role::Receiver),
+            Self::Relay(_) => None,
         }
     }
 
@@ -102,8 +105,31 @@ impl Command {
         match self {
             Self::Sender(args) => args.transport.mode(),
             Self::Receiver(args) => args.transport.mode(),
+            Self::Relay(_) => bail!("relay service has no peer transport selector"),
         }
     }
+}
+
+#[derive(Debug, Clone, Args)]
+#[command(group(ArgGroup::new("relay_tls").args(["config", "certificate"])))]
+pub struct RelayArgs {
+    #[arg(
+        long,
+        value_name = "IP:PORT",
+        help = "Listen for outbound TLS connections from both peers"
+    )]
+    pub listen: SocketAddr,
+    #[arg(long, value_hint = ValueHint::FilePath, required_unless_present = "access", help = "TOML with TLS certificate paths and relay rooms")]
+    pub config: Option<PathBuf>,
+    #[arg(long, value_hint = ValueHint::FilePath, requires_all = ["access", "private_key"], help = "TLS certificate chain PEM for access-token relay")]
+    pub certificate: Option<PathBuf>,
+    #[arg(long, value_hint = ValueHint::FilePath, requires = "certificate", help = "TLS private key PEM for access-token relay")]
+    pub private_key: Option<PathBuf>,
+    #[arg(
+        long,
+        help = "Generate an access token and allow up to 15 connected clients"
+    )]
+    pub access: bool,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -145,11 +171,11 @@ pub struct ReceiverArgs {
     pub max_sessions: usize,
 }
 
-#[derive(Debug, Clone, Args)]
+#[derive(Debug, Clone, Default, Args)]
 #[command(group(
     ArgGroup::new("transport")
         .required(true)
-        .args(["listen", "connect"])
+        .args(["listen", "connect", "relay"])
 ))]
 pub struct TransportArgs {
     #[arg(
@@ -164,13 +190,49 @@ pub struct TransportArgs {
         help = "Connect to the other peer (IPv6 uses [address]:port)"
     )]
     pub connect: Option<SocketAddr>,
+    #[arg(long, value_name = "HOST:PORT", requires_all = ["room", "relay_token_file"], help = "Connect through a TLS relay")]
+    pub relay: Option<String>,
+    #[arg(long, requires = "relay", help = "Room configured at the relay")]
+    pub room: Option<String>,
+    #[arg(long, requires = "relay", value_hint = ValueHint::FilePath, help = "File containing the relay key for this role")]
+    pub relay_token_file: Option<PathBuf>,
+    #[arg(long, requires = "relay", value_hint = ValueHint::FilePath, help = "PEM trust anchors for a privately issued relay certificate")]
+    pub relay_ca_file: Option<PathBuf>,
 }
 
 impl TransportArgs {
+    pub(crate) fn validate(&self) -> Result<()> {
+        if let Some(relay) = &self.relay {
+            anyhow::ensure!(
+                self.listen.is_none() && self.connect.is_none(),
+                "exactly one transport selector is required"
+            );
+            crate::network::relay::validate_endpoint(relay)?;
+            crate::network::relay::validate_room(
+                self.room
+                    .as_deref()
+                    .context("--room is required with --relay")?,
+            )?;
+            anyhow::ensure!(
+                self.relay_token_file.is_some(),
+                "--relay-token-file is required with --relay"
+            );
+        } else {
+            self.mode()?;
+            anyhow::ensure!(
+                self.room.is_none()
+                    && self.relay_token_file.is_none()
+                    && self.relay_ca_file.is_none(),
+                "relay options require --relay"
+            );
+        }
+        Ok(())
+    }
+
     pub fn mode(&self) -> Result<TransportMode> {
-        match (self.listen, self.connect) {
-            (Some(addr), None) => Ok(TransportMode::Listen(addr)),
-            (None, Some(addr)) => Ok(TransportMode::Connect(addr)),
+        match (self.listen, self.connect, &self.relay) {
+            (Some(addr), None, None) => Ok(TransportMode::Listen(addr)),
+            (None, Some(addr), None) => Ok(TransportMode::Connect(addr)),
             _ => bail!("exactly one of --listen or --connect must be provided"),
         }
     }
@@ -345,7 +407,7 @@ mod tests {
         ])
         .unwrap();
 
-        assert_eq!(cli.command.role(), Role::Sender);
+        assert_eq!(cli.command.role(), Some(Role::Sender));
         assert_eq!(
             cli.command.transport_mode().unwrap(),
             TransportMode::Connect("127.0.0.1:7001".parse().unwrap())
@@ -644,7 +706,7 @@ mod tests {
         ])
         .unwrap();
 
-        assert_eq!(cli.command.role(), Role::Receiver);
+        assert_eq!(cli.command.role(), Some(Role::Receiver));
         assert_eq!(
             cli.command.transport_mode().unwrap(),
             TransportMode::Listen("127.0.0.1:7002".parse().unwrap())
@@ -708,7 +770,7 @@ mod tests {
         ])
         .unwrap();
 
-        assert_eq!(cli.command.role(), Role::Sender);
+        assert_eq!(cli.command.role(), Some(Role::Sender));
         assert_eq!(
             cli.command.transport_mode().unwrap(),
             TransportMode::Listen("127.0.0.1:7007".parse().unwrap())
@@ -727,7 +789,7 @@ mod tests {
         ])
         .unwrap();
 
-        assert_eq!(cli.command.role(), Role::Receiver);
+        assert_eq!(cli.command.role(), Some(Role::Receiver));
         assert_eq!(
             cli.command.transport_mode().unwrap(),
             TransportMode::Connect("127.0.0.1:7008".parse().unwrap())
@@ -759,10 +821,96 @@ mod tests {
     }
 
     #[test]
+    fn relay_cli_requires_a_room_and_role_key_and_is_exclusive() {
+        let args = [
+            "fast-dump",
+            "sender",
+            "--source",
+            ".",
+            "--relay",
+            "relay.example:7443",
+        ];
+        assert_eq!(
+            Cli::try_parse_from(args).unwrap_err().kind(),
+            ErrorKind::MissingRequiredArgument
+        );
+        let complete =
+            args.into_iter()
+                .chain(["--room", "backup", "--relay-token-file", "sender.key"]);
+        let cli = Cli::try_parse_from(complete.clone()).unwrap();
+        let Command::Sender(sender) = cli.command else {
+            panic!("expected sender")
+        };
+        sender.transport.validate().unwrap();
+        assert_eq!(
+            Cli::try_parse_from(complete.chain(["--connect", "127.0.0.1:7443"]))
+                .unwrap_err()
+                .kind(),
+            ErrorKind::ArgumentConflict
+        );
+        let cli = Cli::try_parse_from([
+            "fast-dump",
+            "relay",
+            "--listen",
+            "127.0.0.1:7443",
+            "--config",
+            "relay.toml",
+        ])
+        .unwrap();
+        assert!(matches!(cli.command, Command::Relay(_)));
+    }
+
+    #[test]
+    fn access_relay_accepts_pem_paths_instead_of_toml() {
+        let base = ["fast-dump", "relay", "--listen=0.0.0.0:9876"];
+        assert!(Cli::try_parse_from(base).is_err());
+        let automatic = Cli::try_parse_from(base.into_iter().chain(["--access"])).unwrap();
+        let Command::Relay(automatic) = automatic.command else {
+            panic!("expected relay");
+        };
+        assert!(automatic.access && automatic.config.is_none());
+        assert!(automatic.certificate.is_none() && automatic.private_key.is_none());
+        let paths = ["--certificate=fullchain.pem", "--private-key=privkey.pem"];
+        let cli = Cli::try_parse_from(base.into_iter().chain(["--access"]).chain(paths)).unwrap();
+        let Command::Relay(args) = cli.command else {
+            panic!("expected relay");
+        };
+        assert!(args.access && args.config.is_none());
+        assert_eq!(args.certificate, Some(PathBuf::from("fullchain.pem")));
+        assert_eq!(args.private_key, Some(PathBuf::from("privkey.pem")));
+        assert_eq!(
+            Cli::try_parse_from(base.into_iter().chain(paths))
+                .unwrap_err()
+                .kind(),
+            ErrorKind::MissingRequiredArgument
+        );
+        assert_eq!(
+            Cli::try_parse_from(
+                base.into_iter()
+                    .chain(["--access", "--certificate=fullchain.pem"])
+            )
+            .unwrap_err()
+            .kind(),
+            ErrorKind::MissingRequiredArgument
+        );
+        assert_eq!(
+            Cli::try_parse_from(
+                base.into_iter()
+                    .chain(["--access", "--config=relay.toml"])
+                    .chain(paths)
+            )
+            .unwrap_err()
+            .kind(),
+            ErrorKind::ArgumentConflict
+        );
+    }
+
+    #[test]
     fn transport_args_mode_rejects_invalid_manual_state() {
         let error = TransportArgs {
             listen: Some("127.0.0.1:7005".parse().unwrap()),
             connect: Some("127.0.0.1:7006".parse().unwrap()),
+            ..TransportArgs::default()
         }
         .mode()
         .unwrap_err();
@@ -773,12 +921,7 @@ mod tests {
                 .contains("exactly one of --listen or --connect")
         );
 
-        let error = TransportArgs {
-            listen: None,
-            connect: None,
-        }
-        .mode()
-        .unwrap_err();
+        let error = TransportArgs::default().mode().unwrap_err();
 
         assert!(
             error

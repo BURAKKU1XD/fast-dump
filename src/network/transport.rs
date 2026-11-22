@@ -57,9 +57,9 @@ impl CloneableStream for TcpStream {
 }
 
 #[derive(Debug)]
-pub struct Session {
-    pub control_stream: TcpStream,
-    pub data_stream: TcpStream,
+pub struct Session<T = TcpStream> {
+    pub control_stream: T,
+    pub data_stream: T,
     pub local_role: Role,
     pub peer_role: Role,
     pub peer_dump_id: Option<String>,
@@ -68,8 +68,8 @@ pub struct Session {
 }
 
 #[derive(Debug)]
-pub(crate) struct ChannelSession {
-    pub(crate) stream: TcpStream,
+pub(crate) struct ChannelSession<T = TcpStream> {
+    pub(crate) stream: T,
     pub(crate) local_role: Role,
     pub(crate) peer_role: Role,
     pub(crate) peer_dump_id: Option<String>,
@@ -112,6 +112,35 @@ pub(crate) fn establish_session_controlled(
     dump_id: Option<&str>,
     token: Option<&str>,
     control: &SessionControl,
+) -> Result<(Session, Vec<SocketRegistration>)> {
+    establish_session_inner(role, mode, dump_id, token, control, None)
+}
+
+pub(crate) fn establish_session_on_listener(
+    listener: &BoundListener,
+    peer: IpAddr,
+    role: Role,
+    dump_id: Option<&str>,
+    token: Option<&str>,
+    control: &SessionControl,
+) -> Result<(Session, Vec<SocketRegistration>)> {
+    establish_session_inner(
+        role,
+        TransportMode::Listen(listener.local_addr()),
+        dump_id,
+        token,
+        control,
+        Some((listener, peer)),
+    )
+}
+
+fn establish_session_inner(
+    role: Role,
+    mode: TransportMode,
+    dump_id: Option<&str>,
+    token: Option<&str>,
+    control: &SessionControl,
+    prebound: Option<(&BoundListener, IpAddr)>,
 ) -> Result<(Session, Vec<SocketRegistration>)> {
     control.check()?;
     let _transport = progress::stage(
@@ -157,7 +186,13 @@ pub(crate) fn establish_session_controlled(
                 }
             }
             TransportMode::Listen(addr) => {
-                let listener = BoundListener::bind(addr)?;
+                let owned;
+                let listener = if let Some((listener, _)) = prebound {
+                    listener
+                } else {
+                    owned = BoundListener::bind(addr)?;
+                    &owned
+                };
                 listener.set_nonblocking(true)?;
                 if let Some(progress) = control.progress() {
                     progress.set_phase(Phase::Listening);
@@ -166,8 +201,15 @@ pub(crate) fn establish_session_controlled(
                 let mut sender_control = None;
                 let mut pending_guards =
                     HashMap::<PendingSessionKey, Vec<SocketRegistration>>::new();
+                let deadline = prebound.map(|_| Instant::now() + HANDSHAKE_TIMEOUT * 2);
                 loop {
                     control.check()?;
+                    if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
+                        return Err(network_io(std::io::Error::from(
+                            std::io::ErrorKind::TimedOut,
+                        )))
+                        .context("waiting for direct transfer channels");
+                    }
                     drop_expired_pending_channels(&mut pending);
                     pending_guards.retain(|key, _| pending.contains_key(key));
                     let (stream, peer_addr) = match listener.try_accept_stream() {
@@ -181,6 +223,9 @@ pub(crate) fn establish_session_controlled(
                                 .context("failed to accept v4 connection");
                         }
                     };
+                    if prebound.is_some_and(|(_, peer)| peer != peer_addr.ip()) {
+                        continue;
+                    }
                     let registration = control.register(&stream)?;
                     let kind = if registrations.is_empty() {
                         ChannelKind::Control
@@ -240,7 +285,7 @@ pub(crate) fn establish_session_controlled(
     result.map(|session| (session, registrations))
 }
 
-fn connect_stream_controlled(
+pub(super) fn connect_stream_controlled(
     addr: SocketAddr,
     control: &SessionControl,
 ) -> Result<(TcpStream, SocketRegistration)> {
@@ -507,7 +552,7 @@ fn clear_handshake_timeout(stream: &TcpStream) -> Result<()> {
 }
 
 fn perform_handshake(
-    stream: &mut TcpStream,
+    stream: &mut (impl Read + Write),
     role: Role,
     dump_id: Option<&str>,
     token: Option<&str>,
@@ -553,7 +598,7 @@ fn require_sender_dump_id(dump_id: Option<&str>) -> Result<&str> {
 }
 
 pub(crate) fn establish_stream_session(
-    mut stream: TcpStream,
+    stream: TcpStream,
     role: Role,
     dump_id: Option<&str>,
     token: Option<&str>,
@@ -565,8 +610,6 @@ pub(crate) fn establish_stream_session(
         .context("failed to restore v4 stream to blocking mode")?;
 
     configure_stream(&stream)?;
-    let handshake = perform_handshake(&mut stream, role, dump_id, token, local_channel)?;
-    clear_handshake_timeout(&stream)?;
 
     let local_addr = stream
         .local_addr()
@@ -578,6 +621,35 @@ pub(crate) fn establish_stream_session(
             .context("failed to query peer v4 stream address")?,
     };
 
+    let channel = handshake_channel(
+        stream,
+        role,
+        dump_id,
+        token,
+        local_channel,
+        local_addr,
+        peer_addr,
+    )?;
+    clear_handshake_timeout(&channel.stream)?;
+    Ok(channel)
+}
+
+pub(crate) fn handshake_channel<T: Read + Write>(
+    mut stream: T,
+    role: Role,
+    dump_id: Option<&str>,
+    token: Option<&str>,
+    local_channel: Option<(ChannelKind, u64)>,
+    local_addr: SocketAddr,
+    peer_addr: SocketAddr,
+) -> Result<ChannelSession<T>> {
+    let handshake = perform_handshake(&mut stream, role, dump_id, token, local_channel)?;
+    if let Some((expected, _)) = local_channel {
+        anyhow::ensure!(
+            handshake.channel_kind == expected,
+            "v4 handshake channel kind mismatch"
+        );
+    }
     Ok(ChannelSession {
         stream,
         local_role: role,
@@ -590,7 +662,10 @@ pub(crate) fn establish_stream_session(
     })
 }
 
-pub(crate) fn assemble_session(control: ChannelSession, data: ChannelSession) -> Result<Session> {
+pub(crate) fn assemble_session<T>(
+    control: ChannelSession<T>,
+    data: ChannelSession<T>,
+) -> Result<Session<T>> {
     if control.channel_kind != ChannelKind::Control {
         bail!(
             "v4 expected control channel, got {:?}",

@@ -2,22 +2,40 @@
 
 ## CLI
 
-Run `fast-dump` without arguments in a terminal to open the English setup wizard. It
-guides you through the role, transport, address, paths, optional dump ID,
-sender zstd level, and masked token. A complete `sender` or `receiver` command
-starts the transfer directly with a live terminal dashboard. Explicit incomplete
-commands remain argument errors; the wizard does not silently fill missing
-command flags.
+Run `fast-dump` without arguments in a terminal to open the English setup wizard.
+Choose Relay, Listen, or Connect with the arrow keys and confirm with Enter.
+Other fields are dimmed until you confirm. Relay starts the server with
+separate listen address and port fields, prefilled with `0.0.0.0` and `9876`.
+It generates its TLS key pair and prints a relay invitation after startup.
+Use Connect → Via relay when peers can reach the relay but cannot accept
+incoming connections from each other. Enter the relay host, port, and the
+invitation. A short access token for a relay with a configured certificate
+opens the optional CA file field. For P2P, use Listen on one peer and
+Connect → Direct on the other.
+Provide the same optional shared P2P token on both ends.
+
+Once a peer is available, the connected screen shows its system hostname.
+The P2P recipient is preselected. In Relay, use the arrow keys to select a
+recipient. Duplicate hostnames are shown with their connection numbers.
+Press Enter on the selected recipient and enter the source directory. On
+this form, F2 cycles between the source and optional dump ID and zstd level.
+Enter submits a transfer offer with the source's short name. The recipient
+sees the sender's hostname and the offer. Enter lets them choose a destination
+and accept. Esc declines. After the transfer, close the result screen to
+return to the same connection; either peer can then offer another folder.
+A complete `sender` or `receiver` command starts the transfer directly with a
+live terminal dashboard. Explicit incomplete commands remain argument errors.
+Use `--join-relay <HOST:PORT> --invitation <STRING>` to open the relay lobby
+directly from a terminal. These options are used together at the top level.
 In the wizard, Listen defaults to `0.0.0.0:7000` (all IPv4 interfaces).
 Connect uses a separate address field: `127.0.0.1:7000` is only for peers on
 the same host; enter the listening host's network IP for a remote transfer.
 Changing transport modes preserves the address entered for each mode.
-The sender's `Zstd level` field defaults to `3`; the review screen and dashboard
-show the selected level. The wizard accepts levels supported by the linked zstd
-library, including negative fast levels and `0` for zstd's default. Switching
-roles or transport modes preserves the edited sender level. Receiver setup has
-no compression-level field. For command-line launches use `--level 3` (or, for
-example, `--level 1`); write negative levels as `--level=-1`.
+The offer's `Zstd level` field defaults to `3`. It accepts the levels supported
+by the linked zstd library, including negative fast levels and `0` for zstd's
+default. The dashboard displays the chosen level. For command-line launches
+use `--level 3` (or, for example, `--level 1`); write negative levels as
+`--level=-1`.
 
 The English dashboard uses a dark cyan/violet theme, speed and durability
 cards, a one-minute throughput graph, session details, and a log bounded to 200
@@ -80,6 +98,9 @@ The receiver cannot know the sender's complete scan count. No overall percentage
 or ETA is displayed because scanning overlaps transfer and the total is unknown.
 Do not pre-scan the source to obtain a total for these estimates.
 Listener mode shows active sessions and the latest twenty completed sessions.
+The selected completed session shows its skip count on the main screen. A
+completed receiver session also shows the archive path. An idle receiver
+listener shows that it is waiting for another transfer.
 
 `Ctrl+C` requests a safe stop in both dashboard and plain modes. It interrupts
 network waits, stops new work, and waits for worker cleanup; the exit code is
@@ -94,11 +115,13 @@ listen mode stays active until stopped.
 A failed incoming channel or transfer does not stop `receiver --listen`: it
 releases that session and waits for another connection. A `Failed` session in
 the dashboard does not mean that the listener stopped. Sender runs and
-`receiver --connect` can restart after transient network failures using
+connecting receivers can restart after transient network failures using
 `--retries <N>` and `--retry-delay-secs <SECONDS>`. Plain mode defaults to no
 retries; the GUI defaults to **10 retries with a 10-second delay**. An explicit
 `--retries 0` disables retries in either mode. Global retry flags survive wizard
-setup. Resolve presentation defaults at launch and preserve them if terminal
+setup. For the connected interface they govern initial connection attempts;
+submit a new offer to retry an interrupted transfer on a surviving connection.
+Resolve presentation defaults at launch and preserve them if terminal
 initialization falls back to plain output. The count means additional
 attempts after the first one, and the delay must be at least one second.
 
@@ -129,6 +152,7 @@ Commands:
 
 - `fast-dump sender`
 - `fast-dump receiver`
+- `fast-dump relay`
 
 Global options:
 
@@ -140,13 +164,13 @@ Global options:
 ### Sender
 
 ```text
-fast-dump sender [OPTIONS] --source <SOURCE> <--listen <LISTEN>|--connect <CONNECT>>
+fast-dump sender [OPTIONS] --source <SOURCE> <--listen <LISTEN>|--connect <CONNECT>|--relay <HOST:PORT>>
 ```
 
 Required:
 
 - `--source <DIR>`
-- exactly one of `--listen <ADDR>` or `--connect <ADDR>`
+- exactly one of `--listen <ADDR>`, `--connect <ADDR>`, or `--relay <HOST:PORT>`
 
 Optional:
 
@@ -192,13 +216,13 @@ Notes:
 ### Receiver
 
 ```text
-fast-dump receiver [OPTIONS] --data-dir <DATA_DIR> <--listen <LISTEN>|--connect <CONNECT>>
+fast-dump receiver [OPTIONS] --data-dir <DATA_DIR> <--listen <LISTEN>|--connect <CONNECT>|--relay <HOST:PORT>>
 ```
 
 Required:
 
 - `--data-dir <DIR>`
-- exactly one of `--listen <ADDR>` or `--connect <ADDR>`
+- exactly one of `--listen <ADDR>`, `--connect <ADDR>`, or `--relay <HOST:PORT>`
 
 Optional:
 
@@ -208,7 +232,67 @@ Optional:
 Notes:
 
 - `--max-sessions` matters in `receiver --listen` mode.
-- In `receiver --connect` mode one process handles one dump session.
+- In `receiver --connect` and `receiver --relay` modes one process handles one dump session.
+
+### Relay
+
+On a reachable host, choose Relay in the wizard or run
+`fast-dump relay --access --listen 0.0.0.0:9876`. The relay generates a fresh
+TLS key pair and prints an invitation after binding the listener. Share the
+whole invitation through a trusted channel. A client pins the public-key
+fingerprint from the invitation before sending the 12-character access token.
+The relay prints a PowerShell command for Windows x86-64 and a Bash command
+for Linux x86-64. Each downloads the latest GitHub release binary and its
+matching `.sha256` file into a temporary directory, verifies the binary, and
+starts it in the same terminal. When the client exits, the command removes
+its temporary files. Share the commands only with intended participants
+because they contain the invitation.
+
+If the relay listens on all interfaces, replace `relay.example` with a host
+or IP that the clients can reach.
+
+Restarting the relay creates a new key pair and invitation. Up to 15 clients
+can join at once. A valid token receives an immediate admission or capacity response.
+An invalid token receives a rejection one second after its request is read.
+Clients stay connected while idle and can choose a different recipient or
+switch roles after each transfer. Each client handles one transfer at a time.
+
+Run `fast-dump relay --listen <IP:PORT> --config <FILE>` for scripted transfers
+with role keys and use explicit sender and receiver commands on the clients.
+An access-token relay started from the CLI can also use `--config <FILE>` or
+`--certificate <CHAIN.pem> --private-key <KEY.pem>`. In this mode it prints
+the short access token. Clients trust the chain and verify the relay hostname
+or IP as usual.
+Paths in the TOML file are relative to the file's directory.
+
+```toml
+certificate = "fullchain.pem"
+private_key = "privkey.pem"
+
+[rooms.backup]
+sender_key_file = "sender.key"
+receiver_key_file = "receiver.key"
+```
+
+Generate a separate random 32-byte key for each role in each room, encoded as
+64 hexadecimal digits. Keep the key files private and give each client the file
+for its role. The service loads the configured keys and certificates at startup.
+Room names use 1–64 ASCII letters, digits, hyphens, or underscores.
+
+- Both clients pass `--relay <HOST:PORT> --room <NAME> --relay-token-file <FILE>`.
+- Clients use the bundled public trust anchors by default. For a private CA, give
+  both clients `--relay-ca-file <PEM>` to use that trust store. The certificate
+  must match the hostname or IP in `--relay`. Bracket IPv6 addresses.
+  The hostname must route both peers to the same relay instance.
+- Relay role keys authorize joining a room. The optional existing `--token`
+  still applies to the v4 handshake between the two peers.
+- Each room handles one transfer attempt at a time. The first peer can wait up to
+  60 seconds for the second. After matching, both data channels have 10 seconds
+  to attach. Direct push and pull use their existing connection behavior.
+- When a connection drops, both peers reconnect to resume. To enable automatic
+  retries in plain mode, pass `--retries <N>` to both clients. A pairing timeout
+  or busy room uses the network retry budget. A rejected room key does not.
+- TLS terminates at the relay. Use a relay operator trusted with dump contents.
 
 ## Usage Examples
 
