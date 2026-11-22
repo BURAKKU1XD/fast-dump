@@ -49,8 +49,8 @@ The detailed wire reference for the active runtime lives in
 
 ## Relay transport
 
-Both peers connect outbound using TLS 1.3. The relay pairs their control channels
-by configured room and opposite authenticated roles, then accepts their data
+In scripted role-key mode, both peers connect outbound using TLS 1.3. The relay
+pairs their control channels by configured room and opposite authenticated roles, then accepts their data
 channels for the same random attempt ID. Only after all four sockets are ready
 do the peers start the v4 handshake. The relay forwards opaque bytes in both
 directions and keeps no archive or durable transfer state.
@@ -65,15 +65,26 @@ boundary. The same receiver storage and ACK ordering apply to all transports.
 
 The access-token relay adds a persistent lobby over TLS with at most 15
 members. Its peers join before picking a transfer role. An accepted offer
-reserves one transfer per peer and creates separate random attachment
-credentials for their two v4 channels. Unattached channel reservations expire;
+reserves one transfer per peer and sends each peer an attachment credential over
+its lobby TLS session. Updated peers prove possession on their TCP attachments
+with a fresh HMAC challenge. Unattached channel reservations expire;
 finished transfers release both peers for further offers. Each persistent
 connection uses bounded frame queues, and a client that stops reading and
-fills its queue is disconnected. The relay still forwards v4 bytes unchanged.
+fills its queue is disconnected. The relay forwards TCP byte streams carrying
+one v4 channel each inside peer TLS. Existing clients that both use the legacy
+attachment protocol continue to use their relay TLS channels. A compatible
+relay also forwards transfers between two older peer TLS clients that verify a
+code. Clients that use different transfer modes cannot pair.
 
 By default the access-token relay generates an in-memory Ed25519 TLS identity.
-Clients use the invitation to pin its public key before sending the access
-token. Configured certificate chains remain available for CLI deployments.
+Temporary-relay clients learn the relay key on the lobby TLS connection, verify
+the handshake signature, then send the access token. Each client also generates
+an in-memory Ed25519 key pair before joining. The receiver presents its key on
+both peer TLS channels. The receiver sends its public key with acceptance
+over the TLS lobby. The relay forwards that key to the sender, which checks it
+on both peer TLS channels before starting v4. The relay is trusted to supply the
+correct key. Configured certificate chains remain available for independent
+authentication of the lobby relay.
 
 In the interactive P2P flow, peers keep a separate control connection while
 idle and between transfers. The listener and connecting peer can each send an

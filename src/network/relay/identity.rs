@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use anyhow::{Context, Result};
 use ring::digest::{SHA256, digest};
@@ -21,15 +21,26 @@ use tokio_rustls::rustls::{
 };
 use tokio_rustls::{TlsAcceptor, TlsConnector};
 
-pub(super) type Fingerprint = [u8; 32];
+// DER SubjectPublicKeyInfo для Ed25519 по RFC 8410 занимает 44 байта.
+pub(super) type PublicKey = [u8; 44];
 
-pub(super) fn generate() -> Result<(TlsAcceptor, Fingerprint)> {
+#[derive(Debug)]
+pub(super) enum PinnedKey {
+    FirstUse(OnceLock<PublicKey>),
+    PublicKey(PublicKey),
+    Fingerprint([u8; 32]),
+}
+
+pub(super) fn generate() -> Result<(TlsAcceptor, PublicKey)> {
     let key = Ed25519KeyPair::generate_pkcs8(&SystemRandom::new())
         .map_err(|_| anyhow::anyhow!("generate relay TLS identity"))?;
     let private = PrivateKeyDer::from(PrivatePkcs8KeyDer::from(key.as_ref()));
     let signing_key = provider::sign::any_supported_type(&private)?;
     let public = signing_key.public_key().context("get relay public key")?;
-    let fingerprint = fingerprint(public.as_ref());
+    let public_key = public
+        .as_ref()
+        .try_into()
+        .context("invalid relay public key length")?;
     let key = CertifiedKey::new(
         vec![CertificateDer::from(public.as_ref().to_vec())],
         signing_key,
@@ -38,23 +49,20 @@ pub(super) fn generate() -> Result<(TlsAcceptor, Fingerprint)> {
     let config = ServerConfig::builder_with_protocol_versions(&[&TLS13])
         .with_no_client_auth()
         .with_cert_resolver(Arc::new(resolver));
-    Ok((TlsAcceptor::from(Arc::new(config)), fingerprint))
+    Ok((TlsAcceptor::from(Arc::new(config)), public_key))
 }
 
-pub(super) fn connector(expected: Fingerprint) -> TlsConnector {
+pub(super) fn connector(expected: PinnedKey) -> TlsConnector {
     let config = ClientConfig::builder_with_protocol_versions(&[&TLS13])
         .dangerous()
-        .with_custom_certificate_verifier(Arc::new(PinnedKey(expected)))
+        .with_custom_certificate_verifier(Arc::new(expected))
         .with_no_client_auth();
     TlsConnector::from(Arc::new(config))
 }
 
-fn fingerprint(public: &[u8]) -> Fingerprint {
+pub(super) fn fingerprint(public: &[u8]) -> [u8; 32] {
     digest(&SHA256, public).as_ref().try_into().unwrap()
 }
-
-#[derive(Debug)]
-struct PinnedKey(Fingerprint);
 
 impl ServerCertVerifier for PinnedKey {
     fn verify_server_cert(
@@ -65,9 +73,17 @@ impl ServerCertVerifier for PinnedKey {
         _: &[u8],
         _: UnixTime,
     ) -> Result<ServerCertVerified, Error> {
-        // Приглашение привязывает открытый ключ к нужному релею. TLS отдельно
-        // проверяет подпись рукопожатия этим ключом до отправки токена.
-        if intermediates.is_empty() && bool::from(fingerprint(end_entity.as_ref()).ct_eq(&self.0)) {
+        let public = end_entity.as_ref();
+        let matches = match self {
+            Self::FirstUse(first) => {
+                // Один коннектор хранит ключ лобби и проверяет его на каналах передачи.
+                <&PublicKey>::try_from(public)
+                    .is_ok_and(|key| bool::from(key.ct_eq(first.get_or_init(|| *key))))
+            }
+            Self::PublicKey(key) => bool::from(public.ct_eq(key)),
+            Self::Fingerprint(expected) => bool::from(fingerprint(public).ct_eq(expected)),
+        };
+        if intermediates.is_empty() && matches {
             Ok(ServerCertVerified::assertion())
         } else {
             Err(Error::InvalidCertificate(
@@ -82,7 +98,9 @@ impl ServerCertVerifier for PinnedKey {
         _: &CertificateDer<'_>,
         _: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, Error> {
-        Err(Error::General("relay invitation requires TLS 1.3".into()))
+        Err(Error::General(
+            "relay raw public keys require TLS 1.3".into(),
+        ))
     }
 
     fn verify_tls13_signature(

@@ -9,7 +9,9 @@ use anyhow::{Context, Result, ensure};
 use ring::rand::{SecureRandom, SystemRandom};
 use serde::Deserialize;
 use subtle::ConstantTimeEq;
-use tokio::io::{self, AsyncBufRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
+use tokio::io::{
+    self, AsyncBufRead, AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader,
+};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{Notify, mpsc};
 use tokio::task::JoinSet;
@@ -20,7 +22,7 @@ use tokio_rustls::{TlsAcceptor, server::TlsStream};
 
 use super::{
     ATTACH_DATA, Attempt, BUSY, CLOSE_GRACE, DENIED, EXPIRED, HANDSHAKE, Key, MATCHED, READY,
-    Registration, WAIT_PEER, read_key, validate_room,
+    Registration, RelayStatus, WAIT_PEER, read_key, validate_room,
 };
 use crate::cli::RelayArgs;
 use crate::role::Role;
@@ -62,16 +64,24 @@ struct Join {
 }
 
 pub(crate) fn serve(args: RelayArgs, control: &RunControl) -> Result<()> {
+    serve_with_status(args, control, RelayStatus::print)
+}
+
+pub(crate) fn serve_with_status(
+    args: RelayArgs,
+    control: &RunControl,
+    ready: impl FnOnce(RelayStatus),
+) -> Result<()> {
     let automatic = args.access
         && args.config.is_none()
         && args.certificate.is_none()
         && args.private_key.is_none();
-    let (tls, pin, keys) = if automatic {
-        let (tls, pin) = super::identity::generate()?;
-        (tls, Some(pin), HashMap::new())
+    let (tls, keys) = if automatic {
+        let (tls, _) = super::identity::generate()?;
+        (tls, HashMap::new())
     } else {
         let (tls, keys) = configured_tls(&args)?;
-        (tls, None, keys)
+        (tls, keys)
     };
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(std::thread::available_parallelism().map_or(1, |n| n.get().min(4)))
@@ -80,11 +90,15 @@ pub(crate) fn serve(args: RelayArgs, control: &RunControl) -> Result<()> {
     runtime.block_on(async {
         let listener = TcpListener::bind(args.listen)
             .await
-            .context("bind relay listener")?;
-        eprintln!("Relay listening on {}", listener.local_addr()?);
+            .map_err(|error| crate::network::listen_error(args.listen, error))?;
         if args.access {
-            super::access::listen(listener, tls, control, pin).await
+            super::access::listen(listener, tls, control, automatic, ready).await
         } else {
+            ready(RelayStatus {
+                listen: listener.local_addr()?,
+                token: None,
+                clients: None,
+            });
             listen(listener, tls, keys, control).await
         }
     })
@@ -347,7 +361,12 @@ async fn send(stream: &mut Stream, reply: &[u8]) -> std_io::Result<()> {
     stream.flush().await
 }
 
-pub(super) async fn forward(sc: Stream, rc: Stream, sd: Stream, rd: Stream) -> Result<()> {
+pub(super) async fn forward<S: AsyncRead + AsyncWrite + Unpin>(
+    sc: S,
+    rc: S,
+    sd: S,
+    rd: S,
+) -> Result<()> {
     let (sc_read, sc_write) = io::split(sc);
     let (rc_read, rc_write) = io::split(rc);
     let (sd_read, sd_write) = io::split(sd);

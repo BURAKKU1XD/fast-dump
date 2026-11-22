@@ -70,26 +70,54 @@ The access-token lobby has a separate `FDA1` registration. The header is
 the 4-byte magic, a one-byte selector (0 join, 1 control attachment, 2 data
 attachment), and 16 bytes of credentials. Join uses a 12-byte ASCII token
 followed by a feature byte and three reserved bytes. Bit 0 requests hostname
-metadata and is echoed in the first byte of the join reply payload. Each
-attachment uses the full 16-byte credential.
+metadata. Bit 1 requests peer TLS transfers. Bit 2, together with bit 1,
+requests receiver keys supplied by the relay. The relay echoes the features
+in the first byte of the join reply payload. Current clients require bits 1
+and 2. Clients must use the same transfer mode to pair. When two legacy
+clients pair, each relay TLS attachment uses the full 16-byte credential.
 The default access-token TLS setup uses a server raw public key (RFC 7250).
-The operator shares the invitation `FD1:<64 hex digits>:<access token>` out
-of band. The client checks the SHA-256 digest of the public key's DER
-SubjectPublicKeyInfo against the invitation and verifies the TLS handshake
-signature before sending the token. Configured X.509 access relays use the
+Temporary-relay clients learn the relay public key during the lobby TLS
+handshake and check the signature before sending the access token.
+Existing `FD1` and `FD2` invitations still authenticate the relay with the
+supplied fingerprint or public key. Configured X.509 access relays use the
 short token with the configured TLS trust model.
 Once registered, lobby control messages have a one-byte kind, a big-endian
 32-bit client ID or peer count, and 60 bytes of payload. A peer list uses
 one big-endian ID per entry. The token is generated from a 32-symbol alphabet.
 The server responds to a wrong token after a one-second delay and applies no
 such delay to valid tokens. At most 15 joined clients hold persistent lobby
-connections. Peer-name updates and transfer offers carry a zero-padded
-UTF-8 hostname or source short name, respectively. A transfer offer
-identifies its recipient. Acceptance assigns
-the sender and receiver individual attachment credentials over their lobby
-connections. Once all four transfer channels attach and receive readiness,
-they carry the existing v4 handshake and transfer. The lobby stays connected
-between transfers. Reply 23 releases a transfer after its channels were ready.
+connections. A peer-name update carries a zero-padded UTF-8 hostname.
+A peer TLS offer identifies the recipient and leaves the payload empty.
+Legacy offers may carry the source short name. Acceptance assigns the sender
+and receiver individual 16-byte attachment credentials over the TLS lobby.
+When bit 2 is active, the receiver sends its 44-byte DER Ed25519
+SubjectPublicKeyInfo at the start of the `ACCEPT` payload. The relay includes
+the key in `START_SEND` immediately after the sender's attachment credential.
+
+For peer TLS attachments, each of the four fresh TCP sockets sends the
+five-byte `FDA1` prefix and channel selector (1 control, 2 data). The relay
+sends a fresh random 16-byte challenge. The client sends HMAC-SHA256 of the
+five-byte header followed by the challenge, keyed by the attachment credential.
+Once all four attachments are authenticated, the relay sends the existing
+`ATTACHED` frame on each socket and begins forwarding both duplex streams.
+The sender is the TLS 1.3 client on both channels. The receiver presents its
+lobby client's Ed25519 public key on each channel. With bit 2 active, the
+sender verifies it against the key in `START_SEND` on each TLS handshake,
+then starts v4.
+
+Older clients using bit 1 alone learn the key on the first peer TLS handshake
+and require the same key on both. They derive 32 bytes from each peer TLS
+channel using the TLS exporter
+label `EXPORTER-fast-dump-transfer-verification` and contexts `control` and
+`data`. The displayed code is the first 16 bytes of SHA-256 over the exporter
+values in control-then-data order. Each peer verifies the full displayed code
+with the other peer over a separate trusted channel. After local confirmation,
+each sends byte `1` inside the peer control TLS channel and waits for the
+other confirmation before sending any v4 messages. Both v4 channels then
+carry their existing handshake and transfer inside peer TLS.
+
+The lobby stays connected between transfers. Reply 23 releases a transfer
+after its channels were ready.
 The v4 exchange determines archive success. There is at most one outstanding
 offer or transfer per member.
 

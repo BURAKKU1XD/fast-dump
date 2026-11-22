@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::fs;
-use std::net::SocketAddr;
+use std::net::{SocketAddr, TcpListener};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::thread;
@@ -81,6 +81,35 @@ impl Drop for Process {
             let _ = self.child.kill();
             let _ = self.child.wait();
         }
+    }
+}
+
+#[test]
+fn occupied_listener_reports_the_address_for_each_cli_role() {
+    let occupied = TcpListener::bind("127.0.0.1:0").unwrap();
+    let address = occupied.local_addr().unwrap().to_string();
+    let work = TestDir::new();
+    for role in ["relay", "sender", "receiver"] {
+        let mut command = Command::new(binary_path());
+        command.args(["--no-gui", role, "--listen", &address]);
+        match role {
+            "relay" => command.arg("--access"),
+            "sender" => command
+                .args(["--dump-id", "bind-check", "--source"])
+                .arg(work.path()),
+            "receiver" => command.arg("--data-dir").arg(work.path()),
+            _ => unreachable!(),
+        };
+        let mut process = Process::spawn(command, work.path(), role);
+        assert_eq!(process.wait().code(), Some(1), "{}", process.stderr());
+        assert!(
+            process.stderr().contains(&format!(
+                "Cannot listen on {address}: port is already in use"
+            )),
+            "{}",
+            process.stderr()
+        );
+        assert!(process.stdout().is_empty());
     }
 }
 

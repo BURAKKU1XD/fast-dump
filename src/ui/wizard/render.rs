@@ -146,6 +146,8 @@ impl Wizard {
                     _ => None,
                 };
                 let value = match step {
+                    Step::RelayTls if self.trust_first_key => "‹ Temporary relay ›".into(),
+                    Step::RelayTls => "‹ CA certificate ›".into(),
                     Step::Connection => {
                         if self.transport == Some(Transport::ViaRelay) {
                             "‹ Via relay ›".to_owned()
@@ -211,7 +213,7 @@ impl Wizard {
                     "Listen on  {}",
                     safe_text(&self.endpoint(transport))
                 )),
-                Line::from("The relay will show an invitation after it starts."),
+                Line::from("Client commands appear when the relay is ready."),
             ]);
         } else if transport == Transport::ViaRelay {
             lines.extend([
@@ -267,7 +269,8 @@ impl Wizard {
                 None => "Address",
             },
             Step::RelayPort => "Relay port",
-            Step::AccessToken => "Invitation",
+            Step::AccessToken => "Access token",
+            Step::RelayTls => "Relay TLS",
             Step::RelayCa => "Relay CA file",
             Step::Token => "Token",
             Step::Review => "Start",
@@ -296,7 +299,10 @@ impl Wizard {
             },
             Step::RelayPort => "Enter the port the relay listens on. Default: 9876.",
             Step::AccessToken => {
-                "Paste the relay invitation, or a short access token for a relay with a TLS certificate."
+                "Enter the 12-character access token or paste an existing invitation."
+            }
+            Step::RelayTls => {
+                "Temporary relay learns the key on first connection. CA certificate verifies the server identity."
             }
             Step::RelayCa => {
                 "Optional PEM file for a private CA. Leave empty to use the public trust store."

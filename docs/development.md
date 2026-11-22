@@ -27,8 +27,9 @@ after CI and release stress checks pass. It produces Windows MSVC and Linux GNU
 archives with a build manifest and SHA-256 checksums. It uploads them as
 workflow artifacts, along with standalone binaries and their `.sha256`
 files. Attach `fast-dump-x86_64-pc-windows-msvc.exe`,
-`fast-dump-x86_64-unknown-linux-gnu` and their matching `.sha256` files to
-the public release marked Latest to enable the relay's download commands.
+`fast-dump-x86_64-unknown-linux-gnu` to the public release marked Latest to
+enable the relay's download commands. Publish the matching `.sha256` files
+alongside them for manual verification.
 It builds through `scripts/build-release.ps1`, checks the resulting binary for
 local build paths, and runs its `--version` and `--help` commands. Before packaging,
 it also checks the staged binary, manifest, and lockfile for path leaks.

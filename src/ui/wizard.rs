@@ -13,6 +13,7 @@ use clap::Parser;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use crate::cli::Cli;
+use crate::network::ListenError;
 use crate::network::direct;
 use crate::network::relay::access::{LobbySettings, credentials};
 use crate::network::transport::TransportMode;
@@ -37,6 +38,7 @@ enum Step {
     RelayPort,
     AccessToken,
     Token,
+    RelayTls,
     RelayCa,
     Review,
 }
@@ -75,6 +77,7 @@ struct Wizard {
     relay_client_port: Input,
     access_token: Input,
     relay_ca: Input,
+    trust_first_key: bool,
     token: Input,
     error: Option<String>,
     help: bool,
@@ -99,6 +102,7 @@ impl Wizard {
             relay_client_port: Input::new(DEFAULT_RELAY_PORT),
             access_token: Input::default(),
             relay_ca: Input::default(),
+            trust_first_key: false,
             token: Input::default(),
             error: None,
             help: false,
@@ -121,8 +125,11 @@ impl Wizard {
         steps.push(Step::Address);
         if transport == Transport::ViaRelay {
             steps.extend([Step::RelayPort, Step::AccessToken]);
-            if credentials(&self.access_token.value).is_ok_and(|value| !value.has_fingerprint()) {
-                steps.push(Step::RelayCa);
+            if credentials(&self.access_token.value).is_ok_and(|value| !value.has_identity()) {
+                steps.push(Step::RelayTls);
+                if !self.trust_first_key {
+                    steps.push(Step::RelayCa);
+                }
             }
             steps.push(Step::Review);
             return steps;
@@ -318,17 +325,35 @@ impl Wizard {
         let endpoint = self.endpoint(Transport::ViaRelay);
         crate::network::relay::validate_endpoint(&endpoint)?;
         let credentials = credentials(&self.access_token.value)?;
-        let ca_file = if credentials.has_fingerprint() || self.relay_ca.value.is_empty() {
-            None
-        } else {
-            Self::validate_file(&self.relay_ca, "Relay CA file")?;
-            Some(self.relay_ca.value.clone().into())
-        };
+        let trust_first_key = self.trust_first_key && !credentials.has_identity();
+        let ca_file =
+            if credentials.has_identity() || trust_first_key || self.relay_ca.value.is_empty() {
+                None
+            } else {
+                Self::validate_file(&self.relay_ca, "Relay CA file")?;
+                Some(self.relay_ca.value.clone().into())
+            };
         Ok(Launch::Lobby(lobby::Settings::Relay(LobbySettings {
             endpoint,
             token: self.access_token.value.clone(),
             ca_file,
+            trust_first_key,
         })))
+    }
+
+    fn handle_listen_error(&mut self, error: &anyhow::Error) -> bool {
+        let Some(error) = error.downcast_ref::<ListenError>() else {
+            return false;
+        };
+        self.step = match self.transport {
+            Some(Transport::Relay) if error.kind != std::io::ErrorKind::AddrNotAvailable => {
+                Step::RelayPort
+            }
+            Some(Transport::Relay | Transport::Listen) => Step::Address,
+            _ => return false,
+        };
+        self.error = Some(error.to_string());
+        true
     }
 
     fn key(&mut self, key: KeyEvent) -> Result<Option<Launch>> {
@@ -344,6 +369,11 @@ impl Wizard {
             KeyCode::Tab if self.step != Step::Transport => self.next(),
             KeyCode::Enter if self.step == Step::Review => return self.launch().map(Some),
             KeyCode::Enter => self.next(),
+            KeyCode::Left | KeyCode::Right | KeyCode::Up | KeyCode::Down
+                if self.step == Step::RelayTls =>
+            {
+                self.trust_first_key = !self.trust_first_key;
+            }
             KeyCode::Left | KeyCode::Right | KeyCode::Up | KeyCode::Down
                 if self.step == Step::Connection =>
             {
@@ -383,9 +413,20 @@ pub(crate) fn wizard(
     debug: bool,
     retry_policy: RetryPolicy,
     control: &RunControl,
-) -> Result<Option<Launch>> {
-    let mut terminal = TerminalGuard::enter()?;
+    mut start: impl FnMut(Launch) -> Result<()>,
+) -> Result<()> {
     let mut wizard = Wizard::new(debug, retry_policy, Theme::detect());
+    while let Some(launch) = prompt(&mut wizard, control)? {
+        match start(launch) {
+            Err(error) if !control.is_cancelled() && wizard.handle_listen_error(&error) => {}
+            result => return result,
+        }
+    }
+    Ok(())
+}
+
+fn prompt(wizard: &mut Wizard, control: &RunControl) -> Result<Option<Launch>> {
+    let mut terminal = TerminalGuard::enter().context("Could not open the setup wizard")?;
     loop {
         if terminal.was_restored_after_panic() {
             bail!("setup interrupted by a worker panic");
@@ -435,6 +476,30 @@ mod tests {
     use crate::cli::Command;
     use ratatui::text::Span;
     use ratatui::{Terminal, backend::TestBackend};
+
+    #[test]
+    fn an_occupied_port_returns_to_the_editable_listener_field() {
+        let address = "127.0.0.1:9876".parse().unwrap();
+        let error = crate::network::listen_error(
+            address,
+            std::io::Error::from(std::io::ErrorKind::AddrInUse),
+        );
+        for (transport, step, original) in [
+            (Transport::Relay, Step::RelayPort, "9876"),
+            (Transport::Listen, Step::Address, "0.0.0.0:7000"),
+        ] {
+            let mut wizard = new_wizard(false, ColorMode::Monochrome);
+            wizard.transport = Some(transport);
+            wizard.step = Step::Review;
+            assert!(wizard.handle_listen_error(&error));
+            assert_eq!(wizard.step, step);
+            assert_eq!(wizard.current_input().unwrap().value, original);
+            assert_eq!(
+                wizard.error.as_deref(),
+                Some("Cannot listen on 127.0.0.1:9876: port is already in use")
+            );
+        }
+    }
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
@@ -576,7 +641,7 @@ mod tests {
         assert_eq!(settings.token, "23456789ABCD");
         assert_eq!(settings.ca_file.as_deref(), Some(Path::new("Cargo.toml")));
 
-        let invitation = format!("FD1:{}:23456789ABCD", "a1".repeat(32));
+        let invitation = format!("FD2:{}:23456789ABCD", "a1".repeat(44));
         wizard.access_token = Input::new(&invitation);
         wizard.step = Step::AccessToken;
         wizard.key(key(KeyCode::Enter)).unwrap();
@@ -588,6 +653,29 @@ mod tests {
         };
         assert_eq!(settings.token, invitation);
         assert!(settings.ca_file.is_none());
+    }
+
+    #[test]
+    fn temporary_relay_skips_the_ca_file_with_a_short_token() {
+        let mut wizard = new_wizard(false, ColorMode::Monochrome);
+        wizard.transport = Some(Transport::ViaRelay);
+        wizard.addresses[Transport::ViaRelay as usize] = Input::new("127.0.0.1");
+        wizard.access_token = Input::new("23456789ABCD");
+        wizard.step = Step::AccessToken;
+        wizard.key(key(KeyCode::Enter)).unwrap();
+        assert_eq!(wizard.step, Step::RelayTls);
+        assert!(wizard.steps().contains(&Step::RelayCa));
+        wizard.key(key(KeyCode::Right)).unwrap();
+        wizard.key(key(KeyCode::Enter)).unwrap();
+        assert_eq!(wizard.step, Step::Review);
+        let Launch::Lobby(lobby::Settings::Relay(settings)) =
+            wizard.key(key(KeyCode::Enter)).unwrap().unwrap()
+        else {
+            panic!("expected a temporary relay connection");
+        };
+        assert!(settings.trust_first_key);
+        assert!(settings.ca_file.is_none());
+        assert_eq!(settings.token, "23456789ABCD");
     }
 
     #[test]

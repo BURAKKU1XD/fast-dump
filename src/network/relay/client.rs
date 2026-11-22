@@ -30,6 +30,7 @@ use crate::role::Role;
 use crate::runtime::{SessionControl, SocketRegistration};
 
 pub(super) type Stream = TlsStream<TcpStream>;
+pub(super) type TransferStream = tokio_rustls::TlsStream<TcpStream>;
 
 pub(crate) fn establish(
     args: &TransportArgs,
@@ -90,7 +91,7 @@ pub(crate) fn establish(
     control.check()?;
     let (control_stream, data_stream, sockets) = joined?;
     establish_channels(
-        [control_stream, data_stream],
+        [control_stream.into(), data_stream.into()],
         sockets,
         runtime,
         role,
@@ -117,7 +118,7 @@ pub(super) fn connector(ca_file: Option<&Path>) -> Result<TlsConnector> {
 }
 
 pub(super) fn establish_channels(
-    [control_stream, data_stream]: [Stream; 2],
+    [control_stream, data_stream]: [TransferStream; 2],
     sockets: [SocketRegistration; 2],
     runtime: Arc<ClientRuntime>,
     role: Role,
@@ -132,7 +133,7 @@ pub(super) fn establish_channels(
     );
     let nonce = next_session_nonce();
     let deadline = Instant::now() + HANDSHAKE;
-    let establish_channel = |stream: Stream, kind| {
+    let establish_channel = |stream: TransferStream, kind| {
         let local_addr = stream.get_ref().0.local_addr().map_err(network_io)?;
         let peer_addr = stream.get_ref().0.peer_addr().map_err(network_io)?;
         let mut channel = handshake_channel(
@@ -179,6 +180,20 @@ pub(super) async fn open_stream(
     tls: &TlsConnector,
     control: &SessionControl,
 ) -> Result<(Stream, SocketRegistration)> {
+    let (socket, registration) = open_socket(endpoint, address, control).await?;
+    let stream = tls
+        .connect(name, socket)
+        .await
+        .map_err(network_io)
+        .context("relay TLS handshake")?;
+    Ok((stream, registration))
+}
+
+pub(super) async fn open_socket(
+    endpoint: &str,
+    address: Option<SocketAddr>,
+    control: &SessionControl,
+) -> Result<(TcpStream, SocketRegistration)> {
     // Канал данных приходит на тот же адрес, даже если DNS вернул несколько адресов.
     let socket = match address {
         Some(address) => TcpStream::connect(address).await,
@@ -189,12 +204,7 @@ pub(super) async fn open_stream(
     socket.set_nodelay(true)?;
     let socket = socket.into_std()?;
     let registration = control.register(&socket)?;
-    let stream = tls
-        .connect(name, TcpStream::from_std(socket)?)
-        .await
-        .map_err(network_io)
-        .context("relay TLS handshake")?;
-    Ok((stream, registration))
+    Ok((TcpStream::from_std(socket)?, registration))
 }
 
 pub(super) async fn within_handshake<T>(
@@ -240,8 +250,8 @@ impl Drop for ClientRuntime {
 }
 
 struct Channel {
-    reader: Mutex<ReadHalf<Stream>>,
-    writer: Mutex<WriteHalf<Stream>>,
+    reader: Mutex<ReadHalf<TransferStream>>,
+    writer: Mutex<WriteHalf<TransferStream>>,
     stop: watch::Sender<bool>,
     runtime: Arc<ClientRuntime>,
 }
@@ -278,7 +288,7 @@ pub(crate) struct RelayStream {
 }
 
 impl RelayStream {
-    fn new(stream: Stream, runtime: Arc<ClientRuntime>, deadline: Instant) -> Self {
+    fn new(stream: TransferStream, runtime: Arc<ClientRuntime>, deadline: Instant) -> Self {
         let (reader, writer) = tokio::io::split(stream);
         Self {
             channel: Arc::new(Channel {

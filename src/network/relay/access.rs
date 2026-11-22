@@ -1,8 +1,8 @@
+mod attachment;
 mod bootstrap;
 mod client;
 
 use std::collections::BTreeMap;
-use std::fmt::Write as _;
 use std::io;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -10,14 +10,15 @@ use std::time::Duration;
 use anyhow::{Context, Result, ensure};
 use ring::rand::{SecureRandom, SystemRandom};
 use subtle::ConstantTimeEq;
-use tokio::io::AsyncReadExt;
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::JoinSet;
-use tokio::time::{Instant, timeout};
+use tokio::time::{Instant, timeout, timeout_at};
 use tokio_rustls::{TlsAcceptor, server::TlsStream};
 
-use super::identity::Fingerprint;
+use super::RelayStatus;
+use super::identity::{PinnedKey, PublicKey};
 use crate::network::lobby::{
     ACCEPT, BUSY, DECLINE, DECLINED, FAILED, Frame, INCOMING, OFFER, PEER_NAME, PeerId, RELEASED,
 };
@@ -38,11 +39,40 @@ const MAX_CLIENTS: usize = 15;
 const MAX_TASKS: usize = MAX_CLIENTS * 2 + 64;
 const REJECT_DELAY: Duration = Duration::from_secs(1);
 const JOIN_METADATA: u8 = 1;
+const JOIN_PEER_TLS: u8 = 2;
+const JOIN_RELAY_KEY: u8 = 4;
 
 type Stream = TlsStream<TcpStream>;
 type Token = [u8; TOKEN_LEN];
 type AttachKey = [u8; TICKET_LEN];
 type Shared = Arc<Mutex<LobbyState>>;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TransferMode {
+    Legacy,
+    VerifiedCode,
+    RelayKey,
+}
+
+impl TransferMode {
+    fn from_features(features: u8) -> Self {
+        if features & JOIN_PEER_TLS == 0 {
+            Self::Legacy
+        } else if features & JOIN_RELAY_KEY != 0 {
+            Self::RelayKey
+        } else {
+            Self::VerifiedCode
+        }
+    }
+
+    fn features(self) -> u8 {
+        match self {
+            Self::Legacy => 0,
+            Self::VerifiedCode => JOIN_PEER_TLS,
+            Self::RelayKey => JOIN_PEER_TLS | JOIN_RELAY_KEY,
+        }
+    }
+}
 
 const JOINED: u8 = 10;
 const DENIED: u8 = 11;
@@ -52,57 +82,58 @@ const PEERS: u8 = 14;
 const START_SEND: u8 = 16;
 const START_RECEIVE: u8 = 17;
 
-const INVITATION_PREFIX: &str = "FD1:";
 pub(crate) const JOIN_RELAY_ARG: &str = "join-relay";
+pub(crate) const ACCESS_TOKEN_ARG: &str = "access-token";
 pub(crate) const INVITATION_ARG: &str = "invitation";
 
 pub(crate) struct Credentials<'a> {
     token: &'a str,
-    fingerprint: Option<Fingerprint>,
+    identity: Option<PinnedKey>,
 }
 
 impl Credentials<'_> {
-    pub(crate) fn has_fingerprint(&self) -> bool {
-        self.fingerprint.is_some()
+    pub(crate) fn has_identity(&self) -> bool {
+        self.identity.is_some()
     }
 }
 
 pub(crate) fn credentials(text: &str) -> Result<Credentials<'_>> {
     let text = text.trim();
-    let (fingerprint, token) = if let Some(invitation) = text.strip_prefix(INVITATION_PREFIX) {
-        let (pin, token) = invitation
+    let (identity, token) = if let Some((version, invitation)) = text.split_once(':') {
+        let (key, token) = invitation
             .split_once(':')
             .context("Invalid relay invitation")?;
-        ensure!(
-            pin.len() == 64 && pin.bytes().all(|byte| byte.is_ascii_hexdigit()),
-            "Invalid relay invitation fingerprint"
-        );
-        let mut fingerprint = [0; 32];
-        for (byte, pair) in fingerprint
-            .iter_mut()
-            .zip(pin.as_bytes().as_chunks::<2>().0)
-        {
-            *byte = u8::from_str_radix(std::str::from_utf8(pair)?, 16)?;
-        }
-        (Some(fingerprint), token)
+        let identity = match version {
+            "FD2" => PinnedKey::PublicKey(parse_invitation_key(key)?),
+            "FD1" => PinnedKey::Fingerprint(parse_invitation_key(key)?),
+            _ => anyhow::bail!("Unsupported relay invitation version"),
+        };
+        (Some(identity), token)
     } else {
         (None, text)
     };
-    ensure!(
-        token.len() == TOKEN_LEN && token.bytes().all(|byte| ALPHABET.contains(&byte)),
-        "Paste a relay invitation or enter a 12-character access token"
-    );
-    Ok(Credentials { token, fingerprint })
+    validate_access_token(token)?;
+    Ok(Credentials { token, identity })
 }
 
-pub(super) fn invitation(fingerprint: Fingerprint, token: &str) -> String {
-    let mut text = String::from(INVITATION_PREFIX);
-    for byte in fingerprint {
-        write!(text, "{byte:02x}").unwrap();
+fn parse_invitation_key<const N: usize>(hex: &str) -> Result<[u8; N]> {
+    ensure!(
+        hex.len() == N * 2 && hex.bytes().all(|byte| byte.is_ascii_hexdigit()),
+        "Invalid relay invitation key"
+    );
+    let mut key = [0; N];
+    for (byte, pair) in key.iter_mut().zip(hex.as_bytes().as_chunks::<2>().0) {
+        *byte = u8::from_str_radix(std::str::from_utf8(pair)?, 16)?;
     }
-    text.push(':');
-    text.push_str(token);
-    text
+    Ok(key)
+}
+
+pub(crate) fn validate_access_token(token: &str) -> Result<()> {
+    ensure!(
+        token.len() == TOKEN_LEN && token.bytes().all(|byte| ALPHABET.contains(&byte)),
+        "Enter a 12-character relay access token"
+    );
+    Ok(())
 }
 
 fn random<const N: usize>() -> Result<[u8; N]> {
@@ -121,20 +152,23 @@ pub(super) async fn listen(
     listener: TcpListener,
     tls: TlsAcceptor,
     control: &RunControl,
-    fingerprint: Option<Fingerprint>,
+    temporary: bool,
+    ready: impl FnOnce(RelayStatus),
 ) -> Result<()> {
     let token = generate_token()?;
     let code = std::str::from_utf8(&token)?;
-    if let Some(fingerprint) = fingerprint {
-        let invitation = invitation(fingerprint, code);
-        eprintln!("Relay invitation: {invitation}");
-        eprintln!(
-            "{}",
-            bootstrap::instructions(listener.local_addr()?, &invitation)
-        );
+    let listen = listener.local_addr()?;
+    let clients = if temporary {
+        Some(bootstrap::client_commands(listen, code).await)
     } else {
-        eprintln!("Access token: {code}");
-    }
+        None
+    };
+    control.check()?;
+    ready(RelayStatus {
+        listen,
+        token: Some(code.to_owned()),
+        clients,
+    });
     listen_with_token(listener, tls, control, token).await
 }
 
@@ -177,9 +211,29 @@ pub(super) async fn listen_with_token(
     result
 }
 
-async fn register(socket: TcpStream, tls: TlsAcceptor, token: Token, state: Shared) -> Result<()> {
-    let (mut stream, request) = timeout(super::HANDSHAKE, async {
-        socket.set_nodelay(true)?;
+async fn register(
+    mut socket: TcpStream,
+    tls: TlsAcceptor,
+    token: Token,
+    state: Shared,
+) -> Result<()> {
+    let deadline = Instant::now() + super::HANDSHAKE;
+    socket.set_nodelay(true)?;
+    let mut first = [0; 1];
+    if timeout_at(deadline, socket.peek(&mut first)).await?? == 0 {
+        return Ok(());
+    }
+    if first[0] == MAGIC[0] {
+        let (kind, proof) = timeout_at(deadline, attachment::receive(&mut socket)).await??;
+        return attach(
+            &state,
+            kind,
+            Attachment::Peer(proof),
+            TransferSocket::Tcp(socket),
+        )
+        .await;
+    }
+    let (mut stream, request) = timeout_at(deadline, async {
         let mut stream = tls.accept(socket).await?;
         let mut request = [0; 5 + TICKET_LEN];
         stream.read_exact(&mut request).await?;
@@ -200,6 +254,7 @@ async fn register(socket: TcpStream, tls: TlsAcceptor, token: Token, state: Shar
                 outgoing,
                 cancel: Mutex::new(Some(cancel)),
                 metadata: request[5 + TOKEN_LEN] & JOIN_METADATA != 0,
+                mode: TransferMode::from_features(request[5 + TOKEN_LEN]),
                 name: None,
             });
             let Some(id) = id else {
@@ -213,13 +268,38 @@ async fn register(socket: TcpStream, tls: TlsAcceptor, token: Token, state: Shar
             }
         }
         kind @ (ATTACH_CONTROL | ATTACH_DATA) => {
-            let key: AttachKey = request[5..].try_into().unwrap();
-            let transfer = state.lock().unwrap().attach(key, kind, stream)?;
-            if let Some(transfer) = transfer {
-                transfer.forward(&state).await?;
-            }
+            attach(
+                &state,
+                kind,
+                Attachment::Legacy(request[5..].try_into().unwrap()),
+                TransferSocket::RelayTls(Box::new(stream)),
+            )
+            .await?;
         }
         _ => anyhow::bail!("unknown relay access registration"),
+    }
+    Ok(())
+}
+
+enum Attachment {
+    Legacy(AttachKey),
+    Peer(attachment::Proof),
+}
+
+enum TransferSocket {
+    RelayTls(Box<Stream>),
+    Tcp(TcpStream),
+}
+
+async fn attach(
+    state: &Shared,
+    kind: u8,
+    credential: Attachment,
+    socket: TransferSocket,
+) -> Result<()> {
+    let transfer = state.lock().unwrap().attach(credential, kind, socket)?;
+    if let Some(transfer) = transfer {
+        transfer.forward(state).await?;
     }
     Ok(())
 }
@@ -270,15 +350,16 @@ impl Pair {
 struct Transfer {
     pair: Pair,
     keys: [AttachKey; 2],
-    streams: [Option<Stream>; 4],
+    streams: [Option<TransferSocket>; 4],
     deadline: Instant,
     running: bool,
+    peer_tls: bool,
     cancel: Option<oneshot::Sender<()>>,
 }
 
 struct Started {
     pair: Pair,
-    streams: [Stream; 4],
+    streams: [TransferSocket; 4],
     cancel: oneshot::Receiver<()>,
 }
 
@@ -286,6 +367,7 @@ struct Mailbox {
     outgoing: mpsc::Sender<Frame>,
     cancel: Mutex<Option<oneshot::Sender<()>>>,
     metadata: bool,
+    mode: TransferMode,
     name: Option<String>,
 }
 
@@ -302,21 +384,18 @@ impl Mailbox {
 
 impl Started {
     async fn forward(self, state: &Shared) -> Result<()> {
-        let [mut sc, mut sd, mut rc, mut rd] = self.streams;
         let mut attached = false;
+        use TransferSocket::{RelayTls, Tcp};
         let transfer = async {
-            timeout(super::HANDSHAKE, async {
-                let ready = Frame::new(ATTACHED, 0);
-                tokio::try_join!(
-                    ready.write(&mut sc),
-                    ready.write(&mut sd),
-                    ready.write(&mut rc),
-                    ready.write(&mut rd)
-                )
-            })
-            .await??;
-            attached = true;
-            super::server::forward(sc, rc, sd, rd).await
+            match self.streams {
+                [RelayTls(sc), RelayTls(sd), RelayTls(rc), RelayTls(rd)] => {
+                    forward_attached(*sc, *sd, *rc, *rd, &mut attached).await
+                }
+                [Tcp(sc), Tcp(sd), Tcp(rc), Tcp(rd)] => {
+                    forward_attached(sc, sd, rc, rd, &mut attached).await
+                }
+                _ => unreachable!("a transfer has one attachment type"),
+            }
         };
         let result = tokio::select! {
             result = transfer => result,
@@ -326,6 +405,27 @@ impl Started {
         state.lock().unwrap().finish(self.pair, attached);
         result
     }
+}
+
+async fn forward_attached<S: AsyncRead + AsyncWrite + Unpin>(
+    mut sc: S,
+    mut sd: S,
+    mut rc: S,
+    mut rd: S,
+    attached: &mut bool,
+) -> Result<()> {
+    timeout(super::HANDSHAKE, async {
+        let ready = Frame::new(ATTACHED, 0);
+        tokio::try_join!(
+            ready.write(&mut sc),
+            ready.write(&mut sd),
+            ready.write(&mut rc),
+            ready.write(&mut rd)
+        )
+    })
+    .await??;
+    *attached = true;
+    super::server::forward(sc, rc, sd, rd).await
 }
 
 #[derive(Default)]
@@ -347,6 +447,7 @@ impl LobbyState {
         if mailbox.metadata {
             reply.body[0] = JOIN_METADATA;
         }
+        reply.body[0] |= mailbox.mode.features();
         mailbox.send(reply).ok()?;
         self.members.insert(id, mailbox);
         self.broadcast();
@@ -407,12 +508,22 @@ impl LobbyState {
                 }
             }
             OFFER => {
+                if self
+                    .members
+                    .get(&to)
+                    .is_some_and(|recipient| self.members[&from].mode != recipient.mode)
+                {
+                    return self.notify(from, Frame::new(FAILED, to));
+                }
+                let incoming = if self.members[&from].mode != TransferMode::Legacy {
+                    Frame::new(INCOMING, from)
+                } else {
+                    Frame::with_text(INCOMING, from, &frame.text())
+                };
                 if from == to
                     || self.busy(from)
                     || self.busy(to)
-                    || self
-                        .notify(to, Frame::with_text(INCOMING, from, &frame.text()))
-                        .is_err()
+                    || self.notify(to, incoming).is_err()
                 {
                     return self.notify(from, Frame::new(BUSY, to));
                 }
@@ -433,7 +544,7 @@ impl LobbyState {
                     let _ = self.notify(to, Frame::new(DECLINED, from));
                     let _ = self.notify(from, Frame::new(DECLINED, to));
                 } else {
-                    self.accept(pair)?;
+                    self.accept(pair, &frame.body)?;
                 }
             }
             _ => anyhow::bail!("unknown relay lobby command"),
@@ -441,10 +552,15 @@ impl LobbyState {
         Ok(())
     }
 
-    fn accept(&mut self, pair: Pair) -> Result<()> {
+    fn accept(&mut self, pair: Pair, body: &[u8; crate::network::lobby::BODY_LEN]) -> Result<()> {
+        let mode = self.members[&pair.receiver].mode;
         let keys = [random()?, random()?];
         let mut sender = Frame::new(START_SEND, pair.receiver);
         sender.body[..TICKET_LEN].copy_from_slice(&keys[0]);
+        if mode == TransferMode::RelayKey {
+            let receiver_key: &PublicKey = body[..size_of::<PublicKey>()].try_into().unwrap();
+            sender.body[TICKET_LEN..].copy_from_slice(receiver_key);
+        }
         let mut receiver = Frame::new(START_RECEIVE, pair.sender);
         receiver.body[..TICKET_LEN].copy_from_slice(&keys[1]);
         if self.notify(pair.sender, sender).is_err()
@@ -460,23 +576,35 @@ impl LobbyState {
             streams: [None, None, None, None],
             deadline: Instant::now() + super::ATTACH_DATA,
             running: false,
+            peer_tls: mode != TransferMode::Legacy,
             cancel: None,
         });
         Ok(())
     }
 
-    fn attach(&mut self, key: AttachKey, kind: u8, stream: Stream) -> Result<Option<Started>> {
+    fn attach(
+        &mut self,
+        credential: Attachment,
+        kind: u8,
+        stream: TransferSocket,
+    ) -> Result<Option<Started>> {
         let (transfer, side) = self
             .transfers
             .iter_mut()
             .find_map(|transfer| {
-                if transfer.running || transfer.deadline <= Instant::now() {
+                if transfer.running
+                    || transfer.deadline <= Instant::now()
+                    || transfer.peer_tls != matches!(credential, Attachment::Peer(_))
+                {
                     return None;
                 }
                 transfer
                     .keys
                     .iter()
-                    .position(|expected| bool::from(expected.ct_eq(&key)))
+                    .position(|expected| match &credential {
+                        Attachment::Legacy(key) => bool::from(expected.ct_eq(key)),
+                        Attachment::Peer(proof) => proof.matches(expected),
+                    })
                     .map(|side| (transfer, side))
             })
             .context("relay attachment expired")?;
@@ -542,5 +670,54 @@ impl LobbyState {
             self.finish(transfer.pair, false);
         }
         self.broadcast();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn relay_does_not_mix_different_transfer_modes() {
+        let mut state = LobbyState::default();
+        let mut join = |mode| {
+            let (outgoing, incoming) = mpsc::channel(24);
+            let id = state
+                .join(Mailbox {
+                    outgoing,
+                    cancel: Mutex::new(None),
+                    metadata: false,
+                    mode,
+                    name: None,
+                })
+                .unwrap();
+            (id, incoming)
+        };
+        let (modern, mut modern_events) = join(TransferMode::RelayKey);
+        let (verified, _verified_events) = join(TransferMode::VerifiedCode);
+        let (legacy, _legacy_events) = join(TransferMode::Legacy);
+        let (other_legacy, mut other_events) = join(TransferMode::Legacy);
+        while modern_events.try_recv().is_ok() {}
+        while other_events.try_recv().is_ok() {}
+
+        for incompatible in [legacy, verified] {
+            state
+                .command(modern, Frame::new(OFFER, incompatible))
+                .unwrap();
+            assert_eq!(modern_events.try_recv().unwrap().kind, FAILED);
+        }
+        assert!(state.offers.is_empty());
+
+        state
+            .command(legacy, Frame::with_text(OFFER, other_legacy, "folder"))
+            .unwrap();
+        let incoming = other_events.try_recv().unwrap();
+        assert_eq!((incoming.kind, incoming.id), (INCOMING, legacy));
+        assert_eq!(incoming.text(), "folder");
+        state
+            .command(other_legacy, Frame::new(ACCEPT, legacy))
+            .unwrap();
+        assert_eq!(state.transfers.len(), 1);
+        assert!(!state.transfers[0].peer_tls);
     }
 }

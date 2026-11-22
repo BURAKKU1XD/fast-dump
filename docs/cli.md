@@ -6,11 +6,15 @@ Run `fast-dump` without arguments in a terminal to open the English setup wizard
 Choose Relay, Listen, or Connect with the arrow keys and confirm with Enter.
 Other fields are dimmed until you confirm. Relay starts the server with
 separate listen address and port fields, prefilled with `0.0.0.0` and `9876`.
-It generates its TLS key pair and prints a relay invitation after startup.
+It generates a TLS key pair and opens the relay screen with its status, address,
+token, and client commands. Press `P` to switch the running relay to plain text
+for copying. Esc or Ctrl+C stops the relay on its status screen. In plain text
+mode, use Ctrl+C. `--no-gui` and non-interactive sessions start in plain text.
 Use Connect → Via relay when peers can reach the relay but cannot accept
-incoming connections from each other. Enter the relay host, port, and the
-invitation. A short access token for a relay with a configured certificate
-opens the optional CA file field. For P2P, use Listen on one peer and
+incoming connections from each other. Enter the relay host, port, and
+access token. Select Temporary relay to learn its TLS key on connection, or
+CA certificate to verify an existing certificate chain. The latter opens an
+optional CA file field. For P2P, use Listen on one peer and
 Connect → Direct on the other.
 Provide the same optional shared P2P token on both ends.
 
@@ -21,12 +25,19 @@ Press Enter on the selected recipient and enter the source directory. On
 this form, F2 cycles between the source and optional dump ID and zstd level.
 Enter submits a transfer offer with the source's short name. The recipient
 sees the sender's hostname and the offer. Enter lets them choose a destination
-and accept. Esc declines. After the transfer, close the result screen to
+and accept. Esc declines. In the relay lobby, acceptance starts the transfer
+automatically after the sender verifies the receiver's TLS key. After the
+transfer, close the result screen to
 return to the same connection; either peer can then offer another folder.
 A complete `sender` or `receiver` command starts the transfer directly with a
 live terminal dashboard. Explicit incomplete commands remain argument errors.
-Use `--join-relay <HOST:PORT> --invitation <STRING>` to open the relay lobby
-directly from a terminal. These options are used together at the top level.
+If a listen address is busy or unavailable, the startup error shows the
+address. The setup wizard returns to the address or port field and keeps the
+other settings. An explicit command shows the error in the terminal and exits
+with status 1. Interactive commands wait for Enter or Esc before closing the
+error screen.
+Use `--join-relay <HOST:PORT> --access-token <TOKEN>` to open a temporary relay
+lobby directly from a terminal. These options go together at the top level.
 In the wizard, Listen defaults to `0.0.0.0:7000` (all IPv4 interfaces).
 Connect uses a separate address field: `127.0.0.1:7000` is only for peers on
 the same host; enter the listening host's network IP for a remote transfer.
@@ -238,20 +249,37 @@ Notes:
 
 On a reachable host, choose Relay in the wizard or run
 `fast-dump relay --access --listen 0.0.0.0:9876`. The relay generates a fresh
-TLS key pair and prints an invitation after binding the listener. Share the
-whole invitation through a trusted channel. A client pins the public-key
-fingerprint from the invitation before sending the 12-character access token.
-The relay prints a PowerShell command for Windows x86-64 and a Bash command
-for Linux x86-64. Each downloads the latest GitHub release binary and its
-matching `.sha256` file into a temporary directory, verifies the binary, and
-starts it in the same terminal. When the client exits, the command removes
-its temporary files. Share the commands only with intended participants
-because they contain the invitation.
+TLS key pair and shows a random 12-character access token after binding the
+listener. The client learns the public key during the first TLS handshake,
+checks the handshake signature, then sends the token to join the lobby.
+An active intermediary on the first connection can impersonate the relay and
+obtain the token. The relay uses the lobby TLS session for group membership and
+transfer offers. After acceptance, each party opens TCP attachments and the
+peers establish TLS directly across them with the receiver's key. Each client
+generates its key when it joins, so either peer can receive. The sender checks
+both peer TLS channels against the receiver's key supplied through the TLS lobby.
+This trusts the relay to forward the correct key. An active relay that
+substitutes its own key can intercept the transfer. During normal forwarding,
+the relay sees the participants, offers and traffic sizes. File names, dump IDs
+and data travel over peer TLS.
+The screen shows a download-and-connect command for Windows x86-64
+(Command Prompt or PowerShell 7) and Linux x86-64 (Bash). Each uses curl to
+save the latest GitHub release binary in the current directory and runs it with
+`--join-relay` and `--access-token`. The Linux command sets the executable bit.
+Press `P` on the relay screen to print each complete command on its own line
+in the regular terminal, where it can be copied even if it wraps on screen.
+These commands require a release that accepts receiver keys from the relay.
+Share the commands only with intended participants because they contain the token.
 
-If the relay listens on all interfaces, replace `relay.example` with a host
-or IP that the clients can reach.
+On `0.0.0.0`, the relay makes an HTTPS request to `api.ipify.org` at startup
+with a three-second timeout. It combines the public IPv4 address reported by
+the service with the actual bound port. Clients still need a reachable TCP
+port, including port forwarding where required by NAT. If the lookup fails,
+or the listener uses `[::]`, the relay shows `relay.example` in the commands.
+Replace it with a hostname or address the clients can reach. A specific listen
+IP is shown as configured.
 
-Restarting the relay creates a new key pair and invitation. Up to 15 clients
+Restarting the relay creates a new key pair and token. Up to 15 clients
 can join at once. A valid token receives an immediate admission or capacity response.
 An invalid token receives a rejection one second after its request is read.
 Clients stay connected while idle and can choose a different recipient or
@@ -261,8 +289,10 @@ Run `fast-dump relay --listen <IP:PORT> --config <FILE>` for scripted transfers
 with role keys and use explicit sender and receiver commands on the clients.
 An access-token relay started from the CLI can also use `--config <FILE>` or
 `--certificate <CHAIN.pem> --private-key <KEY.pem>`. In this mode it prints
-the short access token. Clients trust the chain and verify the relay hostname
-or IP as usual.
+the short access token. Use the CA certificate option in the wizard, or
+`--join-relay <HOST:PORT> --invitation <TOKEN>` with public trust. Clients verify
+the certificate chain and the relay hostname or IP. The `--invitation` option
+also accepts existing pinned invitations.
 Paths in the TOML file are relative to the file's directory.
 
 ```toml

@@ -448,8 +448,7 @@ pub struct BoundListener {
 
 impl BoundListener {
     pub fn bind(addr: SocketAddr) -> Result<Self> {
-        let listener =
-            TcpListener::bind(addr).with_context(|| format!("failed to bind to {addr}"))?;
+        let listener = TcpListener::bind(addr).map_err(|error| super::listen_error(addr, error))?;
         let local_addr = listener
             .local_addr()
             .context("failed to query bound v4 listener address")?;

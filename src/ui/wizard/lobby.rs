@@ -7,7 +7,7 @@ use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind, KeyModifier
 use ratatui::layout::{Constraint, Layout};
 use ratatui::widgets::{List, ListItem, ListState, Paragraph, Wrap};
 
-use crate::cli::{Cli, Command, TransportArgs};
+use crate::cli::{Cli, Command, SenderArgs, TransportArgs};
 use crate::network::direct;
 use crate::network::lobby::{Event as LobbyEvent, Peer, PeerId};
 use crate::network::relay::access as relay;
@@ -96,10 +96,18 @@ impl Connection {
         transport
     }
 
-    fn offer(&self, peer: PeerId, source: &str) -> Result<()> {
+    fn offer(&self, peer: PeerId, args: &SenderArgs) -> Result<()> {
         match self {
-            Self::Direct(lobby) => lobby.offer(source),
-            Self::Relay(lobby) => lobby.offer(peer, source),
+            Self::Direct(lobby) => {
+                let source = args
+                    .source
+                    .file_name()
+                    .and_then(|name| name.to_str())
+                    .map(str::to_owned)
+                    .unwrap_or(args.resolve_dump_id()?);
+                lobby.offer(&source)
+            }
+            Self::Relay(lobby) => lobby.offer(peer),
         }
     }
 
@@ -368,13 +376,7 @@ impl Screen {
             (Mode::Path(draft), KeyCode::Enter) => {
                 let cli = transfer_command(lobby.transport(), draft)?;
                 if let Command::Sender(args) = &cli.command {
-                    let source = args
-                        .source
-                        .file_name()
-                        .and_then(|name| name.to_str())
-                        .map(str::to_owned)
-                        .unwrap_or(args.resolve_dump_id()?);
-                    lobby.offer(draft.peer, &source)?;
+                    lobby.offer(draft.peer, args)?;
                 } else {
                     lobby.accept(draft.peer)?;
                 }

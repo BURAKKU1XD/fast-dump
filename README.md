@@ -68,14 +68,19 @@ Roles describe data flow. Sender and receiver select exactly one transport with
 ## Relay
 
 Use a reachable relay when both peers can make outbound connections but have no
-reachable listener. Start Relay in the wizard and share the invitation it
-prints with the clients. The relay generates its TLS key pair in memory.
-Up to 15 clients can use Connect → Via relay with the invitation, which carries
-the public-key fingerprint and the 12-character access token. Connected
-clients choose a recipient separately for each transfer. The relay prints
-one-paste Windows and Linux commands that download and verify the latest
-GitHub release binary, then open the lobby with the invitation. The download
-commands become usable when the release assets are published.
+reachable listener. Start Relay in the wizard and share a client command
+from the relay screen. Press `P` to switch to plain text and copy a complete
+command while the relay is running. The relay generates its TLS key pair in
+memory and a random 12-character access token. Clients learn the key on the
+first TLS connection and send the token after the handshake. Up to 15 clients
+can join the lobby.
+Connected clients choose a recipient for each transfer. The sender verifies the
+receiver's key supplied by the relay and the peers use their own TLS connections
+through the relay. The relay forwards encrypted transfer bytes. When listening on
+all IPv4 interfaces, the relay detects its public IPv4 address and combines
+it with the listening port. The relay shows one command each for Windows and
+Linux. The commands download the latest release and open the lobby with the
+address and token. They require a release that accepts receiver keys from the relay.
 
 For scripted transfers, run the role-key relay on your server and start the
 sender and receiver in either order. Each uses its own key for the same room.
@@ -86,9 +91,9 @@ fast-dump sender --relay relay.example:9876 --room backup --relay-token-file sen
 fast-dump receiver --relay relay.example:9876 --room backup --relay-token-file receiver.key --data-dir ./received
 ```
 
-Both peers must be online during the transfer. Each connection uses TLS to the
-relay, whose operator can read the forwarded bytes. The receiver keeps the durable
-resume state. See [Relay setup](docs/cli.md#relay) for certificates, room keys,
+Both peers must be online during the transfer. Scripted role-key connections use
+TLS to the relay, whose operator can read the forwarded bytes. The receiver
+keeps the durable resume state. See [Relay setup](docs/cli.md#relay) for certificates, room keys,
 timeouts, and retries.
 
 ## Resume and output

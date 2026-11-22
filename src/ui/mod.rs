@@ -1,4 +1,5 @@
 mod dashboard;
+mod relay;
 mod terminal;
 mod theme;
 mod widgets;
@@ -12,6 +13,7 @@ use anyhow::{Context, Result, anyhow};
 use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
 
 use crate::cli::{Cli, Command};
+use crate::network::ListenError;
 use crate::progress::ProgressHub;
 use crate::retry::RetryPolicy;
 use crate::runtime::RunControl;
@@ -26,13 +28,13 @@ const DRAW_INTERVAL: Duration = Duration::from_millis(200);
 
 // UI владеет stdin/terminal, worker — runtime. Guard не оставляет transfer
 // в фоне после ошибки ввода или panic; сбой отрисовки разрешает текстовый fallback.
-struct TransferWorker {
+struct RuntimeWorker {
     handle: Option<JoinHandle<Result<()>>>,
     control: RunControl,
     panicked: bool,
 }
 
-impl TransferWorker {
+impl RuntimeWorker {
     fn join(&mut self) -> Result<()> {
         match self
             .handle
@@ -43,7 +45,7 @@ impl TransferWorker {
             Ok(result) => result,
             Err(_) => {
                 self.panicked = true;
-                Err(anyhow!("transfer worker panicked"))
+                Err(anyhow!("runtime worker panicked"))
             }
         }
     }
@@ -53,7 +55,7 @@ impl TransferWorker {
     }
 }
 
-impl Drop for TransferWorker {
+impl Drop for RuntimeWorker {
     fn drop(&mut self) {
         if self.handle.is_some() {
             self.control.cancel();
@@ -68,7 +70,68 @@ pub(crate) fn run(
     hub: Arc<ProgressHub>,
     retain_result: bool,
 ) -> Result<()> {
-    run_with(cli, control, hub, retain_result, crate::app::run_controlled)
+    let result = if let Command::Relay(args) = cli.command {
+        relay::run(args, control.clone())
+    } else {
+        run_with(
+            cli,
+            control.clone(),
+            hub,
+            retain_result,
+            crate::app::run_controlled,
+        )
+    };
+    if !retain_result
+        && !control.is_cancelled()
+        && let Err(error) = &result
+        && let Some(error) = error.downcast_ref::<ListenError>()
+        && let Err(ui_error) = show_listen_error(error, &control)
+    {
+        log::debug!("could not present listener error: {ui_error:#}");
+    }
+    result
+}
+
+fn show_listen_error(error: &ListenError, control: &RunControl) -> Result<()> {
+    let mut terminal = TerminalGuard::enter()?;
+    let theme = Theme::detect();
+    let message = error.to_string();
+    let mut redraw = true;
+    while !control.is_cancelled() {
+        if redraw {
+            terminal.terminal.draw(|frame| {
+                widgets::render_dialog(
+                    frame,
+                    theme,
+                    " Startup error ",
+                    &[
+                        &message,
+                        "",
+                        "Choose another listen address or port.",
+                        "Enter / Esc closes.",
+                    ],
+                );
+            })?;
+            redraw = false;
+        }
+        if event::poll(DRAW_INTERVAL)? {
+            match event::read()? {
+                Event::Resize(_, _) => redraw = true,
+                Event::Key(key) if key.kind != KeyEventKind::Release => {
+                    if key.code == KeyCode::Char('c')
+                        && key.modifiers.contains(KeyModifiers::CONTROL)
+                    {
+                        control.cancel();
+                    }
+                    if matches!(key.code, KeyCode::Enter | KeyCode::Esc) {
+                        break;
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    Ok(())
 }
 
 fn run_with(
@@ -117,7 +180,7 @@ fn run_with(
         .name("dump-runtime".into())
         .spawn(move || run(cli, &worker_control))
         .context("could not start transfer worker")?;
-    let mut worker = TransferWorker {
+    let mut worker = RuntimeWorker {
         handle: Some(handle),
         control: control.clone(),
         panicked: false,
@@ -294,7 +357,7 @@ mod tests {
             child_cleanup.store(true, Ordering::Release);
             Ok(())
         });
-        drop(TransferWorker {
+        drop(RuntimeWorker {
             handle: Some(handle),
             control: control.clone(),
             panicked: false,
@@ -307,7 +370,7 @@ mod tests {
     fn joining_for_text_fallback_does_not_cancel_runtime() {
         let control = RunControl::new(None);
         let child_control = control.clone();
-        let mut worker = TransferWorker {
+        let mut worker = RuntimeWorker {
             handle: Some(thread::spawn(move || {
                 assert!(!child_control.is_cancelled());
                 Ok(())

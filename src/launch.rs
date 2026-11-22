@@ -3,11 +3,14 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use anyhow::{Context, Result, ensure};
-use clap::{Arg, ArgMatches, CommandFactory, FromArgMatches};
+use clap::{Arg, ArgGroup, ArgMatches, CommandFactory, FromArgMatches};
 
 use crate::cli::{Cli, Command};
 use crate::network::relay::{
-    access::{INVITATION_ARG, JOIN_RELAY_ARG, LobbySettings, credentials},
+    access::{
+        ACCESS_TOKEN_ARG, INVITATION_ARG, JOIN_RELAY_ARG, LobbySettings, credentials,
+        validate_access_token,
+    },
     validate_endpoint,
 };
 use crate::progress::ProgressHub;
@@ -16,16 +19,25 @@ use crate::runtime::RunControl;
 use crate::ui::ConnectionSettings;
 
 fn command() -> clap::Command {
+    const RELAY_CREDENTIAL: &str = "relay-credential";
     Cli::command()
         .subcommand_required(false)
         .arg_required_else_help(false)
+        .group(ArgGroup::new(RELAY_CREDENTIAL).args([ACCESS_TOKEN_ARG, INVITATION_ARG]))
         .arg(
             Arg::new(JOIN_RELAY_ARG)
                 .long(JOIN_RELAY_ARG)
                 .value_name("HOST:PORT")
-                .requires(INVITATION_ARG)
+                .requires(RELAY_CREDENTIAL)
                 .conflicts_with("no_gui")
                 .help("Connect directly to a relay lobby in the terminal"),
+        )
+        .arg(
+            Arg::new(ACCESS_TOKEN_ARG)
+                .long(ACCESS_TOKEN_ARG)
+                .value_name("TOKEN")
+                .requires(JOIN_RELAY_ARG)
+                .help("12-character token for a temporary relay whose key is learned on first connection"),
         )
         .arg(
             Arg::new(INVITATION_ARG)
@@ -49,14 +61,22 @@ fn relay_join_settings(matches: &ArgMatches) -> Result<Option<ConnectionSettings
         "--join-relay opens the lobby and cannot be combined with a subcommand"
     );
     validate_endpoint(endpoint)?;
-    let invitation = matches
-        .get_one::<String>(INVITATION_ARG)
-        .context("missing relay invitation")?;
-    credentials(invitation)?;
+    let access_token = matches.get_one::<String>(ACCESS_TOKEN_ARG);
+    let (token, trust_first_key) = if let Some(token) = access_token {
+        validate_access_token(token)?;
+        (token, true)
+    } else {
+        let invitation = matches
+            .get_one::<String>(INVITATION_ARG)
+            .context("missing relay access token or invitation")?;
+        credentials(invitation)?;
+        (invitation, false)
+    };
     Ok(Some(ConnectionSettings::Relay(LobbySettings {
         endpoint: endpoint.clone(),
-        token: invitation.clone(),
+        token: token.clone(),
         ca_file: None,
+        trust_first_key,
     })))
 }
 
@@ -83,14 +103,13 @@ fn run_lobby(
 
 pub(crate) fn entry() -> ExitCode {
     let matches = command().get_matches();
-    let interactive = matches.subcommand_name() != Some("relay")
-        && use_dashboard(
-            matches.get_flag("no_gui"),
-            io::stdin().is_terminal(),
-            io::stdout().is_terminal(),
-            io::stderr().is_terminal(),
-            std::env::var_os("TERM").is_some_and(|term| term == "dumb"),
-        );
+    let interactive = use_dashboard(
+        matches.get_flag("no_gui"),
+        io::stdin().is_terminal(),
+        io::stdout().is_terminal(),
+        io::stderr().is_terminal(),
+        std::env::var_os("TERM").is_some_and(|term| term == "dumb"),
+    );
     let retain_result = matches.subcommand().is_none();
     let policy = RetryPolicy::from_options(
         matches.get_one::<u32>("retries").copied(),
@@ -120,61 +139,60 @@ pub(crate) fn entry() -> ExitCode {
             return ExitCode::from(2);
         }
     }
-    let mut cli = if retain_result {
-        if !interactive {
+    if retain_result {
+        let Some(hub) = hub else {
             command()
                 .error(
                     clap::error::ErrorKind::MissingSubcommand,
                     "a sender, receiver, or relay command is required outside the interactive wizard",
                 )
                 .exit();
-        }
-        match crate::ui::wizard(matches.get_flag("debug"), policy, &control) {
-            Ok(Some(crate::ui::Launch::Cli(cli))) => *cli,
-            Ok(Some(crate::ui::Launch::Lobby(settings))) => {
-                let hub = hub.expect("wizard relay lobby needs UI progress");
-                return run_lobby(settings, matches.get_flag("debug"), policy, &control, hub);
+        };
+        let debug = matches.get_flag("debug");
+        crate::telemetry::init_logging_with_progress(debug, Some(hub.clone()));
+        let mut relay = false;
+        let result = crate::ui::wizard(debug, policy, &control, |launch| match launch {
+            crate::ui::Launch::Cli(cli) => {
+                relay = matches!(&cli.command, Command::Relay(_));
+                run_cli(*cli, policy, &control, Some(hub.clone()), true)
             }
-            Ok(None) => {
-                return if control.is_cancelled() {
-                    ExitCode::from(130)
-                } else {
-                    ExitCode::SUCCESS
-                };
+            crate::ui::Launch::Lobby(settings) => {
+                relay = false;
+                crate::ui::run_lobby(settings, policy, &control, hub.clone()).context("Connection")
             }
-            Err(error) => {
-                eprintln!(
-                    "Could not open the setup wizard: {error:#}\nUse --help or pass a complete command with --no-gui."
-                );
-                return ExitCode::FAILURE;
-            }
-        }
-    } else {
-        match Cli::from_arg_matches(&matches) {
-            Ok(cli) => cli,
-            Err(error) => error.exit(),
-        }
+        });
+        return finish_cli(result, &control, relay);
+    }
+    let cli = match Cli::from_arg_matches(&matches) {
+        Ok(cli) => cli,
+        Err(error) => error.exit(),
     };
+    let relay = matches!(&cli.command, Command::Relay(_));
+    crate::telemetry::init_logging_with_progress(cli.debug, hub.clone());
+    let result = run_cli(cli, policy, &control, hub, false);
+    finish_cli(result, &control, relay)
+}
+
+fn run_cli(
+    mut cli: Cli,
+    policy: RetryPolicy,
+    control: &RunControl,
+    hub: Option<Arc<ProgressHub>>,
+    retain_result: bool,
+) -> Result<()> {
     cli.retries = Some(policy.retries);
     cli.retry_delay_secs = policy.delay.as_secs() as u32;
-    if let Err(error) = crate::app::validate(&cli) {
-        eprintln!("Error: {error:#}");
-        return ExitCode::FAILURE;
-    }
-    let relay = matches!(&cli.command, Command::Relay(_));
-    let hub = if relay {
-        control.disable_ui();
-        None
-    } else {
-        hub
-    };
-    crate::telemetry::init_logging_with_progress(cli.debug, hub.clone());
-    let result = match hub {
+    crate::app::validate(&cli)?;
+    match hub {
         Some(hub) => crate::ui::run(cli, control.clone(), hub, retain_result),
-        None => crate::app::run_controlled(cli, &control),
-    };
+        None => crate::app::run_controlled(cli, control),
+    }
+}
+
+fn finish_cli(result: Result<()>, control: &RunControl, relay: bool) -> ExitCode {
     control.disable_ui();
     match result {
+        Ok(()) if control.is_cancelled() => ExitCode::from(130),
         Ok(()) => ExitCode::SUCCESS,
         Err(_) if control.is_cancelled() => {
             if relay {
@@ -257,14 +275,14 @@ mod tests {
 
     #[test]
     fn join_arguments_open_relay_lobby_without_a_transfer_role() {
-        let invitation = format!("FD1:{}:23456789ABCD", "a1".repeat(32));
+        let token = "23456789ABCD";
         let matches = command()
             .try_get_matches_from([
                 "fast-dump",
                 "--join-relay",
                 "relay.example:9876",
-                "--invitation",
-                &invitation,
+                "--access-token",
+                token,
             ])
             .unwrap();
         let Some(ConnectionSettings::Relay(settings)) = relay_join_settings(&matches).unwrap()
@@ -272,8 +290,9 @@ mod tests {
             panic!("expected settings for a relay lobby");
         };
         assert_eq!(settings.endpoint, "relay.example:9876");
-        assert!(settings.token == invitation);
+        assert_eq!(settings.token, token);
         assert!(settings.ca_file.is_none());
+        assert!(settings.trust_first_key);
     }
 
     #[test]
@@ -296,6 +315,27 @@ mod tests {
             "--invitation",
             invitation,
         ];
+        let matches = command().try_get_matches_from(join).unwrap();
+        let Some(ConnectionSettings::Relay(settings)) = relay_join_settings(&matches).unwrap()
+        else {
+            panic!("expected settings for a relay lobby");
+        };
+        assert!(!settings.trust_first_key);
+        assert!(
+            command()
+                .try_get_matches_from(join.into_iter().chain(["--access-token", invitation]))
+                .is_err()
+        );
+        let invalid = command()
+            .try_get_matches_from([
+                "fast-dump",
+                "--join-relay",
+                "relay.example:9876",
+                "--access-token",
+                "123",
+            ])
+            .unwrap();
+        assert!(relay_join_settings(&invalid).is_err());
         assert!(
             command()
                 .try_get_matches_from(join.into_iter().chain(["--no-gui"]))

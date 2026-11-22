@@ -100,17 +100,24 @@ impl Relay {
                 endpoint: self.addr.to_string(),
                 token: token.to_owned(),
                 ca_file: Some(fixture("ca.pem")),
+                trust_first_key: false,
             },
             run,
         )
     }
 
-    fn join_invitation(&self, invitation: &str, run: &RunControl) -> anyhow::Result<Lobby> {
+    fn join_raw(
+        &self,
+        token: &str,
+        trust_first_key: bool,
+        run: &RunControl,
+    ) -> anyhow::Result<Lobby> {
         Lobby::connect(
             LobbySettings {
                 endpoint: self.addr.to_string(),
-                token: invitation.to_owned(),
+                token: token.to_owned(),
                 ca_file: None,
+                trust_first_key,
             },
             run,
         )
@@ -172,9 +179,8 @@ fn next_event(lobby: &mut Lobby) -> LobbyEvent {
 
 #[test]
 fn relay_access_can_reverse_roles_without_reconnecting() {
-    let (tls, fingerprint) = super::identity::generate().unwrap();
+    let (tls, _) = super::identity::generate().unwrap();
     let relay = Relay::start_with_tls(tls, true);
-    let invitation = super::access::invitation(fingerprint, ACCESS_TOKEN);
     let run = RunControl::new(None);
     let watchdog_run = run.clone();
     let (finished, completion) = mpsc::channel::<()>();
@@ -184,9 +190,11 @@ fn relay_access_can_reverse_roles_without_reconnecting() {
             watchdog_run.cancel();
         }
     });
-    let mut first = relay.join_invitation(&invitation, &run).unwrap();
-    let mut second = relay.join_invitation(&invitation, &run).unwrap();
-    let mut unrelated = relay.join_invitation(&invitation, &run).unwrap();
+    let denied = relay.join_raw("23456789ABCE", true, &run).err().unwrap();
+    assert_eq!(denied.to_string(), "relay rejected the access token");
+    let mut first = relay.join_raw(ACCESS_TOKEN, true, &run).unwrap();
+    let mut second = relay.join_raw(ACCESS_TOKEN, true, &run).unwrap();
+    let mut unrelated = relay.join_raw(ACCESS_TOKEN, true, &run).unwrap();
     let ids = (first.id, second.id);
     let name =
         crate::network::lobby::Frame::with_text(0, 0, &crate::network::lobby::hostname()).text();
@@ -208,9 +216,9 @@ fn relay_access_can_reverse_roles_without_reconnecting() {
         } else {
             (&mut first, &mut second)
         };
-        from.offer(to.id, "payload").unwrap();
+        from.offer(to.id).unwrap();
         assert!(
-            matches!(next_event(to), LobbyEvent::Incoming { peer, source } if peer == from.id && source == "payload")
+            matches!(next_event(to), LobbyEvent::Incoming { peer, source } if peer == from.id && source.is_empty())
         );
         assert!(unrelated.next().unwrap().is_none());
         to.accept(from.id).unwrap();
@@ -258,17 +266,77 @@ fn relay_access_can_reverse_roles_without_reconnecting() {
 }
 
 #[test]
-fn relay_invitation_rejects_another_generated_public_key() {
-    let (tls, fingerprint) = super::identity::generate().unwrap();
+fn relay_sender_rejects_a_receiver_with_a_different_key() {
+    let (tls, wrong_key) = super::identity::generate().unwrap();
     let relay = Relay::start_with_tls(tls, true);
-    let (_, other_fingerprint) = super::identity::generate().unwrap();
-    assert_ne!(fingerprint, other_fingerprint);
     let run = RunControl::new(None);
-    let wrong = super::access::invitation(other_fingerprint, ACCESS_TOKEN);
-    let error = relay.join_invitation(&wrong, &run).err().unwrap();
-    assert!(format!("{error:#}").contains("relay TLS handshake"));
-    let right = super::access::invitation(fingerprint, ACCESS_TOKEN);
-    assert_eq!(relay.join_invitation(&right, &run).unwrap().id, 1);
+    let mut sender = relay.join_raw(ACCESS_TOKEN, true, &run).unwrap();
+    let mut receiver = relay.join_raw(ACCESS_TOKEN, true, &run).unwrap();
+    sender.offer(receiver.id).unwrap();
+    assert!(
+        matches!(next_event(&mut receiver), LobbyEvent::Incoming { peer, .. } if peer == sender.id)
+    );
+    receiver.accept_with_key(sender.id, wrong_key).unwrap();
+    let LobbyEvent::Start(send_ticket) = next_event(&mut sender) else {
+        panic!("no sender ticket")
+    };
+    let LobbyEvent::Start(receive_ticket) = next_event(&mut receiver) else {
+        panic!("no receiver ticket")
+    };
+    let receiver_control = run.unobserved_session();
+    let receive = thread::spawn(move || receive_ticket.establish(None, &receiver_control));
+    let sender_control = run.unobserved_session();
+    let error = send_ticket
+        .establish(Some(DUMP_ID), &sender_control)
+        .err()
+        .unwrap();
+    assert!(format!("{error:#}").contains("ApplicationVerificationFailure"));
+    assert!(receive.join().unwrap().is_err());
+}
+
+#[tokio::test]
+async fn temporary_relay_rejects_a_new_key_after_first_tls_connection() {
+    use tokio::net::TcpStream;
+    use tokio_rustls::rustls::pki_types::ServerName;
+
+    let (tls, _) = super::identity::generate().unwrap();
+    let relay = Relay::start_with_tls(tls, true);
+    let (other_tls, _) = super::identity::generate().unwrap();
+    let other = Relay::start_with_tls(other_tls, true);
+    let connector =
+        super::identity::connector(super::identity::PinnedKey::FirstUse(Default::default()));
+    let name = ServerName::from(relay.addr.ip());
+    for address in [relay.addr, other.addr, relay.addr] {
+        let socket = TcpStream::connect(address).await.unwrap();
+        let stream = connector.connect(name.clone(), socket).await;
+        if address == other.addr {
+            let error = stream.err().unwrap();
+            assert!(error.to_string().contains("ApplicationVerificationFailure"));
+        } else {
+            assert!(stream.is_ok());
+        }
+    }
+}
+
+#[test]
+fn relay_client_accepts_legacy_invitations() {
+    use std::fmt::Write as _;
+
+    let (tls, public_key) = super::identity::generate().unwrap();
+    let relay = Relay::start_with_tls(tls, true);
+    let fingerprint = super::identity::fingerprint(&public_key);
+    let run = RunControl::new(None);
+    for (version, identity) in [
+        ("FD1", fingerprint.as_slice()),
+        ("FD2", public_key.as_slice()),
+    ] {
+        let mut invitation = format!("{version}:");
+        for byte in identity {
+            write!(invitation, "{byte:02x}").unwrap();
+        }
+        write!(invitation, ":{ACCESS_TOKEN}").unwrap();
+        let _lobby = relay.join_raw(&invitation, false, &run).unwrap();
+    }
 }
 
 fn start_receiver(

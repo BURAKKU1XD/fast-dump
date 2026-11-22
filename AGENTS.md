@@ -34,8 +34,9 @@ These documents are part of the contributor contract. Preserve their requirement
 - Select checksum SIMD at runtime; never require AVX2 globally. Preserve exact
   XXH3-64 wire values and tar-header sums across SIMD and fallback paths.
 - Ship one binary with `fast-dump sender`, `fast-dump receiver`, and `fast-dump relay`.
-- Top-level `--join-relay <HOST:PORT> --invitation <STRING>` opens the relay
-  lobby in an interactive terminal.
+- Top-level `--join-relay <HOST:PORT> --access-token <TOKEN>` opens the temporary
+  relay lobby in an interactive terminal. Keep the existing `--invitation`
+  form for compatible clients.
 - Sender and receiver accept exactly one transport selector:
   `--listen <ADDR>`, `--connect <ADDR>`, or `--relay <HOST:PORT>`.
 - Relay accepts authenticated TLS connections from both peers and pairs by room,
@@ -44,8 +45,17 @@ These documents are part of the contributor contract. Preserve their requirement
 - Access-token relay mode allows at most 15 lobby members per generated token.
   Choose sender and receiver when an offer is accepted. Keep lobby connections
   open between transfers and forward v4 bytes unchanged on separate channels.
-  Default access-token TLS keys are generated in memory. Clients verify the
-  invitation fingerprint and TLS signature before sending the access token.
+  Default access-token TLS keys are generated in memory. In temporary relay
+  mode, clients learn the first relay key during the lobby handshake. Send
+  access tokens after that handshake. Clients generate their own identities
+  before joining and establish peer TLS on both v4 channels through TCP
+  forwarding. Senders verify the receiver key obtained over the TLS lobby
+  before starting v4. The access relay is trusted to supply the correct key.
+  In this mode, bind to `0.0.0.0` to discover the public IPv4 address for the
+  client commands. Show the address, access token and client commands in the
+  relay terminal UI. Let `P` switch to plain terminal output with one complete
+  command per line while the relay runs. Keep the lookup bounded with a manual
+  address fallback.
 - Interactive direct connections exchange hostnames and transfer offers on a
   persistent control connection. After acceptance, use the same listening
   address and port for fresh v4 transfer channels.

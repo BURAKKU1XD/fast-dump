@@ -7,6 +7,7 @@ mod tests;
 
 use std::fs::File;
 use std::io::{self, Read};
+use std::net::SocketAddr;
 use std::path::Path;
 use std::time::Duration;
 
@@ -19,7 +20,43 @@ use crate::network::network_io;
 use crate::role::Role;
 
 pub(crate) use client::establish;
-pub(crate) use server::serve;
+pub(crate) use server::{serve, serve_with_status};
+
+pub(crate) const WINDOWS_CLIENT: &str = "Windows x86-64 (CMD / PowerShell 7)";
+pub(crate) const LINUX_CLIENT: &str = "Linux x86-64 (Bash)";
+pub(crate) const MANUAL_ADDRESS: &str = "Replace relay.example with a reachable IP or hostname.";
+
+pub(crate) struct ClientCommands {
+    pub(crate) endpoint: String,
+    pub(crate) needs_address: bool,
+    pub(crate) windows: String,
+    pub(crate) linux: String,
+}
+
+pub(crate) struct RelayStatus {
+    pub(crate) listen: SocketAddr,
+    pub(crate) token: Option<String>,
+    pub(crate) clients: Option<ClientCommands>,
+}
+
+impl RelayStatus {
+    pub(crate) fn print(self) {
+        eprintln!("Relay listening on {}", self.listen);
+        if let Some(token) = self.token {
+            eprintln!("Access token: {token}");
+        }
+        if let Some(clients) = self.clients {
+            eprintln!("Client address: {}", clients.endpoint);
+            if clients.needs_address {
+                eprintln!("{MANUAL_ADDRESS}");
+            }
+            eprintln!(
+                "\n{WINDOWS_CLIENT}\n{}\n\n{LINUX_CLIENT}\n{}",
+                clients.windows, clients.linux
+            );
+        }
+    }
+}
 
 const MAGIC: [u8; 4] = *b"FDR1";
 const WAIT_PEER: Duration = Duration::from_secs(60);

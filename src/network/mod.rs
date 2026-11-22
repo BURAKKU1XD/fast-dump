@@ -6,6 +6,30 @@ pub mod transport;
 
 use std::fmt;
 use std::io;
+use std::net::SocketAddr;
+
+#[derive(Debug)]
+pub(crate) struct ListenError {
+    address: SocketAddr,
+    pub(crate) kind: io::ErrorKind,
+}
+
+impl fmt::Display for ListenError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let reason = match self.kind {
+            io::ErrorKind::AddrInUse => "port is already in use",
+            io::ErrorKind::AddrNotAvailable => "address is unavailable on this host",
+            io::ErrorKind::PermissionDenied => "access denied or port reserved",
+            _ => return write!(formatter, "Cannot listen on {}", self.address),
+        };
+        write!(formatter, "Cannot listen on {}: {reason}", self.address)
+    }
+}
+
+pub(crate) fn listen_error(address: SocketAddr, error: io::Error) -> anyhow::Error {
+    let kind = error.kind();
+    anyhow::Error::new(error).context(ListenError { address, kind })
+}
 
 #[derive(Debug)]
 struct NetworkIo;
